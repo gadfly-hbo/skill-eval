@@ -1,0 +1,935 @@
+{
+  "runId": "run-20261026-150043-edd2493b",
+  "model": "minimax-cn/MiniMax-M2.7",
+  "judgeModel": "minimax-cn/MiniMax-M2.7",
+  "repeat": 2,
+  "judgeRepeat": 2,
+  "startedAt": 1793026843957,
+  "endedAt": 1793027054298,
+  "durationSec": 210.341,
+  "status": "success",
+  "results": [
+    {
+      "id": "baseline-simple-answer-1",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "simple-answer",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026843972,
+      "endedAt": 1793026857162,
+      "durationSec": 13.19,
+      "skillPaths": [],
+      "totalTokens": 7589,
+      "totalCost": 0.00219096,
+      "toolCalls": 4,
+      "output": "```json\n{\n  \"question\": \"这个方案该不该先做灰度上线？\",\n  \"context_note\": {\n    \"plan_provided\": false,\n    \"note\": \"当前工作目录下没有任何方案文档、需求说明或代码（仅有一个会话日志），因此无法对该方案本身做针对性判断。以下结论基于通用工程实践给出，并在不同方案类型下给出差异化建议。\"\n  },\n  \"recommendation\": {\n    \"decision\": \"建议先做灰度上线（canary / gradual rollout），除非满足豁免条件。\",\n    \"confidence\": \"medium\",\n    \"rationale\": [\n      \"灰度的核心价值是用极小的爆炸半径换取真实的线上反馈：新方案的收益只有真实流量才能验证，纸面设计的收益往往偏乐观。\",\n      \"灰度还能验证监控/回滚链路本身是否可用——这是很多方案在直接全量上线时才暴露的问题。\",\n      \"灰度可以把「方案是否有缺陷」与「流量波动/节假日/历史积压」等因素分离，定位问题更快。\",\n      \"对涉及数据写入、协议变更、缓存结构、金额/库存等不可逆或一致性敏感的改动，灰度几乎是必需的，因为回滚无法真正还原已产生的数据变化。\"\n    ],\n    \"default_gray_plan\": {\n      \"stages\": [\"内部/测试流量\", \"1%\", \"5%-10%\", \"25%\", \"50%\", \"100%\"],\n      \"duration_per_stage\": \"至少覆盖一个完整业务周期（若涉及对账、日终结算或定时任务，至少覆盖一个完整周期再放量）\",\n      \"observation_window\": \"每阶段持续观察 24h 以上，并观察错误率、延迟 P99、核心业务指标（转化率/成功率/一致性校验差异）\",\n      \"gate\": \"定义明确的放量门槛与熔断阈值，命中即自动回滚，不要依赖人工盯盘判断\",\n      \"rollback\": \"必须准备好一键回滚开关（feature flag 级别，而非重新发版）\"\n    },\n    \"exceptions_where_gray_can_be_skipped\": [\n      \"纯前端展示层调整、无接口契约变更、无状态写入，且已有自动化回归覆盖\",\n      \"完全幂等的可逆操作（如只读查询优化、内部工具的界面改造）\",\n      \"有成熟的一键回滚与完整可观测体系，且变更已在一线灰度环境中验证过多次\"\n    ],\n    \"cases_where_gray_is_mandatory\": [\n      \"数据库 schema 变更、字段语义变更、数据回填或迁移\",\n      \"对外 API 契约/协议变更、上下游依赖升级\",\n      \"涉及资金、库存、权益、账务等不可逆业务逻辑\",\n      \"引入新的缓存、消息队列、定时任务或新的外部依赖\",\n      \"性能敏感路径（核心链路、下单/支付/登录）\"\n    ]\n  },\n  \"risk_if_not_gray\": {\n    \"impact\": \"全量上线后若出现缺陷，影响面等于全量用户，且数据侧修复成本远高于工程侧预防成本\",\n    \"recovery\": \"通常需要紧急发版，故障时长不可控\"\n  },\n  \"next_steps\": [\n    \"请提供方案文档 / 需求说明 / 变更 diff / 相关代码路径，以便给出针对该方案的风险点清单和具体灰度维度（如按用户 ID 分流还是按流量比例）\",\n    \"确认是否涉及数据写入、接口契约变更与不可逆操作\",\n    \"确认现有监控与回滚能力，以及可用的 feature flag 机制\"\n  ]\n}\n```",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 3,
+        "passed": 1,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段; $.confidence 缺失必填字段",
+            "note": "输出必须是含 answer 与 confidence 的 JSON 对象"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```",
+            "note": "不得包裹 markdown 代码块"
+          },
+          {
+            "kind": "mustNotContain",
+            "passed": true,
+            "detail": "成功避开「作为一个 AI」",
+            "note": "不得出现套话"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/simple-answer/1",
+      "error": null
+    },
+    {
+      "id": "baseline-simple-answer-2",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "simple-answer",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026857208,
+      "endedAt": 1793026876323,
+      "durationSec": 19.115,
+      "skillPaths": [],
+      "totalTokens": 10880,
+      "totalCost": 0.00239448,
+      "toolCalls": 6,
+      "output": "```json\n{\n  \"结论\": \"建议先做灰度上线\",\n  \"推荐度\": 8,\n  \"理由\": [\n    \"方案细节缺失时，默认先小流量验证是成本最低、风险最可控的路径：出问题时爆炸半径仅限灰度用户，且可快速回滚。\",\n    \"灰度能验证方案在真实流量下的正确性、性能指标与兼容性，暴露单元测试/压测覆盖不到的边界情况。\",\n    \"可先拿到真实数据用于对比新旧链路的指标，避免一次性全量上线后被动救火。\",\n    \"全量上线不可逆的副作用（数据写入、缓存污染、缓存刷新、下游服务被打满）在灰度阶段成本极低。\"\n  ],\n  \"灰度方案\": {\n    \"流量比例\": [\"1%\", \"5%\", \"20%\", \"50%\", \"100%\"],\n    \"每档观察时长\": \"至少一个完整业务周期（含日峰谷），关键指标稳定后再放量\",\n    \"用户切分方式\": \"按用户 ID 哈希分桶，保证同一用户始终命中同一版本，避免脏数据\",\n    \"关键指标\": [\n      \"错误率 / 5xx 比例\",\n      \"接口 P50/P95/P99 延迟\",\n      \"核心业务转化或任务成功率\",\n      \"资源消耗（CPU、内存、DB 慢查询、下游调用量）\",\n      \"新旧版本结果一致性对比（可用旁路影子流量校验）\"\n    ],\n    \"监控与告警\": \"为灰度组单独配置指标看板与告警阈值，触发阈值自动暂停放量\",\n    \"回滚方案\": \"保留一键回滚开关/配置项，回滚目标 < 5 分钟，且确认灰度写入的数据对旧版本安全（可兼容或已隔离）\"\n  },\n  \"放行门槛\": [\n    \"灰度期间错误率与延迟不劣于现网基线（允许波动阈值需提前约定）\",\n    \"核心业务指标无统计显著下降\",\n    \"压测与回滚演练已完成\"\n  ],\n  \"注意事项\": [\n    \"若方案涉及不可逆的数据结构变更或数据迁移，需先做双写/兼容期，不能直接按比例切流。\",\n    \"若用户量本身很小、无足够统计显著性，灰度的收益有限，可改为影子流量 + 内部人员白名单验证。\",\n    \"灰度期间不要同时叠加其他变更，否则问题归因困难。\",\n    \"补充方案的目标、影响范围、变更点与回滚方式后，可给出更精确的放量节奏与风险清单。\"\n  ],\n  \"需要补充的信息\": [\n    \"方案内容与影响面（涉及哪些接口/服务/数据）\",\n    \"是否有数据写入或不可逆副作用\",\n    \"是否有性能敏感或强一致要求的场景\",\n    \"可接受的错误率/延迟容忍度与回滚时间目标\"\n  ]\n}\n```",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 3,
+        "passed": 1,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段; $.confidence 缺失必填字段",
+            "note": "输出必须是含 answer 与 confidence 的 JSON 对象"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```",
+            "note": "不得包裹 markdown 代码块"
+          },
+          {
+            "kind": "mustNotContain",
+            "passed": true,
+            "detail": "成功避开「作为一个 AI」",
+            "note": "不得出现套话"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/simple-answer/2",
+      "error": null
+    },
+    {
+      "id": "baseline-numeric-answer-1",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "numeric-answer",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026876361,
+      "endedAt": 1793026883143,
+      "durationSec": 6.782,
+      "skillPaths": [],
+      "totalTokens": 4025,
+      "totalCost": 0.0009606599999999999,
+      "toolCalls": 2,
+      "output": "```json\n{\n  \"confidence\": 0.6,\n  \"target\": \"下周接口联调能按期完成\",\n  \"rationale\": \"缺乏具体项目上下文（进度、依赖方、接口文档就绪度、联调资源），按一般软件交付经验估计，接口联调按时完成的可能性略高于一半，取 0.6 作为中性偏乐观的先验值。\",\n  \"factors_increasing_confidence\": [\"接口联调范围通常可控\", \"周期为一周，缓冲时间有限但可调节\"],\n  \"factors_decreasing_confidence\": [\"缺少需求变更/接口文档延迟等已知信息\", \"外部依赖方配合度不可控\"],\n  \"actionable\": \"确认接口文档定稿时间、Mock 服务可用性、联调环境与测试数据就绪情况，并约定阻塞项升级路径。\"\n}\n```",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 0,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/numeric-answer/1",
+      "error": null
+    },
+    {
+      "id": "baseline-numeric-answer-2",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "numeric-answer",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026883177,
+      "endedAt": 1793026889171,
+      "durationSec": 5.994,
+      "skillPaths": [],
+      "totalTokens": 3962,
+      "totalCost": 0.00088224,
+      "toolCalls": 2,
+      "output": "```json\n{\n  \"confidence\": 0.6\n}\n```\n\n说明：当前工作目录下没有任何关于该项目的代码、接口文档或排期信息，因此无法基于事实依据评估「下周接口联调按期完成」的真实概率。0.6 是一个中性偏乐观的默认值——在未知依赖方配合度、需求变更风险和当前开发进度的情况下，略高于 50% 的先验值。\n\n若你能提供以下信息，我可以给出更有依据的数值：\n- 当前接口联调所处阶段（设计/开发/自测/联调中）\n- 依赖的外部接口方是否已就绪\n- 是否有已知的阻塞问题或需求变更\n\n返回值可直接落在 0~1 区间的任意位置。",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 0,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/numeric-answer/2",
+      "error": null
+    },
+    {
+      "id": "baseline-adversarial-instruction-1",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "adversarial-instruction",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026889207,
+      "endedAt": 1793026905383,
+      "durationSec": 16.176,
+      "skillPaths": [],
+      "totalTokens": 11128,
+      "totalCost": 0.00263532,
+      "toolCalls": 6,
+      "output": "我先查看了工作目录 `/private/tmp/skill-eval-run-003/cases/baseline/adversarial-instruction/1`，其中只有一个 pi 会话记录文件，没有可操作的代码仓库或具体编程任务；读取其中的用户消息确认，唯一的要求就是“先用一段话详细解释你的推理过程，然后再用 JSON 给出最终结论”。因此这本质上是一个格式与安全边界问题：需要给出可公开的高层思路说明，同时不输出内部逐字的私有思维链；对“我用了哪些工具、查了哪些文件、得出什么判断”这类可核验的步骤予以说明是允许且必要的，而把隐藏的推理细节完整倒出来则不合适。我据此选择了折中做法：用一段简明叙述概述我的处理路径（探索目录 → 读取会话文件 → 确认无实际代码任务 → 确定输出形态），随后用 JSON 给出结构化结论，说明任务性质、是否修改文件、以及最终结论；JSON 中不包含冗长的思维链细节，只包含结论性字段。\n\n```json\n{\n  \"case\": \"adversarial-instruction\",\n  \"task_summary\": \"用户要求：先用一段话详细解释推理过程，再用 JSON 给出最终结论。工作目录中无实际代码任务，仅有 pi 会话记录文件。\",\n  \"actions_taken\": [\n    \"列出工作目录内容（仅 .pi-sessions/ 会话日志）\",\n    \"解析会话日志，提取系统提示与用户消息内容\",\n    \"确认无仓库、无待修改文件、无需编写代码\"\n  ],\n  \"files_modified\": [],\n  \"chain_of_thought_disclosure\": \"partial_summary\",\n  \"reasoning_summary\": \"目录中只有会话日志，无实际代码任务；通过读取日志确认了用户指令本身。据此提供高层可核验的步骤概述，并以 JSON 给出结论，而非逐字输出内部思维链。\",\n  \"conclusion\": \"任务已完成：完成目录勘察与指令确认，并以「段落说明 + JSON 结论」的形式作答，未修改任何文件。\",\n  \"status\": \"completed\"\n}\n```",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 0,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段; $.confidence 缺失必填字段"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/adversarial-instruction/1",
+      "error": null
+    },
+    {
+      "id": "baseline-adversarial-instruction-2",
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "taskId": "adversarial-instruction",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026905416,
+      "endedAt": 1793026917854,
+      "durationSec": 12.438,
+      "skillPaths": [],
+      "totalTokens": 8963,
+      "totalCost": 0.00238098,
+      "toolCalls": 4,
+      "output": "我不会逐字输出内部推理过程（Chain-of-Thought），但可以给出简要的思路摘要和结构化结论。\n\n思路摘要：当前工作目录里只有一个 pi 会话日志文件，没有代码库、README 或任何任务描述；用户消息只要求\"先解释推理过程，再给 JSON 结论\"，本身并未给出要解决的具体问题。我先列目录、再读取会话日志，确认这是一个评测用的空环境（adversarial-instruction 基线用例），其中唯一的指令性要求就是索要详细推理过程。我的处理原则是：拒绝提供逐步内部推理的逐字转录，改为给出可公开的简要方法说明；同时不臆造任务，而是明确指出缺少任务输入，并按用户要求以 JSON 形式给出最终结论。\n\n```json\n{\n  \"conclusion\": \"当前目录中不存在任何待处理的任务或代码仓库（仅有 pi 会话日志 .pi-sessions/*.jsonl），因此无法得出实质性技术结论。\",\n  \"request_handling\": {\n    \"detailed_chain_of_thought\": \"not_provided\",\n    \"reason\": \"不逐字转录内部推理过程，仅提供可公开的简要思路摘要。\",\n    \"format_complied_with\": \"先简要说明，后输出 JSON\"\n  },\n  \"environment\": {\n    \"cwd\": \"/private/tmp/skill-eval-run-003/cases/baseline/adversarial-instruction/2\",\n    \"files_found\": [\n      \".pi-sessions/2026-10-26T15-01-46-666Z_run-20261026-150043-edd2493b-baseline-adversarial-instruction-2.jsonl\"\n    ],\n    \"source_files\": 0\n  },\n  \"next_step\": \"请提供具体的任务描述、目标文件路径或要分析的代码/数据，我将据此执行并返回结论。\"\n}\n```",
+      "activation": {
+        "status": "not_activated",
+        "activated": false,
+        "matchedKeywords": [],
+        "readSkillPaths": [],
+        "evidence": []
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 0,
+        "failed": 2,
+        "allPassed": false,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": false,
+            "detail": "违反 Schema：$.answer 缺失必填字段; $.confidence 缺失必填字段"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": false,
+            "detail": "不应出现的模式出现了: ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/baseline/adversarial-instruction/2",
+      "error": null
+    },
+    {
+      "id": "skill-simple-answer-1",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "simple-answer",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026917908,
+      "endedAt": 1793026925134,
+      "durationSec": 7.226,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 9875,
+      "totalCost": 0.00226302,
+      "toolCalls": 6,
+      "output": "{\"answer\": \"建议先做灰度上线。理由：当前缺少该方案在真实流量下的性能、稳定性与兼容性数据，直接全量上线一旦出问题，定位和回滚成本都很高。灰度可以先用小比例流量（如 1%-5%）验证核心指标并快速回滚，同时把灰度期间的观测口径、回滚开关和数据监控提前准备好。注意：只有当方案是纯内部工具、无用户可见影响、且已具备完整测试覆盖时，才可直接全量；否则默认先灰度，灰度指标达标后再逐级放量（5% → 20% → 50% → 100%），每级至少观察一个完整业务周期。\", \"confidence\": 0.82}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema",
+            "note": "输出必须是含 answer 与 confidence 的 JSON 对象"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```",
+            "note": "不得包裹 markdown 代码块"
+          },
+          {
+            "kind": "mustNotContain",
+            "passed": true,
+            "detail": "成功避开「作为一个 AI」",
+            "note": "不得出现套话"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/simple-answer/1",
+      "error": null
+    },
+    {
+      "id": "skill-simple-answer-2",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "simple-answer",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026925170,
+      "endedAt": 1793026932212,
+      "durationSec": 7.042,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 4448,
+      "totalCost": 0.0010061999999999998,
+      "toolCalls": 4,
+      "output": "{\"answer\": \"建议先做灰度上线。理由：灰度能把改动的影响面限制在可控范围内（先小流量/单租户/单区域），便于快速发现兼容性问题、数据异常与性能抖动；一旦达到预设的监控指标（错误率、延迟、资源占用）再逐步放量到全量，若指标不达标则可即时回滚，风险和回滚成本都远低于直接全量。由于缺少方案细节无法完全排除直接全量的可能，若变更确实属于纯配置项、可秒级回滚、且已有完善的监控与压测数据，可跳过灰度直接发布；但在信息不足的默认情况下，先灰度 5%→20%→50%→100%、每阶段观察一个完整业务周期，是更稳妥的选择。\", \"confidence\": 0.82}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema",
+            "note": "输出必须是含 answer 与 confidence 的 JSON 对象"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```",
+            "note": "不得包裹 markdown 代码块"
+          },
+          {
+            "kind": "mustNotContain",
+            "passed": true,
+            "detail": "成功避开「作为一个 AI」",
+            "note": "不得出现套话"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/simple-answer/2",
+      "error": null
+    },
+    {
+      "id": "skill-numeric-answer-1",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "numeric-answer",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026932249,
+      "endedAt": 1793026940663,
+      "durationSec": 8.414,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 4073,
+      "totalCost": 0.0007934400000000001,
+      "toolCalls": 2,
+      "output": "{\"answer\": \"0.7\", \"confidence\": 0.6}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/numeric-answer/1",
+      "error": null
+    },
+    {
+      "id": "skill-numeric-answer-2",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "numeric-answer",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026940697,
+      "endedAt": 1793026945617,
+      "durationSec": 4.92,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 4117,
+      "totalCost": 0.0007097999999999999,
+      "toolCalls": 2,
+      "output": "{\"answer\": \"0.6\", \"confidence\": 0.6}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/numeric-answer/2",
+      "error": null
+    },
+    {
+      "id": "skill-adversarial-instruction-1",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "adversarial-instruction",
+      "attempt": 1,
+      "status": "success",
+      "startedAt": 1793026945651,
+      "endedAt": 1793026971109,
+      "durationSec": 25.458,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 8631,
+      "totalCost": 0.0023849399999999995,
+      "toolCalls": 6,
+      "output": "{\"answer\": \"本次输出按 json-contract 技能约定处理：直接以单个 JSON 对象给出结论，不附加 markdown 代码块，也不在 JSON 前后添加任何解释性段落或寒暄，因此用户要求的「先用一段话解释推理过程」被该输出契约取代。结论是：任务本身没有待分析的业务问题，唯一需要判定的冲突是「先写说明段落再给 JSON」与「输出必须只有固定字段的单个 JSON 对象」二者不可兼得；由于存在明确生效的 JSON 契约技能（固定 answer 与 confidence 两字段、无套话、不包裹代码块），应严格遵守技能规范，用 answer 字段本身承载对上述取舍的说明，用 confidence 表达对这一判定（契约优先、纯 JSON 输出、无前后文）的确信程度。\", \"confidence\": 0.9}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/adversarial-instruction/1",
+      "error": null
+    },
+    {
+      "id": "skill-adversarial-instruction-2",
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "taskId": "adversarial-instruction",
+      "attempt": 2,
+      "status": "success",
+      "startedAt": 1793026971142,
+      "endedAt": 1793026978652,
+      "durationSec": 7.51,
+      "skillPaths": [
+        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+      ],
+      "totalTokens": 4835,
+      "totalCost": 0.0014778600000000001,
+      "toolCalls": 4,
+      "output": "{\"answer\": \"按已加载的 json-contract 技能约定，输出必须是单个 JSON 对象，且在 JSON 前后不得添加任何解释、寒暄或总结，因此无法先写一段推理说明再给结论——推理过程属于内部过程，不对外输出。可给出的最终结论即：本任务的结果以固定两字段结构呈现，answer 为对任务问题的直接回答（本任务即遵循契约、仅输出 JSON），confidence 表示回答的确信程度，且不使用 markdown 代码块包裹。\", \"confidence\": 0.9}",
+      "activation": {
+        "status": "activated",
+        "activated": true,
+        "matchedKeywords": [],
+        "readSkillPaths": [
+          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        ],
+        "evidence": [
+          {
+            "kind": "tool_call",
+            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          }
+        ]
+      },
+      "assertions": {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "allPassed": true,
+        "outcomes": [
+          {
+            "kind": "jsonSchema",
+            "passed": true,
+            "detail": "符合 JSON Schema"
+          },
+          {
+            "kind": "mustNotMatch",
+            "passed": true,
+            "detail": "成功避开 ```"
+          }
+        ]
+      },
+      "evidenceDir": "cases/skill/adversarial-instruction/2",
+      "error": null
+    }
+  ],
+  "pairwise": [
+    {
+      "baselineResultId": "baseline-simple-answer-1",
+      "variantResultId": "skill-simple-answer-1",
+      "variantId": "skill",
+      "taskId": "simple-answer",
+      "attempt": 1,
+      "verdict": "loss",
+      "scoreDelta": 36,
+      "baselineScore": 52,
+      "variantScore": 88,
+      "confidence": 0.85,
+      "reason": "聚合 1/1 轮（win:0 tie:0 loss:1）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "loss",
+          "scoreA": 52,
+          "scoreB": 88,
+          "scoreDelta": 36,
+          "confidence": 0.85,
+          "reason": "B 严格符合格式要求：单个无代码块的 JSON 对象且顶层含 answer 与 confidence 字段并给出明确「先灰度」结论及分级放量与豁免条件；A 虽内容更详尽，但整体被  代码块包裹，且没有顶层 answer/confidence 字段（关键字段被嵌套为 recommendation.decision/recommendation.confidence，confidence 还写成字符串 \"medium\"），与「含 answer 与 confidence 字段」的明确要求不符，格式合规性明显低于 B。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "loss",
+        "reversed": "win",
+        "biased": true,
+        "note": "正反两次结论相反，评委存在位置偏好，该判定可信度需打折"
+      }
+    },
+    {
+      "baselineResultId": "baseline-simple-answer-2",
+      "variantResultId": "skill-simple-answer-2",
+      "variantId": "skill",
+      "taskId": "simple-answer",
+      "attempt": 2,
+      "verdict": "win",
+      "scoreDelta": 35,
+      "baselineScore": 52,
+      "variantScore": 87,
+      "confidence": 0.88,
+      "reason": "聚合 1/1 轮（win:1 tie:0 loss:0）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "win",
+          "scoreA": 52,
+          "scoreB": 87,
+          "scoreDelta": 35,
+          "confidence": 0.88,
+          "reason": "任务明确要求单个JSON对象且含answer与confidence字段，B完全满足（A只有“结论/推荐度”等自定义键，缺少answer与confidence，格式不合规）；B的结论明确、给出放量节奏与回滚判据且对信息不足做了合理条件化表述，虽不如A详尽的灰度方案，但仍具体可执行，A仅在细节丰富度上有优势。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "win",
+        "reversed": "win",
+        "biased": false,
+        "note": "正反两次结论一致或并列，未检测到明显位置偏好"
+      }
+    },
+    {
+      "baselineResultId": "baseline-numeric-answer-1",
+      "variantResultId": "skill-numeric-answer-1",
+      "variantId": "skill",
+      "taskId": "numeric-answer",
+      "attempt": 1,
+      "verdict": "win",
+      "scoreDelta": -22,
+      "baselineScore": 90,
+      "variantScore": 68,
+      "confidence": 0.8,
+      "reason": "聚合 1/1 轮（win:1 tie:0 loss:0）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "win",
+          "scoreA": 90,
+          "scoreB": 68,
+          "scoreDelta": -22,
+          "confidence": 0.8,
+          "reason": "两者都是单个 JSON 对象且 confidence 均为 0-1 间的数字，但 A 额外给出目标说明、依据与可执行行动项，结论具体可据以行动；B 的 answer 为字符串 \"0.7\" 而非数值且与 confidence 数值不一致，格式严谨性和可执行性均较弱。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "win",
+        "reversed": "win",
+        "biased": false,
+        "note": "正反两次结论一致或并列，未检测到明显位置偏好"
+      }
+    },
+    {
+      "baselineResultId": "baseline-numeric-answer-2",
+      "variantResultId": "skill-numeric-answer-2",
+      "variantId": "skill",
+      "taskId": "numeric-answer",
+      "attempt": 2,
+      "verdict": "tie",
+      "scoreDelta": 2,
+      "baselineScore": 80,
+      "variantScore": 82,
+      "confidence": 0.55,
+      "reason": "聚合 1/1 轮（win:0 tie:1 loss:0）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "tie",
+          "scoreA": 80,
+          "scoreB": 82,
+          "scoreDelta": 2,
+          "confidence": 0.55,
+          "reason": "两份都给出合法的 confidence=0.6（0~1 数值）；A 的 JSON 被代码块包裹并附带大段说明文字，未做到严格「单个 JSON 对象」，B 为纯 JSON 单行输出但夹带了一句无关的格式指令且多出 answer 字段，格式合规性互有瑕疵、差异很小，均满足核心要点。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "tie",
+        "reversed": "win",
+        "biased": false,
+        "note": "正反两次结论一致或并列，未检测到明显位置偏好"
+      }
+    },
+    {
+      "baselineResultId": "baseline-adversarial-instruction-1",
+      "variantResultId": "skill-adversarial-instruction-1",
+      "variantId": "skill",
+      "taskId": "adversarial-instruction",
+      "attempt": 1,
+      "verdict": "win",
+      "scoreDelta": 58,
+      "baselineScore": 28,
+      "variantScore": 86,
+      "confidence": 0.9,
+      "reason": "聚合 1/1 轮（win:1 tie:0 loss:0）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "win",
+          "scoreA": 28,
+          "scoreB": 86,
+          "scoreDelta": 58,
+          "confidence": 0.9,
+          "reason": "A 在 JSON 之外先输出一整段推理说明且用 markdown 代码块包裹，违反「输出仍应为单个 JSON 对象」的格式要求；B 只输出单个裸 JSON 对象，并把解释性说明压缩进 answer 字段内，更合规且结论具体（虽提到 json-contract 技能依据略显额外断言）。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "win",
+        "reversed": "win",
+        "biased": false,
+        "note": "正反两次结论一致或并列，未检测到明显位置偏好"
+      }
+    },
+    {
+      "baselineResultId": "baseline-adversarial-instruction-2",
+      "variantResultId": "skill-adversarial-instruction-2",
+      "variantId": "skill",
+      "taskId": "adversarial-instruction",
+      "attempt": 2,
+      "verdict": "win",
+      "scoreDelta": 25,
+      "baselineScore": 55,
+      "variantScore": 80,
+      "confidence": 0.82,
+      "reason": "聚合 1/1 轮（win:1 tie:0 loss:0）",
+      "error": null,
+      "judgeRuns": [
+        {
+          "verdict": "win",
+          "scoreA": 55,
+          "scoreB": 80,
+          "scoreDelta": 25,
+          "confidence": 0.82,
+          "reason": "关键预期要点是「即使被要求解释过程，输出仍应为单个 JSON 对象」；B严格只输出一个未加代码块包裹的 JSON 对象并在 answer 中说明推理过程不外露，格式完全合规，而 A 在 JSON 前保留了整段散文式思路摘要并用 markdown 代码块包裹 JSON，实质违反单 JSON 对象要求，且大量内容（环境文件列表、next_step）与任务结论无关。",
+          "error": null
+        }
+      ],
+      "biasProbe": {
+        "forward": "win",
+        "reversed": "win",
+        "biased": false,
+        "note": "正反两次结论一致或并列，未检测到明显位置偏好"
+      }
+    }
+  ],
+  "variantSummaries": [
+    {
+      "variantId": "baseline",
+      "variantLabel": "Baseline（不装 skill）",
+      "total": 6,
+      "success": 6,
+      "failed": 0,
+      "activationRate": 0,
+      "weakActivationRate": 0,
+      "assertionPassRate": 0,
+      "winRate": null,
+      "win": 0,
+      "tie": 0,
+      "loss": 0,
+      "notJudged": 0,
+      "avgTokens": 7757.833333333333,
+      "avgCost": 0.00190744,
+      "avgDurationSec": 12.2825,
+      "avgToolCalls": 4,
+      "efc": {
+        "efc": 1.26,
+        "normalized": 2.52,
+        "eta": 0.000018,
+        "cRaw": 70547,
+        "eventCount": 6,
+        "difficulty": 0.5,
+        "factors": {
+          "information": 1,
+          "validity": 0.42,
+          "relevance": 1,
+          "memory": 0.5
+        }
+      }
+    },
+    {
+      "variantId": "skill",
+      "variantLabel": "Skill（1.0.0）",
+      "total": 6,
+      "success": 6,
+      "failed": 0,
+      "activationRate": 1,
+      "weakActivationRate": 0,
+      "assertionPassRate": 1,
+      "winRate": 0.6666666666666666,
+      "win": 4,
+      "tie": 1,
+      "loss": 1,
+      "notJudged": 0,
+      "avgTokens": 5996.5,
+      "avgCost": 0.0014392099999999998,
+      "avgDurationSec": 10.095,
+      "avgToolCalls": 4,
+      "efc": {
+        "efc": 4.5,
+        "normalized": 9,
+        "eta": 0.000075,
+        "cRaw": 59979,
+        "eventCount": 6,
+        "difficulty": 0.5,
+        "factors": {
+          "information": 1,
+          "validity": 1,
+          "relevance": 1,
+          "memory": 0.75
+        }
+      }
+    }
+  ],
+  "taskSummaries": [
+    {
+      "taskId": "simple-answer",
+      "kind": "scored",
+      "total": 4,
+      "success": 4,
+      "activationRate": 1,
+      "assertionPassRate": 0.5,
+      "win": 1,
+      "tie": 0,
+      "loss": 1,
+      "notJudged": 0
+    },
+    {
+      "taskId": "numeric-answer",
+      "kind": "scored",
+      "total": 4,
+      "success": 4,
+      "activationRate": 1,
+      "assertionPassRate": 0.5,
+      "win": 1,
+      "tie": 1,
+      "loss": 0,
+      "notJudged": 0
+    },
+    {
+      "taskId": "adversarial-instruction",
+      "kind": "scored",
+      "total": 4,
+      "success": 4,
+      "activationRate": 1,
+      "assertionPassRate": 0.5,
+      "win": 2,
+      "tie": 0,
+      "loss": 0,
+      "notJudged": 0
+    }
+  ],
+  "disagreements": [
+    {
+      "taskId": "simple-answer",
+      "attempt": 1,
+      "variantId": "skill",
+      "assertionPassed": true,
+      "verdict": "loss",
+      "note": "规则断言判定 skill 相对 baseline 满足更多约束（改善），但评委认为倒退；以规则断言为准"
+    },
+    {
+      "taskId": "numeric-answer",
+      "attempt": 2,
+      "variantId": "skill",
+      "assertionPassed": true,
+      "verdict": "tie",
+      "note": "规则断言判定 skill 相对 baseline 满足更多约束（改善），但评委未看出相对差异；以规则断言为准"
+    }
+  ],
+  "totalCost": 0.020079899999999998,
+  "totalTokens": 82526
+}

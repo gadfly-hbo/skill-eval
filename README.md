@@ -84,8 +84,22 @@ src/
 └── report/        Markdown 报告生成
 schemas/           JSON Schema（套件定义、运行结果）
 suites/            评估套件定义
-governance/        治理记录（角色、模式变更）
+examples/          示例 skill、示例套件、参考报告
+governance/        治理记录（方法来源、角色与模式变更）
 ```
+
+## 示例
+
+`examples/sample-run/REPORT.md` 是一份真实运行产出的报告（`minimax-cn/MiniMax-M2.7`，3 用例 × 2 变体 × 2 重复）：
+
+| 指标 | baseline | 装 skill 后 |
+| --- | --- | --- |
+| 激活率 | — | 100% |
+| 断言通过率 | 0% | 100% |
+| 胜率 | — | 66.7% |
+| 平均耗时 | 12.3s | 10.1s |
+
+典型证据：baseline 把 `answer` 写成嵌套对象（违反契约），装 skill 后稳定输出 `{"answer": "...", "confidence": 0.86}` 扁平契约——而且**更快更省 token**。
 
 ## 与其他仓库的关系
 
