@@ -10,6 +10,19 @@ agent_created: true
 本 skill 只做编排：确定性检查交给脚本，实验执行交给 CLI，AI 判断只出现在两处——
 生成套件（S2）与解读报告（S4）。
 
+## 环境适配（先读）
+
+本 skill 遵循 Agent Skills 规范，可被任何实现了该规范的 agent 加载。
+指令中出现的宿主能力名按以下规则降级：
+
+| 指令中的能力 | WorkBuddy | 其他 agent |
+|---|---|---|
+| 询问用户 | `AskUserQuestion` 工具 | 直接用自然语言向用户提问，等待回答 |
+| 后台执行长命令 | `run_in_background` | 前台执行并等待（评估全程 2–10 分钟） |
+| 呈现报告文件 | `present_files` | 在回复中给出报告文件的绝对路径 |
+
+不确定宿主是否支持某能力时，选降级方案，不要因为工具不存在而中断流程。
+
 ## 全局规则（任何状态都必须遵守）
 
 1. **失败即数据**：单次运行失败、超时、空输出都计入分母，禁止选择性重跑。
@@ -35,7 +48,7 @@ agent_created: true
 从用户消息中提取：**被测 SKILL.md 路径**（必需）、模型（可选）、repeat（可选）、
 用户自带套件（可选）。
 
-- 路径缺失时用 AskUserQuestion 询问，不要猜。
+- 路径缺失时询问用户（WorkBuddy 用 AskUserQuestion），不要猜。
 - 路径存在性立即验证；不存在则报错终止，不进入下一状态。
 - 模型、repeat 未给时用默认值，不回问。
 
@@ -72,7 +85,7 @@ check 不通过 → 按报错修正后重新生成，最多 2 次；仍不通过
 
 ### G1 门控（花钱前确认）
 
-check 通过后、进入 S3 之前，用 AskUserQuestion 确认：
+check 通过后、进入 S3 之前，向用户确认（WorkBuddy 用 AskUserQuestion）：
 
 - 展示套件摘要：任务数、断言总数、任务分层（典型/边界/对抗各几个）
 - 展示预估调用量：`任务数 × 2 × repeat` 次模型运行 + `任务数 × repeat × judgeRepeat` 次评判
@@ -92,13 +105,13 @@ skill-eval eval \
   --out <运行目录>
 ```
 
-用 run_in_background 执行并等待完成，把 CLI 的进度输出（`[run]`/`[judge]` 行）
-精简转述给用户。完成后进入 S4。
+后台执行并等待完成（WorkBuddy 用 run_in_background；其他 agent 前台等待即可），
+把 CLI 的进度输出（`[run]`/`[judge]` 行）精简转述给用户。完成后进入 S4。
 
 ## S4 解读报告
 
 1. 读 `<运行目录>/REPORT.md` 与 `summary.json`。
-2. 用 present_files 呈现 `REPORT.md`（必须，这是最终交付物）。
+2. 呈现 `REPORT.md`（WorkBuddy 用 present_files；其他 agent 在回复中给出绝对路径）。这是最终交付物。
 3. 给用户一段不超过 15 行的解读，包含：
    - verdict（有效 / 无效 / 结论不足）及含义
    - 激活率与胜率（分母写清）
