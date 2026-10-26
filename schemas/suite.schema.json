@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skill-eval.local/schemas/suite.schema.json",
+  "title": "Skill 评估套件",
+  "description": "定义被测 skill 的评估任务集、断言规则与判分配置",
+  "type": "object",
+  "required": ["id", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "套件唯一标识"
+    },
+    "name": {
+      "type": "string",
+      "description": "套件显示名"
+    },
+    "description": {
+      "type": "string",
+      "description": "套件用途说明"
+    },
+    "version": {
+      "type": "string",
+      "description": "套件版本，变更判据时递增"
+    },
+    "skill": {
+      "type": "object",
+      "description": "被测 skill 的身份信息",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "SKILL.md 路径；相对于套件文件或绝对路径"
+        },
+        "version": {
+          "type": "string",
+          "description": "skill 版本标识"
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "contextPrefix": {
+      "type": "string",
+      "description": "每次运行附加的上下文前缀，两侧必须一致"
+    },
+    "repeat": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 3,
+      "description": "每个用例重复运行次数"
+    },
+    "judgeRepeat": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 1,
+      "description": "评委重复轮数，≥2 时启用位置偏好探测"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "评估用例列表",
+      "items": {
+        "type": "object",
+        "required": ["id", "prompt"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "description": "任务文本，两侧完全一致"
+          },
+          "expectedPoints": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "预期要点，供评委参考"
+          },
+          "rubric": {
+            "type": "string",
+            "description": "评分标准，覆盖默认标准"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["scored", "diagnostic"],
+            "default": "scored",
+            "description": "scored 计入胜率；diagnostic 仅诊断不计分"
+          },
+          "assertions": {
+            "type": "array",
+            "description": "规则断言，须在观察结果前冻结",
+            "items": {
+              "type": "object",
+              "required": ["kind"],
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": { "const": "mustMatch" },
+                    "pattern": { "type": "string" },
+                    "flags": { "type": "string" },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "pattern"],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "mustNotMatch" },
+                    "pattern": { "type": "string" },
+                    "flags": { "type": "string" },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "pattern"],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "mustContain" },
+                    "value": { "type": "string" },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "value"],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "mustNotContain" },
+                    "value": { "type": "string" },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "value"],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "jsonSchema" },
+                    "schema": { "type": "object" },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "schema"],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": { "const": "numeric" },
+                    "pattern": { "type": "string" },
+                    "expected": { "type": "number" },
+                    "tolerance": { "type": "number", "minimum": 0 },
+                    "note": { "type": "string" }
+                  },
+                  "required": ["kind", "pattern", "expected"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "difficulty": {
+            "type": "object",
+            "description": "EFC 难度画像",
+            "additionalProperties": false,
+            "properties": {
+              "minSteps": { "type": "number", "minimum": 0.001 },
+              "toolAmbiguity": { "type": "number", "minimum": 0.001 },
+              "stateTracking": { "type": "number", "minimum": 0.001 },
+              "observationNoise": { "type": "number", "minimum": 0, "maximum": 1 },
+              "oracleVisibility": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

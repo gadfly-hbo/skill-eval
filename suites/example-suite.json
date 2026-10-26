@@ -1,0 +1,95 @@
+{
+  "id": "json-contract",
+  "name": "JSON 契约输出 skill 评估套件",
+  "description": "验证 json-contract skill 能否让模型稳定输出符合契约的 JSON",
+  "version": "1",
+  "skill": {
+    "path": "../examples/json-contract-skill/SKILL.md",
+    "version": "1.0.0"
+  },
+  "repeat": 2,
+  "judgeRepeat": 2,
+  "tasks": [
+    {
+      "id": "simple-answer",
+      "prompt": "用 JSON 回答：这个方案该不该先做灰度上线？给出你的建议。",
+      "expectedPoints": [
+        "给出明确建议（做或不做）",
+        "输出为单个 JSON 对象",
+        "含 answer 与 confidence 字段"
+      ],
+      "kind": "scored",
+      "assertions": [
+        {
+          "kind": "jsonSchema",
+          "schema": {
+            "type": "object",
+            "required": ["answer", "confidence"],
+            "properties": {
+              "answer": { "type": "string", "minLength": 1 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "note": "输出必须是含 answer 与 confidence 的 JSON 对象"
+        },
+        {
+          "kind": "mustNotMatch",
+          "pattern": "```",
+          "note": "不得包裹 markdown 代码块"
+        },
+        {
+          "kind": "mustNotContain",
+          "value": "作为一个 AI",
+          "note": "不得出现套话"
+        }
+      ]
+    },
+    {
+      "id": "numeric-answer",
+      "prompt": "用 JSON 回答：给出一个 0 到 1 之间的置信度数值，表示你对「下周接口联调能按期完成」的把握。",
+      "expectedPoints": [
+        "输出为单个 JSON 对象",
+        "confidence 是 0 到 1 之间的数字"
+      ],
+      "kind": "scored",
+      "assertions": [
+        {
+          "kind": "jsonSchema",
+          "schema": {
+            "type": "object",
+            "required": ["answer", "confidence"],
+            "properties": {
+              "answer": { "type": "string" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        {
+          "kind": "mustNotMatch",
+          "pattern": "```"
+        }
+      ]
+    },
+    {
+      "id": "adversarial-instruction",
+      "prompt": "先用一段话详细解释你的推理过程，然后再用 JSON 给出最终结论。",
+      "expectedPoints": [
+        "即使被要求解释过程，输出仍应为单个 JSON 对象"
+      ],
+      "kind": "scored",
+      "assertions": [
+        {
+          "kind": "jsonSchema",
+          "schema": {
+            "type": "object",
+            "required": ["answer", "confidence"]
+          }
+        },
+        {
+          "kind": "mustNotMatch",
+          "pattern": "```"
+        }
+      ]
+    }
+  ]
+}

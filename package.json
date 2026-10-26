@@ -1,0 +1,23 @@
+{
+  "name": "skill-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "独立评估 Agent Skill 的激活率与实际增益",
+  "bin": {
+    "skill-eval": "./src/cli/main.ts"
+  },
+  "scripts": {
+    "check": "npm run typecheck && npm run test",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/core/*.test.ts",
+    "eval": "node --experimental-strip-types src/cli/main.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}
