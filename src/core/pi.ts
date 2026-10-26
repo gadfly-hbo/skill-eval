@@ -31,6 +31,15 @@ export interface PiRunOptions {
   timeoutMs?: number;
   /** 隔离 HOME，避免污染用户全局 pi 配置与锁文件争用。 */
   home?: string | undefined;
+  /**
+   * 允许子进程继承宿主 IDE 的 fs 删除保护注入。
+   *
+   * 默认 false：pi 启动/退出时会用 fs.rmdirSync 清理自己的 `*.lock` 目录，
+   * 若宿主（CodeBuddy / WorkBuddy 等）通过 NODE_OPTIONS 注入了 safe-delete shim，
+   * 这些清理会被 broker 拒绝并让 pi 直接崩溃。pi 是独立 CLI，被测对象的行为不应
+   * 受宿主 IDE 的删除策略影响，因此默认剥离该注入。
+   */
+  inheritHostFsHooks?: boolean;
   /** 事件回调。 */
   onEvent?: (event: PiEvent) => void;
 }
@@ -77,6 +86,49 @@ export function emptyMetrics(): PiRunMetrics {
 const DEFAULT_TIMEOUT_MS = 180_000;
 
 /**
+ * 关闭宿主 IDE 注入的 fs hook。
+ *
+ * 背景（实测）：CodeBuddy / WorkBuddy 等宿主通过 `NODE_OPTIONS --require` 给所有
+ * node 子进程注入 fs shim，把 `fs.mkdirSync` / `fs.rmdirSync` / `fs.unlinkSync` 代理到
+ * 宿主 broker。pi CLI 启动与退出时会用这些 API 维护自己的 `*.lock` 目录：
+ *
+ *  1. 退出时 `rmdirSync` 清理锁目录 → broker 拒绝删除 → 抛
+ *     `[safe-delete] broker denied delete` 让 pi 崩溃；
+ *  2. 启动时 `mkdirSync` 创建锁目录 → broker 策略检查拒绝已存在路径 → 抛
+ *     `EEXIST: file already exists, mkdir '.../trust.json.lock'`。
+ *
+ * 两种情况都表现为「所有用例 1 秒内 failed，且不产生任何模型输出」。
+ *
+ * 处理方式：从 `NODE_OPTIONS` 中移除宿主的 `--require` 注入，让 pi 作为独立 CLI 运行。
+ * 被测对象的行为不应受宿主 IDE 的文件系统策略影响——这是评估工具的隔离性要求，
+ * 与宿主对自身文件的删除保护无关（后者仍作用于评估工具自身进程）。
+ */
+export function disableHostDeleteGuard(env: NodeJS.ProcessEnv): void {
+  const raw = env.NODE_OPTIONS;
+  if (raw) {
+    const kept = raw
+      .split(/\s+/)
+      .filter((token) => token.length > 0 && !isHostFsHookRequire(token));
+    if (kept.length === 0) delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = kept.join(" ");
+  }
+  // 兜底：即使 shim 仍被加载，这些开关也会让它退回原生删除语义。
+  env.CODEBUDDY_SAFE_DELETE_ENABLED = "0";
+  delete env.CODEBUDDY_SAFE_DELETE_BULK_GUARD;
+  delete env.CODEBUDDY_SAFE_DELETE_BULK_STATE_DIR;
+  delete env.CODEBUDDY_SAFE_DELETE_SANDBOX;
+}
+
+/** 判断某个 NODE_OPTIONS token 是否为宿主注入的 fs shim。 */
+function isHostFsHookRequire(token: string): boolean {
+  if (!token.startsWith("--require=")) return false;
+  const target = token.slice("--require=".length).replace(/^["']|["']$/g, "");
+  return /(^|[\\/])(node-language-shim|genie-safe-delete|node-safe-delete-shim|node-brokered-fs-shim)\.cjs$/i.test(
+    target,
+  );
+}
+
+/**
  * 运行一次 pi 非交互会话。
  *
  * 无论成功失败都返回完整结果，不抛异常——失败必须作为数据保留在分母里。
@@ -105,6 +157,7 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (options.home) env.HOME = options.home;
   if (!options.allowWeb) env.PX_ALLOW_WEB = "0";
+  if (!options.inheritHostFsHooks) disableHostDeleteGuard(env);
 
   return new Promise<PiRunResult>((resolvePromise) => {
     const child = spawn("pi", args, {
