@@ -34,8 +34,8 @@ agent_created: true
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| 被评模型 | `minimax-cn/MiniMax-M3` | 用户指定则以用户为准 |
-| 评委模型 | `minimax-cn/MiniMax-M3.1-Flash` | 与被评模型不同，避免自我偏好 |
+| 被评模型 | `minimax-cn/MiniMax-M3.1-Flash` | 用户指定则以用户为准 |
+| 评委模型 | `xiaomi-token-plan-cn/mimo-v2.6-flash` | 与被评模型不同 provider，避免自我偏好 |
 | repeat | 2 | 每用例重复次数 |
 | judgeRepeat | 2 | 评委轮数，≥2 才有位置偏好探测 |
 | pi 隔离 HOME | `~/.skill-eval/pi-home` | preflight 会自动准备 |
