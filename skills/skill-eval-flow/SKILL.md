@@ -34,8 +34,8 @@ agent_created: true
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| 被评模型 | `minimax-cn/MiniMax-M2.7` | 便宜；用户指定则以用户为准 |
-| 评委模型 | 同被评模型 | 报告会自动标注自我偏好风险 |
+| 被评模型 | `minimax-cn/MiniMax-M3` | 用户指定则以用户为准 |
+| 评委模型 | `minimax-cn/MiniMax-M3.1-Flash` | 与被评模型不同，避免自我偏好 |
 | repeat | 2 | 每用例重复次数 |
 | judgeRepeat | 2 | 评委轮数，≥2 才有位置偏好探测 |
 | pi 隔离 HOME | `~/.skill-eval/pi-home` | preflight 会自动准备 |
@@ -99,7 +99,8 @@ check 通过后、进入 S3 之前，向用户确认（WorkBuddy 用 AskUserQues
 skill-eval eval \
   --suite <运行目录>/suite.json \
   --skill <被测SKILL.md绝对路径> \
-  --model <模型> \
+  --model <被评模型> \
+  --judge-model <评委模型> \
   --home ~/.skill-eval/pi-home \
   --repeat <n> --judge-repeat <n> \
   --out <运行目录>

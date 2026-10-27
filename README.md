@@ -38,7 +38,8 @@ npm run check                    # 类型检查 + 单元测试
 npm run eval -- eval \
   --suite suites/example-suite.json \
   --skill path/to/skill/SKILL.md \
-  --model minimax-cn/MiniMax-M2.7 \
+  --model minimax-cn/MiniMax-M3 \
+  --judge-model minimax-cn/MiniMax-M3.1-Flash \
   --repeat 3 \
   --out runs/exp-001
 ```
@@ -48,11 +49,9 @@ npm run eval -- eval \
 pi CLI 会用 `~/.pi/agent/` 下的锁文件，且并发运行会争用。评估时建议用隔离 HOME：
 
 ```bash
-mkdir -p /tmp/skill-eval-pi-home/.pi/agent
-cp ~/.pi/agent/{auth.json,models-store.json,models.json} /tmp/skill-eval-pi-home/.pi/agent/
-chmod 600 /tmp/skill-eval-pi-home/.pi/agent/auth.json
+bash scripts/setup-pi-home.sh      # 默认建在 ~/.skill-eval/pi-home
 
-npm run eval -- eval --suite ... --home /tmp/skill-eval-pi-home
+npm run eval -- eval --suite ... --home ~/.skill-eval/pi-home
 ```
 
 ### 常用命令
