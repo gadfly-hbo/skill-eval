@@ -83,7 +83,18 @@ export function emptyMetrics(): PiRunMetrics {
   return { totalTokens: 0, totalCost: 0, toolCalls: 0, output: "", readPaths: [], toolNames: [] };
 }
 
-const DEFAULT_TIMEOUT_MS = 180_000;
+/**
+ * 单次运行的默认超时。
+ *
+ * 取 480s 而非 180s 的实测依据（2026-11-01 阴性对照实验）：
+ * 被测 skill 为 data-analysis v1.8.0 时，六段契约 + 门禁脚本 + 数字复算的
+ * 引导让单次运行需 156–317s、消耗 175K+ tokens。180s 会把这类
+ * 「慢但有效」的 skill 误杀为 failed（超时），把真实增益从 +50.0pp
+ * 压到 +5.2pp，判定从 effective 翻成 inconclusive。
+ *
+ * 重量级 skill 是常态而非例外，超时必须留足余量。
+ */
+const DEFAULT_TIMEOUT_MS = 480_000;
 
 /**
  * 关闭宿主 IDE 注入的 fs hook。
