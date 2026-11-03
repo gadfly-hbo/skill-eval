@@ -40,6 +40,8 @@ agent_created: true
 | judgeRepeat | 2 | 评委轮数，≥2 才有位置偏好探测 |
 | pi 隔离 HOME | `~/.skill-eval/pi-home` | preflight 会自动准备 |
 | 运行目录 | `~/.skill-eval/runs/<YYYYMMDD-HHmmss>-<skill名>/` | 套件、产物、报告都在这里 |
+| 归档仓库 | 评估所在项目的 git 仓库根目录 | 通过 `skills/` + `package.json` 探测，也可用 `--repo` 指定 |
+| 归档根目录 | `<仓库>/archive/` | 必须在 `skills/` 之外，否则会被 agent 自动扫描 |
 
 ---
 
@@ -122,6 +124,55 @@ skill-eval eval \
 
 报告缺失时呈现 `summary.json` 与 cases 目录并说明异常，不伪造结论。
 
+## S5 归档（verdict 有效时）
+
+评估结论为 `effective` 时，把这份通过测评的 skill 快照存进项目仓库。
+
+### G2 门控（花钱后确认）
+
+先看 verdict：
+
+- `effective` → 继续归档
+- `inconclusive` → 询问用户是否放行（放行会标记 `provisional=true`）；用户不明确就跳过归档
+- `ineffective` → **不归档**，告知用户被证伪的 skill 不进归档区
+
+用户在本轮明确说过「全自动」「不用问」时跳过 G2。
+
+### 执行归档
+
+```bash
+skill-eval archive \
+  --run <运行目录> \
+  --skill <被测SKILL.md绝对路径> \
+  --repo <项目仓库路径> \
+  [--suite <套件id> --suite-version <版本> --skill-version <版本>]
+```
+
+`--run` 是主入口——归档必须绑定某一次评估的产物，只给 skill 路径无法确定对应的
+verdict 与内容哈希。CLI 会自行从运行产物反推 skill 路径，`--skill` 可省略。
+
+产出结构：
+
+```
+archive/<skill名>/
+  <版本标识>/          # 版本标识 = <frontmatter版本>__<时间戳>
+    SKILL.md           # skill 本体快照
+    references/ scripts/   # 附属文件一并复制（缺了 skill 跑不起来）
+    ARCHIVE.md         # 元信息卡：哈希、模型、结论、复现命令
+    REPORT.md          # 评估报告副本，使归档目录自包含
+  latest.json          # 当前版本指针
+```
+
+要点：
+
+- **版本标识**默认取 frontmatter 的 `version` 字段 + 时间戳（如 `1.8.0__20261103-2303`）；
+  frontmatter 没写版本则退化为纯时间戳
+- **幂等**：内容哈希相同则跳过，不产生重复归档
+- **不改原文件**：只读复制，绝不修改被测 skill
+- **不自动 commit**：归档后把变更摘要告诉用户，由用户决定是否提交
+
+归档完成后向用户汇报：归档路径、版本标识、内容哈希、复制文件数。
+
 ---
 
 ## 异常速查
@@ -134,6 +185,9 @@ skill-eval eval \
 | verdict = 结论不足 | 激活率与胜率只达标其一 | 看报告第 4 节对照表定位是哪个不够 |
 | 重量级 skill 的运行被判 failed | 触发了超时（默认 480s），不是 skill 无效 | 用 `--timeout` 调大重跑；报告中必须标注「超时」而非「无效」 |
 | 断言通过率很高但增益很低 | 断言写的是模型本来就会做的事，无区分度 | 用阴性对照定位哪些断言 baseline 也能过，见下节 |
+| 归档报「拒绝归档：评估结论为无效」 | 该 skill 被证伪，不应进归档区 | 正常行为，不重试。改 description 后重新评估 |
+| 归档报「位于 skills/ 下」 | 归档目标会被 agent 自动扫描，污染后续评估 | 换 `--archive-root` 到仓库的 `archive/` 目录 |
+| 归档后 git 里有大量二进制/大文件 | 被测 skill 含大体积附属文件 | 确认是否该入版本库；必要时在 `.gitignore` 排除特定子目录 |
 
 ---
 

@@ -193,6 +193,19 @@ export interface EvaluationSummary {
   disagreements: Disagreement[];
   totalCost: number;
   totalTokens: number;
+  /**
+   * 套件元信息。
+   *
+   * 由 CLI 在落盘时补充——套件定义不在 runner 的职责范围内，
+   * 但归档等下游动作需要知道「这次测的是哪套断言」。
+   */
+  suiteMeta?: {
+    suiteId: string;
+    suiteVersion: string;
+    skillVersion: string;
+    /** 被测 skill 路径。 */
+    skillPath: string;
+  };
 }
 
 export interface Disagreement {

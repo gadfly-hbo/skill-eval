@@ -1,0 +1,19 @@
+name: "data-analysis"
+version: "1.8.0"
+description: "基于杜邦分解与经营指标体系，按六段契约输出可复算的运营数据分析报告，含趋势拆解、异常定位与责任人时限。触发词：分析数据、看趋势、找异常。内置脏数据体检，可直接试用。天箭星科技出品。"
+description_en: "Includes built-in clean and dirty sample datasets for instant trial. Break down operations metrics with DuPont decomposition, locate anomalies with explicit thresholds, screen for data-engineering traps, and deliver a six-section report with named owners and deadlines. Use for metric analysis and anomaly detection; not for process mapping or improvement planning."
+description_zh: "基于杜邦分解与经营指标体系，按六段契约输出可复算的运营数据分析报告，含趋势拆解、异常定位与责任人时限。触发词：分析数据、看趋势、找异常。内置脏数据体检，可直接试用。天箭星科技出品。"
+display_name: "运营数据分析"
+display_name_en: "Operations Data Analysis"
+category: "04-DataAI"
+author: "天箭星科技"
+tags:
+- 数据分析
+- 运营
+- 分析数据
+triggers:
+- 分析数据
+- 看趋势
+- 找异常
+- 示例数据
+- 体检数据

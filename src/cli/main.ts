@@ -14,6 +14,11 @@ import { dirname, resolve, join, isAbsolute } from "node:path";
 import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant, type EvaluationSummary } from "../core/runner.ts";
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
 import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
+import {
+  archiveSkill,
+  collectArchiveInput,
+  type ArchiveResult,
+} from "../core/archive.ts";
 
 interface SuiteFile {
   id: string;
@@ -79,6 +84,7 @@ function printHelp(): void {
   skill-eval eval --suite <套件.json> --skill <SKILL.md> [选项]
   skill-eval check --suite <套件.json>
   skill-eval report --run <运行目录>
+  skill-eval archive --run <运行目录> --skill <SKILL.md>
   skill-eval threshold [--score-drop <n>] [--activation-rate-drop <n>]
 
 eval 选项：
@@ -103,6 +109,15 @@ report 选项：
   --suite <id>            套件标识（仅写入报告元信息）
   --skill <path>          被测 skill 路径（仅写入报告元信息）
 
+archive 选项：
+  --run <dir>             评估运行目录（必填，提供 verdict 与元信息）
+  --skill <path>          被测 SKILL.md 路径（可从运行产物推断）
+  --archive-root <dir>    归档根目录（默认 <仓库>/archive）
+  --repo <dir>            仓库根目录（用于安全校验，默认自动探测）
+  --version <id>          显式版本标识（默认 <frontmatter版本>__<时间戳>）
+  --allow-inconclusive    放行「结论不足」的评估，默认拒绝
+  --force                 忽略 verdict 强制归档（用于诊断，不建议）
+
 产物布局：
   <out>/cases/<variant>/<task>/<attempt>/  单次运行证据（events.json / output.md / result.json）
   <out>/pairwise/<variant>-<task>-<attempt>/ 评委产物（forward / reversed，各含 output.md / prompt.md / events.json）
@@ -121,6 +136,8 @@ async function main(): Promise<number> {
       return commandCheck(args);
     case "report":
       return await commandReport(args);
+    case "archive":
+      return await commandArchive(args);
     case "threshold":
       return commandThreshold(args);
     case "help":
@@ -267,6 +284,12 @@ async function commandEval(args: CliArgs): Promise<number> {
   });
 
   // 落盘运行摘要，便于重新生成报告。
+  summary.suiteMeta = {
+    suiteId: suite.id,
+    suiteVersion: suite.version ?? "未标注",
+    skillVersion: suite.skill?.version ?? "未标注",
+    skillPath,
+  };
   writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
 
   const meta: ReportMeta = {
@@ -424,6 +447,129 @@ async function commandReport(args: CliArgs): Promise<number> {
   process.stdout.write(`报告已重新生成：${reportPath}\n`);
   process.stdout.write(`${decision.verdict}\n${decision.reason}\n`);
   return 0;
+}
+
+/**
+ * 归档一次通过的评估。
+ *
+ * 以 `--run` 为主入口——归档必须绑定某一次评估的产物，只给 skill 路径
+ * 无法确定对应的 verdict 与内容哈希。verdict 复用 decideVerdict，
+ * 不产生第二套判定逻辑。
+ */
+async function commandArchive(args: CliArgs): Promise<number> {
+  const runDir = flagString(args.flags, "run");
+  if (!runDir) {
+    process.stderr.write("缺少 --run\n");
+    return 1;
+  }
+
+  const absoluteRun = resolve(runDir);
+  const summaryPath = join(absoluteRun, "summary.json");
+  if (!existsSync(summaryPath)) {
+    process.stderr.write(`未找到运行摘要：${summaryPath}\n`);
+    return 1;
+  }
+
+  const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
+
+  // 被测 skill 路径：命令行优先，否则从运行产物的 skillPaths 反推。
+  const skillFlag = flagString(args.flags, "skill");
+  const inferred = summary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0];
+  const skillPath = skillFlag ? resolve(skillFlag) : inferred ? resolve(inferred) : undefined;
+
+  if (!skillPath) {
+    process.stderr.write("无法确定被测 skill 路径：用 --skill 指定\n");
+    return 1;
+  }
+  if (!existsSync(skillPath)) {
+    process.stderr.write(`被测 skill 不存在：${skillPath}\n`);
+    return 1;
+  }
+
+  const decision = decideVerdict(summary);
+  const allowInconclusive = args.flags["allow-inconclusive"] === true;
+  const force = args.flags["force"] === true;
+
+  // 门控：只有「有效」才归档。「结论不足」需显式放行，「无效」永不放行。
+  if (!force) {
+    if (decision.verdict === "ineffective") {
+      process.stderr.write(
+        `拒绝归档：评估结论为「无效」。\n  ${decision.reason}\n` +
+          "  被证伪的 skill 不应进入归档区。可用 --force 强制归档（仅用于诊断）。\n",
+      );
+      return 1;
+    }
+    if (decision.verdict === "inconclusive" && !allowInconclusive) {
+      process.stderr.write(
+        `拒绝归档：评估结论为「结论不足」。\n  ${decision.reason}\n` +
+          "  如确认 skill 本身可用（如只是重复次数偏小），加 --allow-inconclusive 放行，\n" +
+          "  归档后会在 latest.json 中标记 provisional=true。\n",
+      );
+      return 1;
+    }
+  }
+
+  // 仓库根目录：显式指定，否则从当前工作目录向上找含 skills/ 的目录。
+  const repoFlag = flagString(args.flags, "repo");
+  const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
+  const archiveRoot = flagString(args.flags, "archive-root")
+    ? resolve(flagString(args.flags, "archive-root")!)
+    : repoRoot
+      ? join(repoRoot, "archive")
+      : resolve("archive");
+
+  const input = collectArchiveInput({
+    runDir: absoluteRun,
+    skillPath,
+    verdict: decision.verdict,
+    verdictReason: decision.reason,
+    suiteId: flagString(args.flags, "suite"),
+    suiteVersion: flagString(args.flags, "suite-version"),
+    skillVersion: flagString(args.flags, "skill-version"),
+  });
+
+  let result: ArchiveResult;
+  try {
+    result = archiveSkill({
+      input,
+      runDir: absoluteRun,
+      skillPath,
+      archiveRoot,
+      repoRoot: repoRoot ?? undefined,
+      version: flagString(args.flags, "version"),
+      allowInconclusive,
+    });
+  } catch (error) {
+    process.stderr.write(`归档失败：${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  if (result.skipped) {
+    process.stdout.write(`已存在同内容版本，跳过：${result.versionDir}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`归档完成：${result.versionDir}\n`);
+  process.stdout.write(`  版本标识：${result.version}\n`);
+  process.stdout.write(`  结论：${decision.verdict}${result.provisional ? "（provisional）" : ""}\n`);
+  process.stdout.write(`  复制文件：${result.fileCount} 个（跳过噪声 ${result.skippedNoise} 项）\n`);
+  process.stdout.write(`  内容哈希：${input.skillHash}\n`);
+  process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
+  return 0;
+}
+
+/** 从起始目录向上寻找含 skills/ 的仓库根目录。 */
+function detectRepoRoot(startDir: string): string | null {
+  let current = resolve(startDir);
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (existsSync(join(current, "skills")) && existsSync(join(current, "package.json"))) {
+      return current;
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
 }
 
 /** 查看回归门禁阈值。 */

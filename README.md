@@ -63,6 +63,9 @@ npm run eval -- check --suite suites/example-suite.json
 # 从原始产物重算并重新生成报告（汇总逻辑修正后用这个）
 npm run eval -- report --run runs/exp-001 --suite-file suites/example-suite.json
 
+# 把通过测评的 skill 快照存进仓库 archive/
+npm run eval -- archive --run runs/exp-001 --repo .
+
 # 查看回归门禁阈值
 npm run eval -- threshold
 ```
@@ -78,11 +81,14 @@ src/
 │   ├── assertions.ts    规则断言判定
 │   ├── efc.ts           反馈效率 EFC 评分
 │   ├── regression.ts    回归门禁
+│   ├── archive.ts       通过测评的 skill 归档
 │   └── pi.ts            pi CLI 适配层
 ├── cli/           命令行入口
 └── report/        Markdown 报告生成
 schemas/           JSON Schema（套件定义、运行结果）
 suites/            评估套件定义
+skills/            工具自身的 skill（skill-eval-flow）
+archive/           通过测评的 skill 快照（版本化存档）
 examples/          示例 skill、示例套件、参考报告
 governance/        治理记录（方法来源、角色与模式变更）
 ```

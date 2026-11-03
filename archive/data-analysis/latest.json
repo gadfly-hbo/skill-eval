@@ -1,0 +1,10 @@
+{
+  "skill": "data-analysis",
+  "version": "1.8.0__20261101-1435",
+  "skillHash": "sha256:25e72e3e5b5ec3ca",
+  "verdict": "effective",
+  "provisional": false,
+  "archivedAt": "2026-11-03T15:13:16.894Z",
+  "runId": "run-20261101-143506-d421a79c",
+  "path": "data-analysis/1.8.0__20261101-1435"
+}
