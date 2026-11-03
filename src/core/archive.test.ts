@@ -230,6 +230,23 @@ test("assertArchiveTargetSafe 放行与 skills 同级的其他目录", () => {
   rmSync(repo, { recursive: true, force: true });
 });
 
+test("assertArchiveTargetSafe 在没有 repoRoot 时也拒绝 skills 路径段", () => {
+  // 绕过场景：用户只传 --archive-root <某处>/skills/x，没给 --repo。
+  assert.throws(
+    () => assertArchiveTargetSafe("/tmp/whatever/skills/bad/skill-name/v1"),
+    /skills\/ 下/,
+  );
+  assert.throws(
+    () => assertArchiveTargetSafe("/tmp/whatever/skills/v1"),
+    /skills\/ 下/,
+  );
+});
+
+test("assertArchiveTargetSafe 放行不含 skills 段的绝对路径", () => {
+  assert.doesNotThrow(() => assertArchiveTargetSafe("/tmp/whatever/archive/skill-name/v1"));
+  assert.doesNotThrow(() => assertArchiveTargetSafe("/tmp/my-skills-store/archive/v1"));
+});
+
 // ---------------------------------------------------------------- 元信息收集
 
 test("collectArchiveInput 从运行产物提取元信息", () => {
@@ -530,6 +547,32 @@ test("archiveSkill 拒绝把归档写进 skills/ 下", () => {
         skillPath: join(skillDir, "SKILL.md"),
         archiveRoot: join(root, "skills", "archived"),
         repoRoot: root,
+        version: "v1",
+      }),
+    /skills\/ 下/,
+  );
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("archiveSkill 在没有 repoRoot 时仍拒绝 skills 路径段", () => {
+  const root = makeTmpDir("unsafe2");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  const runDir = makeRun(root);
+
+  const input = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "测试",
+  });
+
+  assert.throws(
+    () =>
+      archiveSkill({
+        input,
+        runDir,
+        skillPath: join(skillDir, "SKILL.md"),
+        archiveRoot: join(root, "skills", "bad"),
         version: "v1",
       }),
     /skills\/ 下/,

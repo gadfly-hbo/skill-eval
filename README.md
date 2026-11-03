@@ -66,6 +66,9 @@ npm run eval -- report --run runs/exp-001 --suite-file suites/example-suite.json
 # 把通过测评的 skill 快照存进仓库 archive/
 npm run eval -- archive --run runs/exp-001 --repo .
 
+# 一条命令跑完直接入库：评估 + 归档
+npm run eval -- eval --suite suites/example-suite.json --model <被评模型> --archive-to .
+
 # 查看回归门禁阈值
 npm run eval -- threshold
 ```

@@ -99,6 +99,10 @@ eval 选项：
   --context <text>        附加上下文前缀（覆盖套件）
   --no-keyword-signal     关闭关键词弱证据，仅用工具调用取证
   --timeout <ms>          单次运行超时
+  --archive-to <dir>      评估后把通过测评的 skill 归档到该仓库（默认归档到 <dir>/archive）
+  --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
+  --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
+  --allow-inconclusive    允许归档「结论不足」的评估（配合 --archive-to 使用）
 
 check 选项：
   --suite <path>          仅校验套件结构，不调用模型
@@ -317,6 +321,40 @@ async function commandEval(args: CliArgs): Promise<number> {
   writeFileSync(reportPath, report, "utf8");
 
   process.stderr.write(`\n报告已生成：${reportPath}\n`);
+
+  // 可选：把通过测评的 skill 归档进仓库。
+  // 传 --archive-to <仓库根> 即启用；不传则 eval 行为与从前完全一致。
+  const archiveTo = flagString(args.flags, "archive-to");
+  if (archiveTo) {
+    const repoRoot = resolve(archiveTo);
+    const archiveRoot = flagString(args.flags, "archive-root")
+      ? resolve(flagString(args.flags, "archive-root")!)
+      : join(repoRoot, "archive");
+
+    process.stderr.write(`\n归档到 ${repoRoot} …\n`);
+    const outcome = performArchive({
+      runDir: outDir,
+      skillPath,
+      summary,
+      decision: verdict,
+      archiveRoot,
+      repoRoot,
+      version: flagString(args.flags, "archive-version"),
+      allowInconclusive: args.flags["allow-inconclusive"] === true,
+      force: false,
+      suiteId: suite.id,
+      suiteVersion: suite.version,
+      skillVersion: suite.skill?.version,
+    });
+
+    // 归档失败不影响评估结论——评估本身已经成功，报告已落盘。
+    if (outcome.ok && outcome.result && outcome.input) {
+      printArchiveResult(outcome.result, outcome.input, verdict.verdict);
+    } else {
+      process.stderr.write("归档未完成，评估结论不受影响。\n");
+    }
+  }
+
   process.stdout.write(`${verdict.verdict}\n${verdict.reason}\n`);
 
   return summary.status === "failed" ? 1 : 0;
@@ -450,6 +488,91 @@ async function commandReport(args: CliArgs): Promise<number> {
 }
 
 /**
+ * 执行归档的核心流程。
+ *
+ * `archive` 子命令与 `eval --archive-to` 共用此函数——
+ * 两条入口必须走同一套门控与写入逻辑，否则会出现「手动归档能过、
+ * 自动归档被拒」这种行为不一致。
+ */
+function performArchive(options: {
+  runDir: string;
+  skillPath: string;
+  summary: EvaluationSummary;
+  decision: { verdict: "effective" | "ineffective" | "inconclusive"; reason: string };
+  archiveRoot: string;
+  repoRoot: string | null;
+  version?: string | undefined;
+  allowInconclusive: boolean;
+  force: boolean;
+  suiteId?: string | undefined;
+  suiteVersion?: string | undefined;
+  skillVersion?: string | undefined;
+}): { ok: boolean; result?: ArchiveResult; input?: ReturnType<typeof collectArchiveInput> } {
+  const { decision } = options;
+
+  // 门控：只有「有效」才归档。「结论不足」需显式放行，「无效」永不放行。
+  if (!options.force) {
+    if (decision.verdict === "ineffective") {
+      process.stderr.write(
+        `拒绝归档：评估结论为「无效」。\n  ${decision.reason}\n` +
+          "  被证伪的 skill 不应进入归档区。可用 --force 强制归档（仅用于诊断）。\n",
+      );
+      return { ok: false };
+    }
+    if (decision.verdict === "inconclusive" && !options.allowInconclusive) {
+      process.stderr.write(
+        `拒绝归档：评估结论为「结论不足」。\n  ${decision.reason}\n` +
+          "  如确认 skill 本身可用（如只是重复次数偏小），加 --allow-inconclusive 放行，\n" +
+          "  归档后会在 latest.json 中标记 provisional=true。\n",
+      );
+      return { ok: false };
+    }
+  }
+
+  const input = collectArchiveInput({
+    runDir: options.runDir,
+    skillPath: options.skillPath,
+    verdict: decision.verdict,
+    verdictReason: decision.reason,
+    suiteId: options.suiteId,
+    suiteVersion: options.suiteVersion,
+    skillVersion: options.skillVersion,
+  });
+
+  let result: ArchiveResult;
+  try {
+    result = archiveSkill({
+      input,
+      runDir: options.runDir,
+      skillPath: options.skillPath,
+      archiveRoot: options.archiveRoot,
+      repoRoot: options.repoRoot ?? undefined,
+      version: options.version,
+      allowInconclusive: options.allowInconclusive,
+    });
+  } catch (error) {
+    process.stderr.write(`归档失败：${error instanceof Error ? error.message : String(error)}\n`);
+    return { ok: false };
+  }
+
+  return { ok: true, result, input };
+}
+
+/** 打印归档结果。 */
+function printArchiveResult(result: ArchiveResult, input: { skillHash: string }, verdict: string): void {
+  if (result.skipped) {
+    process.stdout.write(`已存在同内容版本，跳过：${result.versionDir}\n`);
+    return;
+  }
+  process.stdout.write(`归档完成：${result.versionDir}\n`);
+  process.stdout.write(`  版本标识：${result.version}\n`);
+  process.stdout.write(`  结论：${verdict}${result.provisional ? "（provisional）" : ""}\n`);
+  process.stdout.write(`  复制文件：${result.fileCount} 个（跳过噪声 ${result.skippedNoise} 项）\n`);
+  process.stdout.write(`  内容哈希：${input.skillHash}\n`);
+  process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
+}
+
+/**
  * 归档一次通过的评估。
  *
  * 以 `--run` 为主入口——归档必须绑定某一次评估的产物，只给 skill 路径
@@ -490,25 +613,6 @@ async function commandArchive(args: CliArgs): Promise<number> {
   const allowInconclusive = args.flags["allow-inconclusive"] === true;
   const force = args.flags["force"] === true;
 
-  // 门控：只有「有效」才归档。「结论不足」需显式放行，「无效」永不放行。
-  if (!force) {
-    if (decision.verdict === "ineffective") {
-      process.stderr.write(
-        `拒绝归档：评估结论为「无效」。\n  ${decision.reason}\n` +
-          "  被证伪的 skill 不应进入归档区。可用 --force 强制归档（仅用于诊断）。\n",
-      );
-      return 1;
-    }
-    if (decision.verdict === "inconclusive" && !allowInconclusive) {
-      process.stderr.write(
-        `拒绝归档：评估结论为「结论不足」。\n  ${decision.reason}\n` +
-          "  如确认 skill 本身可用（如只是重复次数偏小），加 --allow-inconclusive 放行，\n" +
-          "  归档后会在 latest.json 中标记 provisional=true。\n",
-      );
-      return 1;
-    }
-  }
-
   // 仓库根目录：显式指定，否则从当前工作目录向上找含 skills/ 的目录。
   const repoFlag = flagString(args.flags, "repo");
   const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
@@ -518,43 +622,24 @@ async function commandArchive(args: CliArgs): Promise<number> {
       ? join(repoRoot, "archive")
       : resolve("archive");
 
-  const input = collectArchiveInput({
+  const outcome = performArchive({
     runDir: absoluteRun,
     skillPath,
-    verdict: decision.verdict,
-    verdictReason: decision.reason,
+    summary,
+    decision,
+    archiveRoot,
+    repoRoot,
+    version: flagString(args.flags, "version"),
+    allowInconclusive,
+    force,
     suiteId: flagString(args.flags, "suite"),
     suiteVersion: flagString(args.flags, "suite-version"),
     skillVersion: flagString(args.flags, "skill-version"),
   });
 
-  let result: ArchiveResult;
-  try {
-    result = archiveSkill({
-      input,
-      runDir: absoluteRun,
-      skillPath,
-      archiveRoot,
-      repoRoot: repoRoot ?? undefined,
-      version: flagString(args.flags, "version"),
-      allowInconclusive,
-    });
-  } catch (error) {
-    process.stderr.write(`归档失败：${error instanceof Error ? error.message : String(error)}\n`);
-    return 1;
-  }
+  if (!outcome.ok || !outcome.result || !outcome.input) return 1;
 
-  if (result.skipped) {
-    process.stdout.write(`已存在同内容版本，跳过：${result.versionDir}\n`);
-    return 0;
-  }
-
-  process.stdout.write(`归档完成：${result.versionDir}\n`);
-  process.stdout.write(`  版本标识：${result.version}\n`);
-  process.stdout.write(`  结论：${decision.verdict}${result.provisional ? "（provisional）" : ""}\n`);
-  process.stdout.write(`  复制文件：${result.fileCount} 个（跳过噪声 ${result.skippedNoise} 项）\n`);
-  process.stdout.write(`  内容哈希：${input.skillHash}\n`);
-  process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
+  printArchiveResult(outcome.result, outcome.input, decision.verdict);
   return 0;
 }
 

@@ -108,6 +108,8 @@ skill-eval eval \
   --out <运行目录>
 ```
 
+需要「跑完直接入库」时，追加 `--archive-to <项目仓库路径>`，归档会在 S5 完成。
+
 后台执行并等待完成（WorkBuddy 用 run_in_background；其他 agent 前台等待即可），
 把 CLI 的进度输出（`[run]`/`[judge]` 行）精简转述给用户。完成后进入 S4。
 
@@ -140,6 +142,22 @@ skill-eval eval \
 
 ### 执行归档
 
+**方式一（推荐）**：在 S3 的 eval 命令里直接带 `--archive-to`，评估与归档一次完成。
+
+```bash
+skill-eval eval \
+  --suite <运行目录>/suite.json \
+  --skill <被测SKILL.md绝对路径> \
+  --model <被评模型> \
+  --judge-model <评委模型> \
+  --home ~/.skill-eval/pi-home \
+  --repeat <n> --judge-repeat <n> \
+  --archive-to <项目仓库路径> \
+  --out <运行目录>
+```
+
+**方式二**：评估已跑完、事后补归档。
+
 ```bash
 skill-eval archive \
   --run <运行目录> \
@@ -148,8 +166,11 @@ skill-eval archive \
   [--suite <套件id> --suite-version <版本> --skill-version <版本>]
 ```
 
-`--run` 是主入口——归档必须绑定某一次评估的产物，只给 skill 路径无法确定对应的
-verdict 与内容哈希。CLI 会自行从运行产物反推 skill 路径，`--skill` 可省略。
+两种方式走**同一套门控与写入逻辑**。`--run` 是归档的主入口——归档必须绑定
+某一次评估的产物，只给 skill 路径无法确定对应的 verdict 与内容哈希。
+
+> 仓库路径用 `--repo` 显式指定；不指定时 CLI 会从当前目录向上探测含
+> `skills/` + `package.json` 的目录，探测不到则归档到 `./archive`。
 
 产出结构：
 

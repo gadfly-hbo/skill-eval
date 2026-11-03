@@ -225,14 +225,30 @@ export function copySkillTree(srcDir: string, destDir: string): { fileCount: num
  *
  * `skills/` 下的目录会被 pi / Claude Code / Codex 自动发现，
  * 归档内容一旦进入那里，就会污染后续评估（见 AGENTS.md 反作弊一节）。
+ *
+ * 检查归档根目录的**每一段路径**，而不只是相对某个仓库根的 `skills/`——
+ * 否则用户直接传 `--archive-root <某处>/skills/x` 时校验会被绕过。
  */
-export function assertArchiveTargetSafe(versionDir: string, repoRoot: string): void {
-  const skillsDir = resolve(join(repoRoot, "skills"));
+export function assertArchiveTargetSafe(versionDir: string, repoRoot?: string | undefined): void {
   const target = resolve(versionDir);
-  const rel = relative(skillsDir, target);
-  const insideSkills = rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep));
-  if (insideSkills) {
-    throw new Error(`归档目标位于 skills/ 下，会被 agent 自动扫描并污染评估：${target}`);
+
+  // 路径任一段名为 skills 即视为落在扫描路径内。
+  const segments = target.split(sep);
+  if (segments.includes("skills")) {
+    throw new Error(
+      `归档目标位于 skills/ 下，会被 agent 自动扫描并污染评估：${target}\n` +
+        "  请改用 <仓库>/archive/ 或其它不含 skills 段的路径。",
+    );
+  }
+
+  // 若已知仓库根，额外确认没有落在其 skills/ 下（覆盖符号链接等边界情况）。
+  if (repoRoot) {
+    const skillsDir = resolve(join(repoRoot, "skills"));
+    const rel = relative(skillsDir, target);
+    const insideSkills = rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep));
+    if (insideSkills) {
+      throw new Error(`归档目标位于 skills/ 下，会被 agent 自动扫描并污染评估：${target}`);
+    }
   }
 }
 
@@ -470,9 +486,8 @@ export function archiveSkill(options: ArchiveOptions & { input: ArchiveInput }):
 
   const skillArchiveRoot = join(archiveRoot, skillName);
 
-  if (repoRoot) {
-    assertArchiveTargetSafe(join(skillArchiveRoot, baseVersion), repoRoot);
-  }
+  // 安全校验必须总是执行——不能因为没传 repoRoot 就跳过。
+  assertArchiveTargetSafe(join(skillArchiveRoot, baseVersion), repoRoot);
 
   // 选一个不冲突的版本目录：同名同哈希 → 幂等跳过；同名不同哈希 → 加后缀。
   let version = baseVersion;
