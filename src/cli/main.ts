@@ -25,6 +25,7 @@ import {
   prunePendingAfterArchive,
   ensurePendingRoot,
 } from "../core/pending.ts";
+import { toPendingJson } from "../core/pending-json.ts";
 import {
   archiveSkill,
   collectArchiveInput,
@@ -143,6 +144,7 @@ pending 选项：
   --skill <path>          登记该 skill 到待测评区；不给则列出待测 skill
   --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
   --init                  只创建暂存区目录（方便先把 skill 文件夹拖进去）
+  --json                  输出 JSON（给 agent 解析用）
 
   待测评区是常驻目录：skill 文件夹可以直接拖进去，不一定要用 --skill 登记。
 
@@ -843,6 +845,14 @@ function commandPending(args: CliArgs): number {
   // 列表模式——同时确保目录存在，用户才知道往哪放。
   ensurePendingRoot({ repoRoot, pendingRoot });
   const state = readPendingState({ repoRoot, pendingRoot });
+
+  // JSON 模式：给 agent 解析用。待测评区的 skill 需要能被自动发现，
+  // 人类可读的表格对 agent 来说不如结构化输出可靠。
+  if (args.flags["json"] === true) {
+    process.stdout.write(`${JSON.stringify(toPendingJson(state), null, 2)}\n`);
+    return 0;
+  }
+
   if (!state.exists) {
     process.stdout.write(`待测评区为空（目录不存在）：${state.pendingRoot}\n`);
     return 0;

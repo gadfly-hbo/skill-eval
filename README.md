@@ -72,7 +72,7 @@ npm run eval -- pending --repo . --skill ~/.workbuddy/skills/my-skill/SKILL.md
 # 只把目录建出来，然后直接把 skill 文件夹拖进去
 npm run eval -- pending --repo . --init
 
-# 查看待测评区里有哪些 skill
+# 查看待测评区里有哪些 skill（--json 给 agent 解析用）
 npm run eval -- pending --repo .
 
 # 一条命令跑完直接入库：评估 + 归档
