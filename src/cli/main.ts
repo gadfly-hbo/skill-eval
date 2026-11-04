@@ -15,6 +15,7 @@ import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant,
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
 import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
 import { expandTilde } from "../core/paths.ts";
+import { evaluateGain, DEFAULT_GAIN_THRESHOLD_PP } from "../core/gain.ts";
 import {
   archiveSkill,
   collectArchiveInput,
@@ -104,6 +105,8 @@ eval 选项：
   --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
   --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
   --allow-inconclusive    允许归档「结论不足」的评估（配合 --archive-to 使用）
+  --allow-low-gain        允许归档断言增益未达标的评估（配合 --archive-to 使用）
+  --gain-threshold <pp>   增益门槛（百分点，默认 10）
 
 check 选项：
   --suite <path>          仅校验套件结构，不调用模型
@@ -121,6 +124,8 @@ archive 选项：
   --repo <dir>            仓库根目录（用于安全校验，默认自动探测）
   --version <id>          显式版本标识（默认 <frontmatter版本>__<时间戳>）
   --allow-inconclusive    放行「结论不足」的评估，默认拒绝
+  --allow-low-gain        放行断言增益未达标的评估，默认拒绝
+  --gain-threshold <pp>   增益门槛（百分点，默认 10）
   --force                 忽略 verdict 强制归档（用于诊断，不建议）
 
 产物布局：
@@ -346,6 +351,8 @@ async function commandEval(args: CliArgs): Promise<number> {
       suiteId: suite.id,
       suiteVersion: suite.version,
       skillVersion: suite.skill?.version,
+      gainThresholdPp: flagNumber(args.flags, "gain-threshold"),
+      allowLowGain: args.flags["allow-low-gain"] === true,
     });
 
     // 归档失败不影响评估结论——评估本身已经成功，报告已落盘。
@@ -508,6 +515,10 @@ function performArchive(options: {
   suiteId?: string | undefined;
   suiteVersion?: string | undefined;
   skillVersion?: string | undefined;
+  /** 增益门槛（百分点）。默认 10。 */
+  gainThresholdPp?: number | undefined;
+  /** 放行增益不达标。 */
+  allowLowGain?: boolean | undefined;
 }): { ok: boolean; result?: ArchiveResult; input?: ReturnType<typeof collectArchiveInput> } {
   const { decision } = options;
 
@@ -540,6 +551,22 @@ function performArchive(options: {
     skillVersion: options.skillVersion,
   });
 
+  // 增益门槛：光有「有效」结论不够，还要断言层面的改善确实存在。
+  //
+  // 阴性对照实验证明断言整体灵敏度只有 51.9%——skill 完全无效时通过率仍可达
+  // 75.9%。只看结论等级会把「模型本来就能做对」误当成 skill 的功劳。
+  const thresholdPp = options.gainThresholdPp ?? DEFAULT_GAIN_THRESHOLD_PP;
+  const gainCheck = evaluateGain(input.baselineAssertionRate, input.variantAssertionRate, thresholdPp);
+  if (!gainCheck.passed && !options.allowLowGain && !options.force) {
+    process.stderr.write(
+      `拒绝归档：断言增益未达标。\n  ${gainCheck.reason}\n` +
+        `  门槛 ${thresholdPp}pp 来自阴性对照实验——原版 skill +50.0pp，契约剥离后仅 +8.6pp。\n` +
+        "  确认 skill 确实带来了改善时，加 --allow-low-gain 放行，\n" +
+        "  归档后会在 latest.json 中标记 lowGain=true。\n",
+    );
+    return { ok: false };
+  }
+
   let result: ArchiveResult;
   try {
     result = archiveSkill({
@@ -550,6 +577,7 @@ function performArchive(options: {
       repoRoot: options.repoRoot ?? undefined,
       version: options.version,
       allowInconclusive: options.allowInconclusive,
+      gainCheck,
     });
   } catch (error) {
     process.stderr.write(`归档失败：${error instanceof Error ? error.message : String(error)}\n`);
@@ -560,14 +588,27 @@ function performArchive(options: {
 }
 
 /** 打印归档结果。 */
-function printArchiveResult(result: ArchiveResult, input: { skillHash: string }, verdict: string): void {
+function printArchiveResult(
+  result: ArchiveResult,
+  input: { skillHash: string; gainCheck?: { passed: boolean; gainPp: number | null; thresholdPp: number } },
+  verdict: string,
+): void {
   if (result.skipped) {
     process.stdout.write(`已存在同内容版本，跳过：${result.versionDir}\n`);
     return;
   }
   process.stdout.write(`归档完成：${result.versionDir}\n`);
   process.stdout.write(`  版本标识：${result.version}\n`);
-  process.stdout.write(`  结论：${verdict}${result.provisional ? "（provisional）" : ""}\n`);
+  const flags = [result.provisional ? "provisional" : "", result.lowGain ? "low-gain" : ""]
+    .filter(Boolean)
+    .join(" / ");
+  process.stdout.write(`  结论：${verdict}${flags ? `（${flags}）` : ""}\n`);
+  if (input.gainCheck) {
+    const g = input.gainCheck.gainPp === null ? "不可判定" : `${input.gainCheck.gainPp.toFixed(1)} pp`;
+    process.stdout.write(
+      `  增益门槛：${g}（门槛 ${input.gainCheck.thresholdPp} pp）${input.gainCheck.passed ? "达标" : "未达标·已放行"}\n`,
+    );
+  }
   process.stdout.write(`  复制文件：${result.fileCount} 个（跳过噪声 ${result.skippedNoise} 项）\n`);
   process.stdout.write(`  内容哈希：${input.skillHash}\n`);
   process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
@@ -636,6 +677,8 @@ async function commandArchive(args: CliArgs): Promise<number> {
     suiteId: flagString(args.flags, "suite"),
     suiteVersion: flagString(args.flags, "suite-version"),
     skillVersion: flagString(args.flags, "skill-version"),
+    gainThresholdPp: flagNumber(args.flags, "gain-threshold"),
+    allowLowGain: args.flags["allow-low-gain"] === true,
   });
 
   if (!outcome.ok || !outcome.result || !outcome.input) return 1;

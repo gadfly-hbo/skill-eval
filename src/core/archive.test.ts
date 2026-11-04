@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { evaluateGain } from "./gain.ts";
 import {
   archiveSkill,
   buildVersion,
@@ -354,6 +355,7 @@ test("renderArchiveCard 包含结论、哈希与复现命令", () => {
     reportPath: "/run/REPORT.md",
     archivedAt: "2026-11-03T15:00:00.000Z",
     reproduceCommand: "skill-eval eval --suite s.json",
+    gainCheck: evaluateGain(0.4, 0.95),
   };
 
   const card = renderArchiveCard(input, "1.0__20261103-2300");
@@ -605,5 +607,122 @@ test("archiveSkill 把 inconclusive 标记为 provisional", () => {
   assert.equal(result.provisional, true);
   const index = JSON.parse(readFileSync(join(result.archiveRoot, "latest.json"), "utf8"));
   assert.equal(index.provisional, true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------- 增益门槛
+
+test("collectArchiveInput 计算出断言增益并判定是否达标", () => {
+  const root = makeTmpDir("gain");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  // baseline 4 条过 2 条（50%），skill 侧全过（100%）→ 增益 50pp，达标。
+  const runDir = makeRun(root, { passed: 2, total: 4 });
+
+  const input = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "测试",
+  });
+
+  assert.equal(input.baselineAssertionRate, 0.5);
+  assert.equal(input.variantAssertionRate, 1);
+  assert.equal(input.gainCheck.gainPp, 50);
+  assert.equal(input.gainCheck.passed, true);
+  assert.equal(input.gainCheck.thresholdPp, 10);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("archiveSkill 在增益未达标时标记 lowGain", () => {
+  const root = makeTmpDir("lowgain");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  // baseline 与 skill 侧同样通过率 → 增益 0，不达标。
+  const runDir = makeRun(root, { passed: 4, total: 4 });
+  const archiveRoot = join(root, "archive");
+
+  const input = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "测试",
+  });
+
+  const result = archiveSkill({
+    input,
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    archiveRoot,
+    repoRoot: root,
+    version: "v1",
+  });
+
+  assert.equal(result.lowGain, true);
+  const index = JSON.parse(readFileSync(join(result.archiveRoot, "latest.json"), "utf8"));
+  assert.equal(index.lowGain, true);
+  assert.equal(index.gainPp, 0);
+  assert.equal(index.gainThresholdPp, 10);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("archiveSkill 在增益达标时不标记 lowGain", () => {
+  const root = makeTmpDir("gainok");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  const runDir = makeRun(root, { passed: 2, total: 4 });
+  const archiveRoot = join(root, "archive");
+
+  const input = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "测试",
+  });
+
+  const result = archiveSkill({
+    input,
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    archiveRoot,
+    repoRoot: root,
+    version: "v1",
+  });
+
+  assert.equal(result.lowGain, false);
+  const index = JSON.parse(readFileSync(join(result.archiveRoot, "latest.json"), "utf8"));
+  assert.equal(index.lowGain, false);
+  assert.equal(index.gainPp, 50);
+
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("ARCHIVE.md 记录增益门槛判定结果", () => {
+  const root = makeTmpDir("gaincard");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  const runDir = makeRun(root, { passed: 2, total: 4 });
+  const archiveRoot = join(root, "archive");
+
+  const input = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "测试",
+  });
+
+  const result = archiveSkill({
+    input,
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    archiveRoot,
+    repoRoot: root,
+    version: "v1",
+  });
+
+  const card = readFileSync(join(result.versionDir, "ARCHIVE.md"), "utf8");
+  assert.match(card, /增益门槛/);
+  assert.match(card, /50\.0 pp/);
+  assert.match(card, /10 pp/);
+  assert.match(card, /达标/);
+
   rmSync(root, { recursive: true, force: true });
 });

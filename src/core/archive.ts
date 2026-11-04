@@ -27,6 +27,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { evaluateGain, type GainVerdict } from "./gain.ts";
+
 /** 归档结论等级。与 CLI 的 decideVerdict 保持一致。 */
 export type ArchiveVerdict = "effective" | "ineffective" | "inconclusive";
 
@@ -98,6 +100,13 @@ export interface ArchiveInput {
   archivedAt: string;
   /** 复现命令。 */
   reproduceCommand: string;
+  /**
+   * 增益门槛判定结果。
+   *
+   * 阴性对照实验证明断言整体灵敏度只有 51.9%——只看「有效」结论不够，
+   * 还要确认断言层面的改善确实存在。
+   */
+  gainCheck: GainVerdict;
 }
 
 /** 归档结果。 */
@@ -112,6 +121,8 @@ export interface ArchiveResult {
   skipped: boolean;
   /** 是否为 provisional（结论不足但被放行）。 */
   provisional: boolean;
+  /** 是否为低增益放行（增益未达标但被 --allow-low-gain 放行）。 */
+  lowGain: boolean;
   /** 复制的文件数。 */
   fileCount: number;
   /** 跳过的噪声条目数。 */
@@ -349,6 +360,24 @@ export function renderArchiveCard(input: ArchiveInput, version: string): string 
   );
   lines.push("");
 
+  // 增益门槛判定——归档的「为什么值得信」要能看到门槛结果。
+  const gainCheck = input.gainCheck;
+  lines.push("## 增益门槛");
+  lines.push("");
+  lines.push("| 项 | 值 |");
+  lines.push("|---|---|");
+  lines.push(`| 门槛 | ${gainCheck.thresholdPp} pp |`);
+  lines.push(`| 实测增益 | ${gainCheck.gainPp === null ? "不可判定" : `${gainCheck.gainPp.toFixed(1)} pp`} |`);
+  lines.push(`| 判定 | ${gainCheck.passed ? "✅ 达标" : "⚠️ 未达标（经显式放行归档）"} |`);
+  lines.push("");
+  lines.push(
+    "> 门槛来自阴性对照实验：原版 skill +50.0pp，契约剥离后仅 +8.6pp。",
+  );
+  lines.push(
+    "> 断言整体灵敏度只有 51.9%，只看绝对通过率会把「模型本来就能做对」误当成 skill 的功劳。",
+  );
+  lines.push("");
+
   lines.push("## 运行配置");
   lines.push("");
   lines.push("| 项 | 值 |");
@@ -467,6 +496,7 @@ export function collectArchiveInput(options: {
     reportPath,
     archivedAt: new Date(now).toISOString(),
     reproduceCommand,
+    gainCheck: evaluateGain(base.rate, skillSide.rate),
   };
 }
 
@@ -476,9 +506,17 @@ export function collectArchiveInput(options: {
  * 幂等：目标版本目录已存在且内容哈希相同则跳过。
  * 同名不同内容：不覆盖原目录，改用 `-r2`、`-r3` 后缀另起一版。
  */
-export function archiveSkill(options: ArchiveOptions & { input: ArchiveInput }): ArchiveResult {
+export function archiveSkill(
+  options: ArchiveOptions & { input: ArchiveInput; gainCheck?: GainVerdict | undefined },
+): ArchiveResult {
   const { input, archiveRoot, repoRoot } = options;
   const now = options.now ?? Date.now();
+
+  // 增益判定由调用方传入（与 CLI 门控共用同一套规则），
+  // 未传入时按输入里的两侧通过率现算，保证直接调用本函数也不漏判。
+  const gainCheck =
+    options.gainCheck ??
+    evaluateGain(input.baselineAssertionRate, input.variantAssertionRate);
 
   const skillDir = dirname(resolve(options.skillPath));
   const skillName = basename(skillDir);
@@ -515,6 +553,7 @@ export function archiveSkill(options: ArchiveOptions & { input: ArchiveInput }):
       version,
       skipped: true,
       provisional: input.verdict === "inconclusive",
+      lowGain: !gainCheck.passed,
       fileCount: 0,
       skippedNoise: 0,
     };
@@ -543,6 +582,9 @@ export function archiveSkill(options: ArchiveOptions & { input: ArchiveInput }):
         skillHash: input.skillHash,
         verdict: input.verdict,
         provisional: input.verdict === "inconclusive",
+        lowGain: !gainCheck.passed,
+        gainPp: gainCheck.gainPp,
+        gainThresholdPp: gainCheck.thresholdPp,
         archivedAt: input.archivedAt,
         runId: input.runId,
         path: relative(archiveRoot, versionDir),
@@ -559,6 +601,7 @@ export function archiveSkill(options: ArchiveOptions & { input: ArchiveInput }):
     version,
     skipped: false,
     provisional: input.verdict === "inconclusive",
+    lowGain: !gainCheck.passed,
     fileCount,
     skippedNoise,
   };

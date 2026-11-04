@@ -73,6 +73,11 @@ npm run eval -- eval --suite suites/example-suite.json --model <被评模型> --
 npm run eval -- threshold
 ```
 
+> 归档有三道关：结论（`effective` 才放行）、结论不足需 `--allow-inconclusive`、
+> **断言增益需 ≥ 10pp**（`--allow-low-gain` 可放行，但会标 `lowGain=true`）。
+> 增益门槛来自阴性对照实验——断言整体灵敏度只有 51.9%，只看绝对通过率会把
+> 「模型本来就能做对」误当成 skill 的功劳。
+
 ## 仓库结构
 
 ```text

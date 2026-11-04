@@ -16,6 +16,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { DEFAULT_GAIN_THRESHOLD_PP } from "../src/core/gain.ts";
+
 interface Outcome {
   passed: boolean;
   kind: string;
@@ -235,16 +237,16 @@ function printTriple(original: RunView, broken: RunView) {
   if (origTimeout > 0 || brokenTimeout > 0) {
     console.log(`  ⚠️ 数据有超时污染（原版超时 ${origTimeout} 次 / 破坏版超时 ${brokenTimeout} 次），结论仅供参考。`);
     console.log("     建议用更长 --timeout 重跑后再判定。");
-  } else if (origGain >= 10 && brokenGain < 10) {
+  } else if (origGain >= DEFAULT_GAIN_THRESHOLD_PP && brokenGain < DEFAULT_GAIN_THRESHOLD_PP) {
     console.log("  ✅ 工具具备区分能力。");
-    console.log(`     原版增益 ${origGain.toFixed(1)}pp（> 10pp 阈值），破坏版增益 ${brokenGain.toFixed(1)}pp（< 10pp 阈值，已回落至 baseline 水平）。`);
+    console.log(`     原版增益 ${origGain.toFixed(1)}pp（> ${DEFAULT_GAIN_THRESHOLD_PP}pp 阈值），破坏版增益 ${brokenGain.toFixed(1)}pp（< ${DEFAULT_GAIN_THRESHOLD_PP}pp 阈值，已回落至 baseline 水平）。`);
     console.log("     结论：断言确实在度量 skill 的行为契约，测出的增益是真实的。");
-  } else if (origGain >= 10 && brokenGain >= 10) {
+  } else if (origGain >= DEFAULT_GAIN_THRESHOLD_PP && brokenGain >= DEFAULT_GAIN_THRESHOLD_PP) {
     console.log(`  ⚠️ 破坏版增益仍达 ${brokenGain.toFixed(1)}pp，接近原版水平（${origGain.toFixed(1)}pp）。`);
     console.log("     可能原因：① 契约泄漏到 references 或 description；② baseline 本身就能满足断言；");
     console.log("     ③ 断言区分度不足——断言对「有没有 skill」不敏感。");
   } else {
-    console.log(`  ⚠️ 原版增益仅 ${origGain.toFixed(1)}pp，未越过 10pp 阈值，无法据此判定区分能力。`);
+    console.log(`  ⚠️ 原版增益仅 ${origGain.toFixed(1)}pp，未越过 ${DEFAULT_GAIN_THRESHOLD_PP}pp 阈值，无法据此判定区分能力。`);
     console.log("     可能是原版 skill 在本模型上本就没带来增益，或断言区分度不足。");
   }
   console.log("=".repeat(78));
