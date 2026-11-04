@@ -6,3 +6,7 @@
 node_modules/
 *.log
 runs/
+
+# 跑批原始产物（单次 20M+），只入库 summary.json 与 REPORT.md
+experiments/**/cases/
+experiments/**/pairwise/

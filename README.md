@@ -85,6 +85,7 @@ src/
 │   ├── efc.ts           反馈效率 EFC 评分
 │   ├── regression.ts    回归门禁
 │   ├── archive.ts       通过测评的 skill 归档
+│   ├── paths.ts         路径处理（~ 展开）
 │   └── pi.ts            pi CLI 适配层
 ├── cli/           命令行入口
 └── report/        Markdown 报告生成
@@ -92,6 +93,7 @@ schemas/           JSON Schema（套件定义、运行结果）
 suites/            评估套件定义
 skills/            工具自身的 skill（skill-eval-flow）
 archive/           通过测评的 skill 快照（版本化存档）
+experiments/       实验记录（阴性对照验证、真实测评产物）
 examples/          示例 skill、示例套件、参考报告
 governance/        治理记录（方法来源、角色与模式变更）
 ```
@@ -108,6 +110,29 @@ governance/        治理记录（方法来源、角色与模式变更）
 | 平均耗时 | 12.3s | 10.1s |
 
 典型证据：baseline 把 `answer` 写成嵌套对象（违反契约），装 skill 后稳定输出 `{"answer": "...", "confidence": 0.86}` 扁平契约——而且**更快更省 token**。
+
+## 实验记录
+
+`experiments/` 保存本工具产出的关键实验结论，让结论可追溯、可复现：
+
+| 目录 | 内容 |
+| --- | --- |
+| `negative-control-2026-11-01/` | 阴性对照实验——验证工具自身具备区分能力 |
+| `data-analysis-2026-10-27/` | data-analysis skill 首轮真实测评（含套件定义） |
+
+阴性对照实验用**契约二分法**构造反例：只剥离被测 skill 的行为契约、保留触发契约，若断言通过率回落至 baseline 水平，则证明断言确实在度量 skill 契约。实测三组单调分离：
+
+| 组别 | 断言通过率 | 增益 | 激活率 |
+| --- | --- | --- | --- |
+| baseline（不装 skill） | 50.0%（29/58） | — | 0% |
+| **原版 skill** | **100.0%**（58/58） | **+50.0 pp** | 100% |
+| **破坏版 skill**（契约剥离） | 75.9%（44/58） | **+8.6 pp** | 100% |
+
+破坏版激活率仍为 100%，证明变量控制成立（只改了内容、没改触发机制）；0 条假阳性。完整分析见 [experiments/negative-control-2026-11-01/阴性对照验证报告.md](experiments/negative-control-2026-11-01/阴性对照验证报告.md)。
+
+> 该实验同时暴露了一条重要结论：**必须用增益（差值）判定，不能用绝对通过率**。断言整体灵敏度仅 51.9%，skill 完全无效时通过率仍可达 75.9%。
+
+复现命令见各目录下的 `REPORT.md`。入库产物均经 `redactHomeInText` 脱敏（用户目录统一替换为 `~`），套件里的 `~` 路径由 CLI 自动展开，可直接复跑。
 
 ## 与其他仓库的关系
 

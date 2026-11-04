@@ -1,0 +1,57 @@
+================================================================================================
+评委侧（pairwise judge）token 与成本
+================================================================================================
+评委轮次总数        20  （10 组 × forward/reversed，judgeRepeat=2）
+评委 token 合计     149,634
+评委成本合计        $0.067060
+  ├ 输入            77,600
+  ├ 输出            34,612
+  ├ 缓存读取        37,422
+  └ 缓存写入        0
+
+  forward 轮（参与主判定聚合）  10 次  token 84,331  $0.035369  均 8,433
+  reversed 轮（位置偏好探测，不参与聚合） 10 次  token 65,303  $0.031691  均 6,530
+
+================================================================================================
+两侧总账
+================================================================================================
+被评侧（20 次 eval 运行）
+  baseline      101,473 token  $0.048587
+  skill       1,647,296 token  $0.222547
+  小计        1,748,769 token  $0.271134
+
+评委侧（20 次评委调用）
+  合计          149,634 token  $0.067060
+
+总计          1,898,403 token  $0.338194
+  被评侧占比  92.1%
+  评委侧占比  7.9%
+
+summary.json 记录的 totalTokens  1,748,769  （仅被评侧，= results 累加 1,748,769）
+summary.json 记录的 totalCost    $0.271134  （仅被评侧，= results 累加 $0.271134）
+→ 报告中的「总 token / 总成本」未含评委侧，真实开销约为其 1.09 倍
+
+================================================================================================
+逐组明细
+================================================================================================
+组                                         方向              token            成本
+skill-adversarial-forecast-and-causality-1forward        22,860     $0.006154
+skill-adversarial-forecast-and-causality-1reversed        9,306     $0.006087
+skill-adversarial-forecast-and-causality-2forward         9,152     $0.005411
+skill-adversarial-forecast-and-causality-2reversed        7,179     $0.003029
+skill-attribution-six-section-1           forward        10,673     $0.004667
+skill-attribution-six-section-1           reversed       13,145     $0.005737
+skill-attribution-six-section-2           forward         9,296     $0.007841
+skill-attribution-six-section-2           reversed        7,921     $0.006191
+skill-direct-answer-no-six-section-1      forward         2,834     $0.001195
+skill-direct-answer-no-six-section-1      reversed        2,754     $0.001111
+skill-direct-answer-no-six-section-2      forward         2,658     $0.001022
+skill-direct-answer-no-six-section-2      reversed        2,917     $0.001347
+skill-trap-average-of-average-1           forward         3,988     $0.001751
+skill-trap-average-of-average-1           reversed        4,033     $0.001666
+skill-trap-average-of-average-2           forward         4,397     $0.001985
+skill-trap-average-of-average-2           reversed        3,963     $0.001464
+skill-trap-incomplete-period-1            forward         9,261     $0.002626
+skill-trap-incomplete-period-1            reversed        9,475     $0.002974
+skill-trap-incomplete-period-2            forward         9,212     $0.002716
+skill-trap-incomplete-period-2            reversed        4,610     $0.002083

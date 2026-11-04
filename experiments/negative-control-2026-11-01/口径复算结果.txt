@@ -1,0 +1,52 @@
+============================================================================================================
+口径对比：CLI 现行(仅 output.md) vs 完整可见内容(output.md + 落盘交付物)
+============================================================================================================
+用例                                  次   baseline    skill       交付物(skill)                $"
+------------------------------------------------------------------------------------------------------------
+attribution-six-section             1   2/11        3/11        report.md                 
+attribution-six-section             2   2/11        4/11        门店销售下滑分析_2026-03.md       
+direct-answer-no-six-section        1   4/4         4/4         —                         
+direct-answer-no-six-section        2   4/4         4/4         —                         
+adversarial-forecast-and-causality  1   2/6         3/6         report.md                 
+adversarial-forecast-and-causality  2   3/6         6/6         门店销售下滑分析报告.md             
+trap-average-of-average             1   3/4         4/4         answer.md                 
+trap-average-of-average             2   3/4         4/4         —                         
+trap-incomplete-period              1   4/4         4/4         report.md                 
+trap-incomplete-period              2   4/4         4/4         report.md                 
+
+============================================================================================================
+汇总（口径一致性核对 + 真实差距）
+============================================================================================================
+CLI summary 记录的通过率        baseline 40.0%   skill 70.0%
+仅 output.md 复算（应等于 CLI）  baseline 40.0%   skill 70.0%
+完整可见内容复算                baseline 40.0%   skill 100.0%
+
+口径差：skill 侧 仅对话 70.0% → 完整内容 100.0%
+baseline 侧 仅对话 40.0% → 完整内容 40.0%
+
+------------------------------------------------------------------------------------------------------------
+规则判定（allPassed）在两种口径下的翻转
+------------------------------------------------------------------------------------------------------------
+attribution-six-section             1   chat:持平         full:skill改善    评委:skill改善     ★翻转
+attribution-six-section             2   chat:持平         full:skill改善    评委:skill改善     ★翻转
+direct-answer-no-six-section        1   chat:持平         full:持平         评委:skill改善    
+direct-answer-no-six-section        2   chat:持平         full:持平         评委:skill改善    
+adversarial-forecast-and-causality  1   chat:持平         full:skill改善    评委:skill改善     ★翻转
+adversarial-forecast-and-causality  2   chat:skill改善    full:skill改善    评委:skill改善    
+trap-average-of-average             1   chat:skill改善    full:skill改善    评委:skill改善    
+trap-average-of-average             2   chat:skill改善    full:skill改善    评委:持平         
+trap-incomplete-period              1   chat:持平         full:持平         评委:skill改善    
+trap-incomplete-period              2   chat:持平         full:持平         评委:持平         
+
+口径导致的规则判定翻转：3 处
+
+------------------------------------------------------------------------------------------------------------
+原 7 条分歧在 full 口径下的状态
+------------------------------------------------------------------------------------------------------------
+attribution-six-section             1   chat:持平         full:skill改善    评委:skill改善    full口径后:已消解
+attribution-six-section             2   chat:持平         full:skill改善    评委:skill改善    full口径后:已消解
+direct-answer-no-six-section        1   chat:持平         full:持平         评委:skill改善    full口径后:仍分歧
+direct-answer-no-six-section        2   chat:持平         full:持平         评委:skill改善    full口径后:仍分歧
+adversarial-forecast-and-causality  1   chat:持平         full:skill改善    评委:skill改善    full口径后:已消解
+trap-average-of-average             2   chat:skill改善    full:skill改善    评委:持平         full口径后:仍分歧
+trap-incomplete-period              1   chat:持平         full:持平         评委:skill改善    full口径后:仍分歧
