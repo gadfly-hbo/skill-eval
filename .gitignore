@@ -10,3 +10,6 @@ runs/
 # 跑批原始产物（单次 20M+），只入库 summary.json 与 REPORT.md
 experiments/**/cases/
 experiments/**/pairwise/
+
+# 待测评暂存区是候选池，不是版本化资产（归档后的版本由 archive/ 保管）
+/pending/

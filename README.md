@@ -66,6 +66,12 @@ npm run eval -- report --run runs/exp-001 --suite-file suites/example-suite.json
 # 把通过测评的 skill 快照存进仓库 archive/
 npm run eval -- archive --run runs/exp-001 --repo .
 
+# 未测的 skill 先放进待测评暂存区（通过归档后自动移出）
+npm run eval -- pending --repo . --skill ~/.workbuddy/skills/my-skill/SKILL.md
+
+# 查看待测评区里有哪些 skill
+npm run eval -- pending --repo .
+
 # 一条命令跑完直接入库：评估 + 归档
 npm run eval -- eval --suite suites/example-suite.json --model <被评模型> --archive-to .
 
@@ -77,6 +83,11 @@ npm run eval -- threshold
 > **断言增益需 ≥ 10pp**（`--allow-low-gain` 可放行，但会标 `lowGain=true`）。
 > 增益门槛来自阴性对照实验——断言整体灵敏度只有 51.9%，只看绝对通过率会把
 > 「模型本来就能做对」误当成 skill 的功劳。
+
+**没通过测的 skill 也有去处**：报告第 8 节会按四种失败模式（契约未落地 /
+契约无效 / 约束不稳 / 未触发）给出可执行的优化建议，改完可原地复评。
+待测评暂存区 `pending/` 是候选池——归档成功后自动把已归档的 skill 移出，
+暂存区清空则目录删除；**没通过的 skill 会刻意留在里面等二次测评**。
 
 ## 仓库结构
 
@@ -90,6 +101,9 @@ src/
 │   ├── efc.ts           反馈效率 EFC 评分
 │   ├── regression.ts    回归门禁
 │   ├── archive.ts       通过测评的 skill 归档
+│   ├── gain.ts          断言增益门槛（归档单一真相来源）
+│   ├── improve.ts       未通过 skill 的失败归因与优化建议
+│   ├── pending.ts       待测评暂存区管理
 │   ├── paths.ts         路径处理（~ 展开）
 │   └── pi.ts            pi CLI 适配层
 ├── cli/           命令行入口
@@ -98,6 +112,7 @@ schemas/           JSON Schema（套件定义、运行结果）
 suites/            评估套件定义
 skills/            工具自身的 skill（skill-eval-flow）
 archive/           通过测评的 skill 快照（版本化存档）
+pending/           待测评暂存区（候选池，未测 skill 放这里）
 experiments/       实验记录（阴性对照验证、真实测评产物）
 examples/          示例 skill、示例套件、参考报告
 governance/        治理记录（方法来源、角色与模式变更）

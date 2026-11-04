@@ -10,12 +10,20 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { dirname, resolve, join, isAbsolute } from "node:path";
+import { dirname, resolve, join, isAbsolute, basename } from "node:path";
 import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant, type EvaluationSummary } from "../core/runner.ts";
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
 import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
 import { expandTilde } from "../core/paths.ts";
 import { evaluateGain, DEFAULT_GAIN_THRESHOLD_PP } from "../core/gain.ts";
+import { evaluateRecomputeGuard } from "../core/report-safety.ts";
+import { recoverMetaFromReport, mergeMeta } from "../core/report-meta.ts";
+import {
+  pendingRootFor,
+  registerPending,
+  readPendingState,
+  prunePendingAfterArchive,
+} from "../core/pending.ts";
 import {
   archiveSkill,
   collectArchiveInput,
@@ -127,6 +135,12 @@ archive 选项：
   --allow-low-gain        放行断言增益未达标的评估，默认拒绝
   --gain-threshold <pp>   增益门槛（百分点，默认 10）
   --force                 忽略 verdict 强制归档（用于诊断，不建议）
+  --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
+
+pending 选项：
+  --repo <dir>            仓库根目录（默认自动探测）
+  --skill <path>          登记该 skill 到待测评区；不给则列出待测 skill
+  --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
 
 产物布局：
   <out>/cases/<variant>/<task>/<attempt>/  单次运行证据（events.json / output.md / result.json）
@@ -148,6 +162,8 @@ async function main(): Promise<number> {
       return await commandReport(args);
     case "archive":
       return await commandArchive(args);
+    case "pending":
+      return commandPending(args);
     case "threshold":
       return commandThreshold(args);
     case "help":
@@ -358,6 +374,8 @@ async function commandEval(args: CliArgs): Promise<number> {
     // 归档失败不影响评估结论——评估本身已经成功，报告已落盘。
     if (outcome.ok && outcome.result && outcome.input) {
       printArchiveResult(outcome.result, outcome.input, verdict.verdict);
+      // 归档成功后，把该 skill 从待测评暂存区移出（与 archive 子命令同一套逻辑）。
+      prunePendingAfterArchiveSkill(outcome.result, repoRoot, args);
     } else {
       process.stderr.write("归档未完成，评估结论不受影响。\n");
     }
@@ -467,14 +485,51 @@ async function commandReport(args: CliArgs): Promise<number> {
 
   const summary = suitePath ? await recomputeSummary(absolute, { variants, tasks }) : stored;
 
+  // 守卫：重算依赖 cases/ 下的原始产物。产物缺失（已清理、只入了库 summary.json）
+  // 时重算会得到空汇总，若照常写盘就会用空报告覆盖掉原本完好的报告。
+  // 这是不可逆的数据丢失，必须拒绝而不是静默降级。
+  if (suitePath) {
+    const guard = evaluateRecomputeGuard({
+      resultCount: summary.results.length,
+      storedResultCount: stored?.results?.length ?? 0,
+      hasStored: Boolean(stored),
+    });
+    if (guard.blocked) {
+      process.stderr.write(
+        `拒绝重算：${absolute}\n  ${guard.reason}\n  ${guard.hint}\n`,
+      );
+      return 1;
+    }
+  }
+
+  // 候选身份回填：显式传入的优先，否则从已有 REPORT.md 反解。
+  // 没有这一步，重生成报告会把「被测 skill / 内容哈希 / 版本 / 套件」全写成
+  // 「（未记录）」——读者再也无法知道这份结论测的是哪个文件。
+  const existingReportPath = join(absolute, "REPORT.md");
+  const recovered = existsSync(existingReportPath)
+    ? recoverMetaFromReport(readFileSync(existingReportPath, "utf8"))
+    : recoverMetaFromReport("");
+
+  const merged = mergeMeta(
+    {
+      skillPath: flagString(args.flags, "skill"),
+      skillHash: flagString(args.flags, "skill-hash"),
+      skillVersion: flagString(args.flags, "skill-version"),
+      suiteId: flagString(args.flags, "suite"),
+      suiteVersion: flagString(args.flags, "suite-version"),
+      piHome: flagString(args.flags, "home"),
+    },
+    recovered,
+  );
+
   const meta: ReportMeta = {
-    skillPath: flagString(args.flags, "skill") ?? "（未记录）",
-    skillHash: flagString(args.flags, "skill-hash") ?? "（未记录）",
-    skillVersion: flagString(args.flags, "skill-version") ?? "（未记录）",
-    suiteId: flagString(args.flags, "suite") ?? "（未记录）",
-    suiteVersion: flagString(args.flags, "suite-version") ?? "（未记录）",
+    skillPath: merged.skillPath ?? "（未记录）",
+    skillHash: merged.skillHash ?? "（未记录）",
+    skillVersion: merged.skillVersion ?? "（未记录）",
+    suiteId: merged.suiteId ?? "（未记录）",
+    suiteVersion: merged.suiteVersion ?? "（未记录）",
     runRoot: absolute,
-    piHome: flagString(args.flags, "home") ?? null,
+    piHome: merged.piHome ?? null,
     generatedAt: new Date().toISOString(),
   };
 
@@ -684,6 +739,103 @@ async function commandArchive(args: CliArgs): Promise<number> {
   if (!outcome.ok || !outcome.result || !outcome.input) return 1;
 
   printArchiveResult(outcome.result, outcome.input, decision.verdict);
+
+  // 归档成功后，把该 skill 从待测评暂存区移出。
+  // 暂存区清空则整个目录删除——不留空壳。
+  prunePendingAfterArchiveSkill(outcome.result, repoRoot, args);
+  return 0;
+}
+
+/**
+ * 归档成功后，把该 skill 从待测评暂存区移出。
+ *
+ * 暂存区里的 skill 副本是「候选池」——测评通过就不再是待测评的了。
+ * 暂存区清空则整个目录删除，不留空壳。
+ */
+function prunePendingAfterArchiveSkill(
+  result: ArchiveResult,
+  repoRoot: string | null,
+  args: CliArgs,
+): void {
+  if (!repoRoot) return;
+  const pendingRoot = flagString(args.flags, "pending-root");
+  if (!existsSync(pendingRootFor(repoRoot, pendingRoot))) return;
+
+  // 归档目录名就是 skill 名（archive/<skill名>/<版本>/）。
+  const skillName = basename(result.archiveRoot);
+  const outcome = prunePendingAfterArchive({
+    repoRoot,
+    movedSkillNames: [skillName],
+    pendingRoot,
+  });
+
+  if (outcome.removed.length > 0) {
+    process.stdout.write(`已从待测评区移出：${outcome.removed.join(", ")}\n`);
+  }
+  if (outcome.pendingRootDeleted) {
+    process.stdout.write("待测评区已空，目录已删除。\n");
+  } else if (outcome.remaining > 0) {
+    process.stdout.write(`待测评区剩余 ${outcome.remaining} 个待测 skill。\n`);
+  }
+}
+
+/**
+ * 待测评暂存区管理。
+ *
+ * - `pending list`  列出待测评的 skill
+ * - `pending add`   把 skill 登记进暂存区
+ */
+function commandPending(args: CliArgs): number {
+  const action = args.flags["list"] === true || args.command === "pending" ? "list" : "list";
+  const repoFlag = flagString(args.flags, "repo");
+  const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
+
+  if (!repoRoot) {
+    process.stderr.write("无法确定仓库根目录：用 --repo 指定。\n");
+    return 1;
+  }
+
+  const pendingRoot = flagString(args.flags, "pending-root");
+  const skillFlag = flagString(args.flags, "skill");
+
+  // 登记模式：--skill <路径>
+  if (skillFlag) {
+    const skillPath = resolve(expandTilde(skillFlag));
+    if (!existsSync(skillPath)) {
+      process.stderr.write(`skill 不存在：${skillPath}\n`);
+      return 1;
+    }
+    const outcome = registerPending({
+      repoRoot,
+      skillPath,
+      pendingRoot,
+      skillHash: hashFile(skillPath),
+    });
+    if (outcome.alreadyThere) {
+      process.stdout.write(`已在待测评区：${outcome.skillDir}\n`);
+    } else {
+      process.stdout.write(`已登记到待测评区：${outcome.skillDir}（${outcome.fileCount} 个文件）\n`);
+    }
+    return 0;
+  }
+
+  // 列表模式
+  const state = readPendingState({ repoRoot, pendingRoot });
+  if (!state.exists) {
+    process.stdout.write(`待测评区为空（目录不存在）：${state.pendingRoot}\n`);
+    return 0;
+  }
+  if (state.skills.length === 0) {
+    process.stdout.write(`待测评区为空：${state.pendingRoot}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`待测评 skill（${state.skills.length} 个）：${state.pendingRoot}\n\n`);
+  for (const item of state.skills) {
+    const source = item.meta?.sourcePath ?? "未登记来源";
+    process.stdout.write(`  ${item.name}\n    来源：${source}\n`);
+  }
+  process.stdout.write("\n测评通过后 skill 会自动移入 archive/，暂存区清空则目录删除。\n");
   return 0;
 }
 

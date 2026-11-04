@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import type { EvaluationSummary, VariantSummary, TaskSummary } from "../core/runner.ts";
 import type { EvalTask, Variant } from "../core/runner.ts";
+import { buildImprovementAdvice, type FailureMode } from "../core/improve.ts";
 
 export interface ReportMeta {
   /** 被测 skill 路径。 */
@@ -216,8 +217,67 @@ export function renderReport(options: ReportOptions): string {
   }
   lines.push("");
 
-  // ---- 8. 结论 ----
-  lines.push("## 8. 结论");
+  // ---- 8. 优化建议（未通过时才有意义）----
+  const advice = buildImprovementAdvice(summary.results, variant?.activationRate ?? 0);
+  const hasAdvice = advice.diagnoses.length > 0 || advice.activationIssue !== null;
+  if (hasAdvice) {
+    lines.push("## 8. 优化建议");
+    lines.push("");
+    lines.push(advice.summary);
+    lines.push("");
+
+    if (advice.activationIssue) {
+      lines.push("### 8.1 优先处理：激活率不足");
+      lines.push("");
+      lines.push(advice.activationIssue);
+      lines.push("");
+    }
+
+    if (advice.byMode.length > 0) {
+      lines.push(`### ${advice.activationIssue ? "8.2" : "8.1"} 按失败模式归类`);
+      lines.push("");
+      lines.push("| 失败模式 | 条数 | 说明 |");
+      lines.push("| --- | --- | --- |");
+      for (const item of advice.byMode) {
+        lines.push(`| ${modeLabel(item.mode)} | ${item.count} | ${item.advice} |`);
+      }
+      lines.push("");
+    }
+
+    if (advice.diagnoses.length > 0) {
+      lines.push(`### ${advice.activationIssue ? "8.3" : "8.2"} 逐条失败明细`);
+      lines.push("");
+      lines.push("| 用例 | 断言 | 失败模式 | 失败原因 |");
+      lines.push("| --- | --- | --- | --- |");
+      for (const d of advice.diagnoses) {
+        const label = d.note ? `${d.kind}（${d.note}）` : d.kind;
+        lines.push(`| ${d.taskId} | ${label} | ${modeLabel(d.mode)} | ${d.detail} |`);
+      }
+      lines.push("");
+      lines.push(
+        "> 「契约未落地」= baseline 能做到、装 skill 后反而做不到，是 skill 的真问题；",
+      );
+      lines.push(
+        "> 「契约无效」= baseline 也做不到，说明 skill 没把这条约束写清楚。",
+      );
+      lines.push(
+        "> baseline 本来就能过的断言不算 skill 的问题，不列入建议。",
+      );
+      lines.push("");
+    }
+
+    lines.push("### 下一步");
+    lines.push("");
+    lines.push("按上述建议修改 SKILL.md 后，可进入二次测评准备：");
+    lines.push("");
+    lines.push("1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式）。");
+    lines.push("2. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。");
+    lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
+    lines.push("");
+  }
+
+  // ---- 9. 结论 ----
+  lines.push("## 9. 结论");
   lines.push("");
   lines.push(`**${verdictLabel(options.verdict)}** — ${options.verdictReason}`);
   lines.push("");
@@ -283,8 +343,23 @@ function buildLimitations(options: ReportOptions): string[] {
   return items;
 }
 
-function verdictLabel(verdict: ReportOptions["verdict"]): string {
-  switch (verdict) {
+/** 失败模式的中文名。 */
+function modeLabel(mode: FailureMode): string {
+  switch (mode) {
+    case "contract-missing":
+      return "契约未落地";
+    case "no-effect":
+      return "契约无效";
+    case "regression":
+      return "质量倒退";
+    case "unstable":
+      return "约束不稳";
+    case "activation-missing":
+      return "未触发";
+  }
+}
+
+function verdictLabel(verdict: ReportOptions["verdict"]): string {  switch (verdict) {
     case "effective":
       return "有效";
     case "ineffective":
