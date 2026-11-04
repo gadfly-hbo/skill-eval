@@ -200,3 +200,51 @@ test("无断言数据时不产生诊断", () => {
   const advice = buildImprovementAdvice([], 1);
   assert.equal(advice.diagnoses.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// 措辞必须与结论等级一致
+//
+// 背景（实测 2026-11-04 deep-research 测评）：报告首屏写「判定：有效」，
+// 紧接着第 8 节写「skill 未通过：28 条断言失败」——同一份报告自相矛盾。
+// 结论为 effective 时，断言失败只是「可加固项」，措辞不能写成「未通过」。
+// ---------------------------------------------------------------------------
+
+test("结论为 effective 时，摘要不说「skill 未通过」", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  assert.equal(advice.diagnoses.length > 0, true);
+  assert.equal(advice.summary.includes("未通过"), false);
+  assert.equal(advice.summary.includes("已通过"), true);
+});
+
+test("结论为 ineffective 时，摘要明确说「未通过」", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "ineffective");
+  assert.equal(advice.summary.includes("未通过"), true);
+});
+
+test("不传 verdict 时按未通过措辞（向后兼容）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0);
+  assert.equal(advice.summary.includes("未通过"), true);
+});
+
+test("激活率不足时不出现「未通过」字样（有效结论下）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 0.2, "effective");
+  assert.equal(advice.activationIssue !== null, true);
+  assert.equal(advice.summary.includes("首要问题是激活率不足"), true);
+  assert.equal(advice.summary.includes("未通过"), false);
+});

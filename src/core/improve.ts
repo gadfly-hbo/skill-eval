@@ -92,10 +92,12 @@ const MODE_LABEL: Record<FailureMode, string> = {
  *
  * @param results 全部运行结果（含 baseline 与 skill 两侧）
  * @param activationRate skill 侧激活率
+ * @param verdict 结论等级。用于措辞——结论为 `effective` 时不应说「skill 未通过」。
  */
 export function buildImprovementAdvice(
   results: RunResult[],
   activationRate: number,
+  verdict?: "effective" | "ineffective" | "inconclusive",
 ): ImprovementAdvice {
   const baselineRows = results.filter((r) => r.variantId === "baseline" && r.assertions);
   const variantRows = results.filter((r) => r.variantId !== "baseline" && r.assertions);
@@ -201,19 +203,26 @@ export function buildImprovementAdvice(
       : null;
 
   // 总结：先看激活率，再看失败条数。
+  //
+  // 措辞必须与结论等级一致：结论为 `effective`（通过）时，
+  // 断言失败只代表「还有可加固的契约」，不是「skill 没通过」。
+  // 此前无论结论如何都写「skill 未通过」，导致通过的报告里出现
+  // 「判定：有效」紧接「skill 未通过：28 条断言失败」的自相矛盾。
+  const passed = verdict === "effective";
   let summary: string;
   if (activationIssue) {
     summary =
-      `skill 未通过。首要问题是激活率不足（${(activationRate * 100).toFixed(1)}%）：` +
-      `模型多数时候没读它，输出不受约束。`;
+      `首要问题是激活率不足（${(activationRate * 100).toFixed(1)}%）：` +
+      `模型多数时候没读它，输出不受约束。此时改正文收效有限，应先改 frontmatter 的 description——` +
+      `写清「什么场景该用我」。`;
   } else if (diagnoses.length === 0) {
     summary =
-      "规则断言全部通过，但结论未达门槛——问题可能在评委判定或重复次数上，" +
-      "建议增加 repeat 后复跑确认。";
+      "规则断言全部通过，没有可加固的契约——如需确认稳定性，可增加 repeat 后复跑。";
   } else {
     const top = byMode[0];
     summary =
-      `skill 未通过：${diagnoses.length} 条断言失败，其中 ${top ? top.count : 0} 条属于「${top ? MODE_LABEL[top.mode] : "未知"}」。` +
+      (passed ? "skill 已通过测评，但仍有可加固的契约：" : "skill 未通过：") +
+      `${diagnoses.length} 条断言失败，其中 ${top ? top.count : 0} 条属于「${top ? MODE_LABEL[top.mode] : "未知"}」。` +
       `优先处理这一类，其余见下方明细。`;
   }
 

@@ -91,3 +91,73 @@ test("computeGainPp 与 evaluateGain 的增益一致", () => {
   const variant = 0.72;
   assert.equal(computeGainPp(base, variant), evaluateGain(base, variant).gainPp);
 });
+
+// ---------------------------------------------------------------------------
+// 条目累计通过率
+//
+// 背景（实测 2026-11-04 deep-research 测评）：报告首屏曾用「整轮全过率」
+// 显示 baseline 0.0% → skill 0.0%（判读「无差异」），
+// 而归档门控用「条目累计」算出 +13.2pp 判定达标——同一份数据自相矛盾。
+// 这里固定条目累计口径的计算行为，防止再次退回整轮口径。
+// ---------------------------------------------------------------------------
+
+import { computeAssertionItemRate } from "./gain.ts";
+
+const ROWS = [
+  {
+    variantId: "baseline",
+    assertions: {
+      total: 4,
+      outcomes: [{ passed: true }, { passed: false }, { passed: false }, { passed: false }],
+    },
+  },
+  {
+    variantId: "skill",
+    assertions: {
+      total: 4,
+      outcomes: [{ passed: true }, { passed: true }, { passed: true }, { passed: false }],
+    },
+  },
+];
+
+test("条目累计通过率按条目数计，不按整轮全过计", () => {
+  assert.equal(computeAssertionItemRate(ROWS, "baseline"), 0.25);
+  assert.equal(computeAssertionItemRate(ROWS, "skill"), 0.75);
+});
+
+test("条目累计口径下两侧都能被区分（整轮口径会都是 0）", () => {
+  // 整轮全过率：baseline 0/1 轮全过，skill 0/1 轮全过 → 都是 0，看不出差异。
+  const baselineAllPassed = ROWS.filter((r) => r.variantId === "baseline").every((r) =>
+    r.assertions.outcomes.every((o) => o.passed),
+  );
+  const skillAllPassed = ROWS.filter((r) => r.variantId === "skill").every((r) =>
+    r.assertions.outcomes.every((o) => o.passed),
+  );
+  assert.equal(baselineAllPassed, false);
+  assert.equal(skillAllPassed, false);
+
+  // 条目累计口径：差异可见，且与门控增益一致。
+  const b = computeAssertionItemRate(ROWS, "baseline")!;
+  const v = computeAssertionItemRate(ROWS, "skill")!;
+  assert.equal(evaluateGain(b, v).gainPp, 50);
+});
+
+test("条目累计通过率忽略无断言的行", () => {
+  const rows = [
+    { variantId: "skill", assertions: null },
+    { variantId: "skill", assertions: { total: 0, outcomes: [] } },
+    { variantId: "skill", assertions: { total: 2, outcomes: [{ passed: true }, { passed: false }] } },
+  ];
+  assert.equal(computeAssertionItemRate(rows, "skill"), 0.5);
+});
+
+test("无任何断言时条目累计通过率不可判定", () => {
+  assert.equal(computeAssertionItemRate([{ variantId: "skill", assertions: null }], "skill"), null);
+  assert.equal(computeAssertionItemRate([], "skill"), null);
+});
+
+test("指定 variantId 时不混入其他变体的条目", () => {
+  // 传入 null 表示不过滤——但本用例确认按 id 过滤时结果与期望一致。
+  assert.equal(computeAssertionItemRate(ROWS, "baseline"), 0.25);
+  assert.equal(computeAssertionItemRate(ROWS, "skill"), 0.75);
+});

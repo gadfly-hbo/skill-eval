@@ -97,3 +97,41 @@ export function computeGainPp(
   // 规整到 1e-9 精度，消掉二进制浮点尾差。
   return Math.round(raw * 1e9) / 1e9;
 }
+
+/**
+ * 断言条目累计通过率。
+ *
+ * 口径：把每一次运行的**每一条断言**当作一个条目，累计通过数 / 累计条目数。
+ *
+ * 为什么需要这个口径（实测 2026-11-04 deep-research 测评）：
+ * `variantSummaries.assertionPassRate` 用的是「整轮全过率」——
+ * 一次运行里所有断言都过才算这轮过，任一条不过整轮记 0。
+ * 一条用例有 8 条断言时，全过率天然是「8 条全中」的乘积，
+ * 两侧都很容易是 0.0%，于是报告首屏会显示「断言通过率 baseline 0.0% → skill 0.0%，
+ * 无差异」，而归档门控（条目累计口径）实际算出 +13.2pp。
+ * **同一份数据在报告里说「无差异」、在门控里说「达标」——这是自相矛盾的。**
+ *
+ * 因此报告首屏必须改用条目累计口径，与归档门控共用同一个计算函数。
+ */
+export function computeAssertionItemRate(
+  results: Array<{
+    variantId: string;
+    assertions?: { total: number; outcomes: Array<{ passed: boolean }> } | null;
+  }>,
+  variantId: string | null,
+): number | null {
+  const rows = results.filter((row) =>
+    variantId === null ? true : row.variantId === variantId,
+  );
+  let passed = 0;
+  let total = 0;
+  for (const row of rows) {
+    const assertions = row.assertions;
+    if (!assertions || assertions.total === 0) continue;
+    total += assertions.total;
+    for (const outcome of assertions.outcomes) {
+      if (outcome.passed) passed += 1;
+    }
+  }
+  return total > 0 ? passed / total : null;
+}

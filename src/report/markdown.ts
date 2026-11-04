@@ -13,6 +13,7 @@ import { readFileSync, existsSync } from "node:fs";
 import type { EvaluationSummary, VariantSummary, TaskSummary } from "../core/runner.ts";
 import type { EvalTask, Variant } from "../core/runner.ts";
 import { buildImprovementAdvice, type FailureMode } from "../core/improve.ts";
+import { computeAssertionItemRate } from "../core/gain.ts";
 
 export interface ReportMeta {
   /** 被测 skill 路径。 */
@@ -77,8 +78,16 @@ export function renderReport(options: ReportOptions): string {
     lines.push(
       `| 胜率 | — | ${variant.winRate === null ? "不可判定" : percent(variant.winRate)} | ${judgeWinRate(variant.winRate)} |`,
     );
+    // 断言通过率用「条目累计」口径，与归档门控（evaluateGain）保持一致。
+    //
+    // 此前这里用的是 variantSummaries.assertionPassRate（整轮全过率），
+    // 两侧都常为 0.0%，报告首屏会显示「无差异」，而同一次运行的归档门控
+    // 用条目累计口径算出 +13.2pp 并判定达标——同一份数据自相矛盾。
+    // 判读与门控口径必须一致，否则读者无法从报告推出归档结论。
+    const baselineItemRate = computeAssertionItemRate(summary.results, "baseline");
+    const variantItemRate = computeAssertionItemRate(summary.results, variant.variantId);
     lines.push(
-      `| 断言通过率 | ${percent(baseline?.assertionPassRate ?? null)} | ${percent(variant.assertionPassRate ?? null)} | ${judgeAssertion(baseline?.assertionPassRate ?? null, variant.assertionPassRate ?? null)} |`,
+      `| 断言通过率（条目累计） | ${percent(baselineItemRate)} | ${percent(variantItemRate)} | ${judgeAssertion(baselineItemRate, variantItemRate)} |`,
     );
     lines.push(
       `| 平均耗时 | ${baseline ? `${baseline.avgDurationSec.toFixed(1)}s` : "—"} | ${variant.avgDurationSec.toFixed(1)}s | ${variant.avgDurationSec > (baseline?.avgDurationSec ?? 0) ? "变慢，需关注成本" : "未变慢"} |`,
@@ -217,11 +226,18 @@ export function renderReport(options: ReportOptions): string {
   }
   lines.push("");
 
-  // ---- 8. 优化建议（未通过时才有意义）----
-  const advice = buildImprovementAdvice(summary.results, variant?.activationRate ?? 0);
+  // ---- 8. 优化建议 ----
+  //
+  // 通过（effective）时也要出这一节：断言失败代表「还有可加固的契约」，
+  // 不是「skill 无效」。措辞由 advice.summary 依据 verdict 区分。
+  const advice = buildImprovementAdvice(
+    summary.results,
+    variant?.activationRate ?? 0,
+    options.verdict,
+  );
   const hasAdvice = advice.diagnoses.length > 0 || advice.activationIssue !== null;
   if (hasAdvice) {
-    lines.push("## 8. 优化建议");
+    lines.push(options.verdict === "effective" ? "## 8. 优化建议（已通过，以下为可加固项）" : "## 8. 优化建议");
     lines.push("");
     lines.push(advice.summary);
     lines.push("");
@@ -268,12 +284,21 @@ export function renderReport(options: ReportOptions): string {
 
     lines.push("### 下一步");
     lines.push("");
-    lines.push("按上述建议修改 SKILL.md 后，可进入二次测评准备：");
-    lines.push("");
-    lines.push("1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式）。");
-    lines.push("2. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。");
-    lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
-    lines.push("");
+    if (options.verdict === "effective") {
+      lines.push("本 skill 已通过测评并归档。上述失败项是**可选的加固项**，不影响本次结论：");
+      lines.push("");
+      lines.push("1. 优先加固上表第一条失败模式对应的契约（多为「结构化元信息」类，可固化进报告模板）。");
+      lines.push("2. 若要改，请**保持同一套件与模型**重新评估，只改 skill 内容——否则无法归因。");
+      lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
+      lines.push("");
+    } else {
+      lines.push("按上述建议修改 SKILL.md 后，可进入二次测评准备：");
+      lines.push("");
+      lines.push("1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式）。");
+      lines.push("2. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。");
+      lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
+      lines.push("");
+    }
   }
 
   // ---- 9. 结论 ----

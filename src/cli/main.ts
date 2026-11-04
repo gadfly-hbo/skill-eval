@@ -467,9 +467,12 @@ async function commandReport(args: CliArgs): Promise<number> {
   const suitePath = flagString(args.flags, "suite-file");
   let tasks: EvalTask[];
   let variants: Variant[];
+  // 套件元信息用于报告的「套件」栏位与标题——取 id 字段，不是文件路径。
+  let loadedSuite: SuiteFile | undefined;
 
   if (suitePath) {
     const suite = loadSuite(suitePath);
+    loadedSuite = suite;
     const suiteDir = dirname(resolve(suitePath));
     const skillPath = suite.skill?.path
       ? isAbsolute(suite.skill.path)
@@ -523,8 +526,11 @@ async function commandReport(args: CliArgs): Promise<number> {
       skillPath: flagString(args.flags, "skill"),
       skillHash: flagString(args.flags, "skill-hash"),
       skillVersion: flagString(args.flags, "skill-version"),
-      suiteId: flagString(args.flags, "suite"),
-      suiteVersion: flagString(args.flags, "suite-version"),
+      // 套件标识取套件文件里的 id 字段，不是套件文件的路径。
+      // 此前直接用路径，报告标题会变成
+      // 「# Skill 评估报告：/Users/.../suite.json」——既难读，也泄漏本地路径。
+      suiteId: loadedSuite?.id,
+      suiteVersion: flagString(args.flags, "suite-version") ?? loadedSuite?.version,
       piHome: flagString(args.flags, "home"),
     },
     recovered,

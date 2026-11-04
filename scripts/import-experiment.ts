@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 
 import { redactHomeInText } from "../src/core/archive.ts";
+import { evaluateOverwriteGuard } from "../src/core/report-quality.ts";
 
 const HOME = homedir();
 const NC_ROOT = join(HOME, ".skill-eval", "negative-control");
@@ -78,7 +79,19 @@ function copyTreeFiltered(src: string, dest: string): { files: number; skipped: 
       // 文本文件统一脱敏——summary.json 里也记录了 skill 绝对路径。
       const ext = extname(entry.name).toLowerCase();
       if (TEXT_EXTENSIONS.has(ext)) {
-        writeFileSync(to, redactHomeInText(readFileSync(from, "utf8")), "utf8");
+        const redacted = redactHomeInText(readFileSync(from, "utf8"));
+        // 质量守恒：降级报告不得覆盖完整报告。
+        if (entry.name === "REPORT.md") {
+          const guard = evaluateOverwriteGuard(
+            redacted,
+            existsSync(to) ? readFileSync(to, "utf8") : null,
+          );
+          if (guard.blocked) {
+            skipped.push(`${entry.name}（${guard.reason}）`);
+            continue;
+          }
+        }
+        writeFileSync(to, redacted, "utf8");
       } else {
         cpSync(from, to);
       }
@@ -106,12 +119,29 @@ function importItem(item: ImportItem): void {
     const raw = readFileSync(item.file, "utf8");
     const text = item.text === false ? raw : redactHomeInText(raw);
     const name = item.destName ?? basename(item.file);
-    writeFileSync(join(destDir, name), text, "utf8");
+    const target = join(destDir, name);
+    // 质量守恒：降级报告不得覆盖完整报告。
+    if (name === "REPORT.md") {
+      const guard = evaluateOverwriteGuard(
+        text,
+        existsSync(target) ? readFileSync(target, "utf8") : null,
+      );
+      if (guard.blocked) {
+        process.stdout.write(`  ! ${item.dest}/${name} ${guard.reason}\n`);
+        return;
+      }
+    }
+    writeFileSync(target, text, "utf8");
     process.stdout.write(`  ✓ ${item.dest}/${name}\n`);
   }
 }
 
 function main(): void {
+  // 会话工作区路径——用 HOME 推导，不写死绝对路径（脚本要能换机器跑）。
+  const WORKSPACE = join(homedir(), "WorkBuddy", "skill评估");
+  // 本轮 deep-research 测评的运行目录。
+  const DR_RUN = join(homedir(), ".skill-eval", "runs", "20261104-114333-deep-research");
+
   const items: ImportItem[] = [
     // 阴性对照实验：三组对比的核心产物。
     {
@@ -133,34 +163,45 @@ function main(): void {
     },
     {
       dest: "negative-control-2026-11-01",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "阴性对照验证报告.md"),
+      file: join(WORKSPACE, "阴性对照验证报告.md"),
       destName: "阴性对照验证报告.md",
     },
     {
       dest: "negative-control-2026-11-01",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "口径复算结果.txt"),
+      file: join(WORKSPACE, "口径复算结果.txt"),
       destName: "口径复算结果.txt",
     },
     {
       dest: "negative-control-2026-11-01",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "评委侧Token统计.txt"),
+      file: join(WORKSPACE, "评委侧Token统计.txt"),
       destName: "评委侧Token统计.txt",
     },
     // data-analysis 首轮真实测评。
     {
       dest: "data-analysis-2026-10-27",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "suite-data-analysis.json"),
+      file: join(WORKSPACE, "suite-data-analysis.json"),
       destName: "suite-data-analysis.json",
     },
     {
       dest: "data-analysis-2026-10-27",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "主报告_REPORT.md"),
+      file: join(WORKSPACE, "主报告_REPORT.md"),
       destName: "REPORT.md",
     },
     {
       dest: "data-analysis-2026-10-27",
-      file: join("/Users/huangbo/WorkBuddy/skill评估", "观测偏差复核_附录.md"),
+      file: join(WORKSPACE, "观测偏差复核_附录.md"),
       destName: "观测偏差复核_附录.md",
+    },
+    // deep-research 测评（2026-11-04）：套件 + 报告 + 汇总。
+    // cases/ 与 pairwise/ 体积大，不入库——需要时按报告里的复现命令重跑。
+    {
+      dest: "deep-research-2026-11-04/run",
+      src: DR_RUN,
+    },
+    {
+      dest: "deep-research-2026-11-04",
+      file: join(DR_RUN, "suite.json"),
+      destName: "suite.json",
     },
   ];
 
