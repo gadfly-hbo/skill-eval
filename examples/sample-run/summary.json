@@ -294,7 +294,7 @@
       "endedAt": 1793026925134,
       "durationSec": 7.226,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 9875,
       "totalCost": 0.00226302,
@@ -305,13 +305,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },
@@ -355,7 +355,7 @@
       "endedAt": 1793026932212,
       "durationSec": 7.042,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 4448,
       "totalCost": 0.0010061999999999998,
@@ -366,13 +366,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },
@@ -416,7 +416,7 @@
       "endedAt": 1793026940663,
       "durationSec": 8.414,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 4073,
       "totalCost": 0.0007934400000000001,
@@ -427,13 +427,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },
@@ -469,7 +469,7 @@
       "endedAt": 1793026945617,
       "durationSec": 4.92,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 4117,
       "totalCost": 0.0007097999999999999,
@@ -480,13 +480,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },
@@ -522,7 +522,7 @@
       "endedAt": 1793026971109,
       "durationSec": 25.458,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 8631,
       "totalCost": 0.0023849399999999995,
@@ -533,13 +533,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },
@@ -575,7 +575,7 @@
       "endedAt": 1793026978652,
       "durationSec": 7.51,
       "skillPaths": [
-        "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+        "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
       ],
       "totalTokens": 4835,
       "totalCost": 0.0014778600000000001,
@@ -586,13 +586,13 @@
         "activated": true,
         "matchedKeywords": [],
         "readSkillPaths": [
-          "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+          "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
         ],
         "evidence": [
           {
             "kind": "tool_call",
-            "value": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
-            "skillPath": "/Users/huangbo/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
+            "value": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md",
+            "skillPath": "~/Dev/Projects/skill-eval/examples/json-contract-skill/SKILL.md"
           }
         ]
       },

@@ -14,6 +14,7 @@ import { dirname, resolve, join, isAbsolute } from "node:path";
 import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant, type EvaluationSummary } from "../core/runner.ts";
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
 import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
+import { expandTilde } from "../core/paths.ts";
 import {
   archiveSkill,
   collectArchiveInput,
@@ -221,11 +222,11 @@ async function commandEval(args: CliArgs): Promise<number> {
   // 被测 skill 路径：命令行优先于套件。
   const skillFlag = flagString(args.flags, "skill");
   const skillFromSuite = suite.skill?.path
-    ? isAbsolute(suite.skill.path)
-      ? suite.skill.path
-      : resolve(suiteDir, suite.skill.path)
+    ? isAbsolute(expandTilde(suite.skill.path))
+      ? expandTilde(suite.skill.path)
+      : resolve(suiteDir, expandTilde(suite.skill.path))
     : undefined;
-  const skillPath = skillFlag ? resolve(skillFlag) : skillFromSuite;
+  const skillPath = skillFlag ? resolve(expandTilde(skillFlag)) : skillFromSuite;
 
   if (!skillPath) {
     process.stderr.write("缺少被测 skill 路径：用 --skill 指定，或在套件中设置 skill.path\n");
