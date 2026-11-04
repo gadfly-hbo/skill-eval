@@ -1,0 +1,13 @@
+{
+  "skill": "deep-research",
+  "version": "20261104-1515",
+  "skillHash": "sha256:4d4847581b82fbb6",
+  "verdict": "effective",
+  "provisional": false,
+  "lowGain": false,
+  "gainPp": 13.235294118,
+  "gainThresholdPp": 10,
+  "archivedAt": "2026-11-04T07:15:42.750Z",
+  "runId": "run-20261104-042151-5aa9abab",
+  "path": "deep-research/20261104-1515"
+}

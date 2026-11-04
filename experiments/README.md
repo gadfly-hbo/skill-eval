@@ -8,6 +8,7 @@
 |---|---|---|
 | `negative-control-2026-11-01/` | 阴性对照实验：验证工具自身具备区分能力 | 2026-11-01 |
 | `data-analysis-2026-10-27/` | data-analysis skill 首轮真实测评 | 2026-10-27 |
+| `deep-research-2026-11-04/` | deep-research skill 首轮真实测评（判定 effective） | 2026-11-04 |
 
 ## 复现
 
