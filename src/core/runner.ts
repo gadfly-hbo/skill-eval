@@ -729,6 +729,9 @@ export function newRunId(): string {
  * 这里从 cases/ 下的原始 result.json 重新聚合，得到与当前代码一致的汇总。
  *
  * pairwise 判定来自评委产物（pairwise/），不重跑模型，只做结构化归集。
+ *
+ * 运行元信息（模型、repeat 次数、时间戳等）从原 summary.json 继承——
+ * 重算的是汇总，不是运行环境，继承丢失会让报告把模型写成「（未记录）」。
  */
 export async function recomputeSummary(
   runRoot: string,
@@ -793,15 +796,21 @@ export async function recomputeSummary(
 
   const pairwise = recomputePairwise(runRoot, options);
 
+  // 运行元信息从原摘要继承：重算的是汇总，不是运行环境。
+  const summaryPath = join(runRoot, "summary.json");
+  const stored = existsSync(summaryPath)
+    ? (JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary)
+    : undefined;
+
   return {
-    runId: basename(runRoot),
-    model: "（未记录）",
-    judgeModel: "（未记录）",
-    repeat: 0,
-    judgeRepeat: 0,
-    startedAt: 0,
-    endedAt: 0,
-    durationSec: 0,
+    runId: stored?.runId ?? basename(runRoot),
+    model: stored?.model ?? "（未记录）",
+    judgeModel: stored?.judgeModel ?? "（未记录）",
+    repeat: stored?.repeat ?? 0,
+    judgeRepeat: stored?.judgeRepeat ?? 0,
+    startedAt: stored?.startedAt ?? 0,
+    endedAt: stored?.endedAt ?? 0,
+    durationSec: stored?.durationSec ?? 0,
     status: results.some((r) => r.status === "failed") ? "partial" : "success",
     results,
     pairwise,

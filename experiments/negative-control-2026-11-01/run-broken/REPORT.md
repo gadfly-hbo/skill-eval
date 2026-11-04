@@ -1,6 +1,6 @@
 # Skill 评估报告：data-analysis-negative-control
 
-> 运行标识 `run-20261101-133545-0888c7a8` · 生成于 2026-11-01T14:07:10.005Z
+> 运行标识 `run-20261101-133545-0888c7a8` · 生成于 2026-11-04T02:37:49.871Z
 
 ## 结论摘要
 
@@ -37,7 +37,7 @@
 | 总 token | 789,347 |
 | 总成本 | $0.0837 |
 | pi 隔离 HOME | `/tmp/nc-pi-home` |
-| 证据目录 | `~/.skill-eval/negative-control/run-broken2` |
+| 证据目录 | `/Users/huangbo/Dev/Projects/skill-eval/experiments/negative-control-2026-11-01/run-broken` |
 
 ## 3. 证据层级
 
@@ -209,7 +209,49 @@
 
 - 1 对比较未能判定（运行失败或评委失败），未计入胜率分子分母之外的断言结论需谨慎解读
 
-## 8. 结论
+## 8. 优化建议
+
+skill 未通过：13 条断言失败，其中 1 条属于「契约未落地」。优先处理这一类，其余见下方明细。
+
+### 8.1 按失败模式归类
+
+| 失败模式 | 条数 | 说明 |
+| --- | --- | --- |
+| 契约未落地 | 1 | skill 声称的约束没有落到输出里。把该条约束从「描述」改成「可执行的硬性步骤或模板」——明确写出要出现什么、放在哪个位置、用什么格式。 |
+| 约束不稳 | 11 | 同一条断言在多次重复里时过时不过——契约强度不够或存在歧义。把模糊表述改成确定性的规则（给出可判定的具体条件），并考虑补一条示例。 |
+| 契约无效 | 1 | 这条约束 baseline 也没满足，但装 skill 后依然没满足。检查 skill 里是否真的写清了这条约束（而不是靠模型自己推测），必要时补成明确的红线条目。 |
+
+### 8.2 逐条失败明细
+
+| 用例 | 断言 | 失败模式 | 失败原因 |
+| --- | --- | --- | --- |
+| attribution-six-section | mustMatch（六段契约第一段：数据口径与质量说明（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:一|1)\s*[、.．:：]?\s*数据口径与质量说明 |
+| attribution-six-section | mustMatch（六段契约第二段：趋势与结构（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:二|2)\s*[、.．:：]?\s*趋势与结构 |
+| attribution-six-section | mustMatch（六段契约第三段：异常识别（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:三|3)\s*[、.．:：]?\s*异常识别 |
+| attribution-six-section | mustMatch（六段契约第四段：指标拆解（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:四|4)\s*[、.．:：]?\s*指标拆解 |
+| attribution-six-section | mustMatch（六段契约第五段：洞察结论（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:五|5)\s*[、.．:：]?\s*洞察结论 |
+| attribution-six-section | mustMatch（六段契约第六段：行动建议与跟踪指标（SKILL.md 第二节）） | 约束不稳 | 未匹配到 #{1,4}\s*(?:六|6)\s*[、.．:：]?\s*行动建议与跟踪指标 |
+| attribution-six-section | mustMatch（红线 5：行动建议必须落到责任人（SKILL.md 第五节）） | 约束不稳 | 未匹配到 责任人 |
+| attribution-six-section | mustMatch（第六段四要素含跟踪指标（SKILL.md 第二节）） | 约束不稳 | 未匹配到 跟踪指标 |
+| adversarial-forecast-and-causality | mustMatch（红线 2：相关结论须标「未做因果检验，需进一步验证」（SKILL.md 第五节）） | 约束不稳 | 未匹配到 未做因果检验|需进一步验证|未做因果|待验证|需人工核实|未验证因果 |
+| adversarial-forecast-and-causality | mustMatch（红线 2：给出量化结论须声明样本量（SKILL.md 第五节）） | 约束不稳 | 未匹配到 样本量|样本数|共\s*\d+\s*(条|行|家) |
+| adversarial-forecast-and-causality | mustMatch（红线 5：建议必须落到责任人（SKILL.md 第五节硬禁止 5）） | 契约无效 | 未匹配到 责任人 |
+| adversarial-forecast-and-causality | mustMatch（红线 3：口径缺失下结论禁止，须声明来源与期间（SKILL.md 第五节硬禁止 3）） | 约束不稳 | 未匹配到 统计期间|导出时间|数据来源 |
+| trap-average-of-average | mustMatch（须识别并命名「平均的平均」这一陷阱（SKILL.md 第四节、methods.md 8.3）） | 契约未落地 | 未匹配到 平均的平均|算术平均|组均值|各组均值 |
+
+> 「契约未落地」= baseline 能做到、装 skill 后反而做不到，是 skill 的真问题；
+> 「契约无效」= baseline 也做不到，说明 skill 没把这条约束写清楚。
+> baseline 本来就能过的断言不算 skill 的问题，不列入建议。
+
+### 下一步
+
+按上述建议修改 SKILL.md 后，可进入二次测评准备：
+
+1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式）。
+2. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。
+3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。
+
+## 9. 结论
 
 **结论不足** — 激活率 100.0%、胜率 22.2%，两项未同时达标。建议用更多重复次数与多轮评委复核。
 
@@ -220,4 +262,4 @@
 
 ---
 
-报告由 skill-eval 生成 · 运行 `run-20261101-133545-0888c7a8` · 证据目录 `~/.skill-eval/negative-control/run-broken2`
+报告由 skill-eval 生成 · 运行 `run-20261101-133545-0888c7a8` · 证据目录 `/Users/huangbo/Dev/Projects/skill-eval/experiments/negative-control-2026-11-01/run-broken`
