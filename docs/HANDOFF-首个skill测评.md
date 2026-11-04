@@ -149,7 +149,7 @@ node --experimental-strip-types src/cli/main.ts archive \
 - **自动把它从 `pending/` 里移出**（`pending/` 文件夹本身保留）
 - `latest.json` 记录 verdict / gainPp / lowGain / provisional
 
-**如果被增益门拦下**（`断言增益未达标的错误`）：
+**如果被增益门拦下**（报错文案：`拒绝归档：断言增益未达标`）：
 先看第 8 节的优化建议，改完 skill 再评。
 确实是样本问题才加 `--allow-low-gain` 放行（会标 `lowGain=true`）。
 
