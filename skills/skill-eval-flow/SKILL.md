@@ -79,15 +79,18 @@ agent_created: true
 查待测评区：
 
 ```bash
-skill-eval pending --repo <项目仓库路径> --json
+skill-eval pending --json
 ```
 
 输出是 JSON，`skills[].skillPath` 就是待测 SKILL.md 的绝对路径。
 **一个待测 skill 都没有时不要编造路径**——那是把「没找到」伪装成「找到了」。
 
-> 待测评区默认在 `<仓库>/pending/`。`--repo` 不指定时 CLI 会从当前目录向上探测
-> 含 `skills/` + `package.json` 的目录，探测不到就报错——那时用 AskUserQuestion
-> 问用户评估的项目仓库在哪。
+> **不用指定 `--repo`**——CLI 会依次尝试：环境变量 `SKILL_EVAL_REPO` →
+> 当前目录向上探测 → 从 skill-eval 自身安装位置反推。
+> 你的 cwd 通常是会话工作区而不是 skill-eval 仓库，但待测评区就在 skill-eval 仓库里，
+> 第三层兜底能保证找得到。
+>
+> 评估**其他项目**的 skill 时，才需要显式 `--repo <那个项目的仓库>`。
 
 ### 0.2 收集其余参数
 

@@ -11,6 +11,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve, join, isAbsolute, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant, type EvaluationSummary } from "../core/runner.ts";
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
 import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
@@ -26,6 +27,7 @@ import {
   ensurePendingRoot,
 } from "../core/pending.ts";
 import { toPendingJson } from "../core/pending-json.ts";
+import { detectRepoRoot as detectRepoRootCore } from "../core/repo-detect.ts";
 import {
   archiveSkill,
   collectArchiveInput,
@@ -873,17 +875,24 @@ function commandPending(args: CliArgs): number {
 }
 
 /** 从起始目录向上寻找含 skills/ 的仓库根目录。 */
+/**
+ * 探测仓库根目录。
+ *
+ * 逐层兜底，保证「用户在任何目录发起评估」都能找到待测评区：
+ * 1. 显式 `--repo`（最高优先级，由调用方处理）
+ * 2. 环境变量 `SKILL_EVAL_REPO`
+ * 3. 从当前目录向上找含 `skills/` + `package.json` 的目录
+ * 4. 从 skill-eval 自身安装位置反推
+ *
+ * 第 4 层是兜底：agent 的 cwd 常常是会话工作区而不是 skill-eval 仓库，
+ * 此时前 3 层都会失败，但待测评区就在 skill-eval 仓库里。
+ */
 function detectRepoRoot(startDir: string): string | null {
-  let current = resolve(startDir);
-  for (let depth = 0; depth < 8; depth += 1) {
-    if (existsSync(join(current, "skills")) && existsSync(join(current, "package.json"))) {
-      return current;
-    }
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return null;
+  return detectRepoRootCore({
+    startDir,
+    env: process.env,
+    cliFilePath: fileURLToPath(import.meta.url),
+  });
 }
 
 /** 查看回归门禁阈值。 */
