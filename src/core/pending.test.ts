@@ -9,14 +9,20 @@ import {
   readPendingState,
   prunePendingAfterArchive,
   pendingRootFor,
+  ensurePendingRoot,
+  adoptManualSkill,
+  isSkillDir,
   PENDING_META_FILE,
 } from "./pending.ts";
 
 /**
- * 待测评暂存区：候选池语义。
+ * 待测评暂存区：常驻投放入口。
  *
- * 核心约定：pending/ 存的是 skill 副本（源目录不受影响），测评通过后
- * 整个副本移出，pending 空了就删掉目录。
+ * 核心约定：
+ * - pending/ **常驻存在**——用户要能直接找到它、把 skill 文件夹拖进去
+ * - 允许手动投放：拖进来的 skill 没有登记元信息，工具要能识别并补写
+ * - 登记是复制（源目录不受影响），测评通过后从暂存区移出
+ * - 移出后暂存区**本身保留**，它是常驻入口
  */
 
 function makeRepo(): string {
@@ -138,7 +144,7 @@ test("prunePendingAfterArchive 移出已归档的 skill", () => {
   rmSync(repo, { recursive: true, force: true });
 });
 
-test("prunePendingAfterArchive 在暂存区清空后删除整个目录", () => {
+test("prunePendingAfterArchive 移出已归档的 skill 后保留暂存区目录", () => {
   const repo = makeRepo();
   registerPending({ repoRoot: repo, skillPath: makeSkill(repo, "only") });
 
@@ -149,8 +155,12 @@ test("prunePendingAfterArchive 在暂存区清空后删除整个目录", () => {
 
   assert.deepEqual(outcome.removed, ["only"]);
   assert.equal(outcome.remaining, 0);
-  assert.equal(outcome.pendingRootDeleted, true, "暂存区清空后应删除目录，不留空壳");
-  assert.equal(existsSync(pendingRootFor(repo)), false);
+  assert.equal(outcome.pendingRootDeleted, false);
+  assert.equal(
+    existsSync(pendingRootFor(repo)),
+    true,
+    "暂存区是常驻的投放入口，清空后也必须保留目录",
+  );
 
   rmSync(repo, { recursive: true, force: true });
 });
@@ -176,6 +186,131 @@ test("暂存区不参与归档——留在里面的 skill 不会被移走", () =
   const state = readPendingState({ repoRoot: repo });
   assert.equal(state.skills.length, 1);
   assert.equal(state.skills[0]?.name, "untested", "没测过的 skill 必须留在暂存区");
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+// ---- 常驻投放入口 ----
+
+test("ensurePendingRoot 创建暂存区目录", () => {
+  const repo = makeRepo();
+
+  const outcome = ensurePendingRoot({ repoRoot: repo });
+
+  assert.equal(outcome.created, true);
+  assert.ok(existsSync(join(repo, "pending")), "目录必须真实存在，用户才能往里放 skill");
+  assert.equal(outcome.pendingRoot, pendingRootFor(repo));
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("ensurePendingRoot 已存在时不重复创建", () => {
+  const repo = makeRepo();
+  ensurePendingRoot({ repoRoot: repo });
+
+  const second = ensurePendingRoot({ repoRoot: repo });
+
+  assert.equal(second.created, false);
+  assert.equal(second.pendingRoot, pendingRootFor(repo));
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("ensurePendingRoot 支持自定义位置", () => {
+  const repo = makeRepo();
+  const custom = join(repo, "custom-inbox");
+
+  const outcome = ensurePendingRoot({ repoRoot: repo, pendingRoot: custom });
+
+  assert.ok(existsSync(custom));
+  assert.equal(outcome.pendingRoot, custom);
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("isSkillDir 依据 SKILL.md 判定", () => {
+  const repo = makeRepo();
+  const skillPath = makeSkill(repo, "demo");
+
+  assert.equal(isSkillDir(join(repo, "src", "demo")), true);
+  assert.equal(isSkillDir(join(repo, "src")), false);
+  assert.ok(existsSync(skillPath));
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("手动投放的 skill 会被识别并补写登记信息", () => {
+  const repo = makeRepo();
+  ensurePendingRoot({ repoRoot: repo });
+
+  // 模拟用户直接把 skill 文件夹拖进暂存区——没有登记元信息。
+  const manualDir = join(repo, "pending", "manual-skill");
+  mkdirSync(manualDir, { recursive: true });
+  writeFileSync(join(manualDir, "SKILL.md"), "---\nname: manual-skill\n---\n", "utf8");
+
+  const state = readPendingState({ repoRoot: repo });
+
+  assert.equal(state.skills.length, 1);
+  assert.equal(state.skills[0]?.name, "manual-skill");
+  assert.ok(state.skills[0]?.meta, "手动投放的 skill 也必须有登记信息");
+  assert.equal(state.skills[0]?.meta?.sourcePath, "（手动投放）");
+  assert.ok(
+    existsSync(join(manualDir, PENDING_META_FILE)),
+    "补写的登记信息要落盘，归档流程才能识别它",
+  );
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("手动投放的非 skill 目录不被登记", () => {
+  const repo = makeRepo();
+  ensurePendingRoot({ repoRoot: repo });
+
+  mkdirSync(join(repo, "pending", "just-a-folder"), { recursive: true });
+  writeFileSync(join(repo, "pending", "just-a-folder", "note.txt"), "随便放的\n", "utf8");
+
+  const state = readPendingState({ repoRoot: repo });
+
+  assert.equal(state.skills[0]?.meta, null, "没有 SKILL.md 的目录不算 skill");
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("adoptManualSkill 不覆盖已有的登记信息", () => {
+  const repo = makeRepo();
+  ensurePendingRoot({ repoRoot: repo });
+
+  const manualDir = join(repo, "pending", "manual-skill");
+  mkdirSync(manualDir, { recursive: true });
+  writeFileSync(join(manualDir, "SKILL.md"), "---\nname: manual-skill\n---\n", "utf8");
+  writeFileSync(
+    join(manualDir, PENDING_META_FILE),
+    JSON.stringify({ skill: "manual-skill", sourcePath: "~/somewhere/SKILL.md", registeredAt: "2026-01-01T00:00:00.000Z" }),
+    "utf8",
+  );
+
+  const meta = adoptManualSkill({ pendingRoot: join(repo, "pending"), skillDir: manualDir });
+
+  assert.equal(meta?.sourcePath, "~/somewhere/SKILL.md", "已有登记信息不能被覆盖");
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("手动投放的 skill 也能被归档流程移出", () => {
+  const repo = makeRepo();
+  ensurePendingRoot({ repoRoot: repo });
+
+  const manualDir = join(repo, "pending", "manual-skill");
+  mkdirSync(manualDir, { recursive: true });
+  writeFileSync(join(manualDir, "SKILL.md"), "---\nname: manual-skill\n---\n", "utf8");
+
+  const outcome = prunePendingAfterArchive({
+    repoRoot: repo,
+    movedSkillNames: ["manual-skill"],
+  });
+
+  assert.deepEqual(outcome.removed, ["manual-skill"]);
+  assert.equal(existsSync(manualDir), false);
 
   rmSync(repo, { recursive: true, force: true });
 });

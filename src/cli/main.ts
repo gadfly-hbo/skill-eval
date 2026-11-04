@@ -23,6 +23,7 @@ import {
   registerPending,
   readPendingState,
   prunePendingAfterArchive,
+  ensurePendingRoot,
 } from "../core/pending.ts";
 import {
   archiveSkill,
@@ -141,6 +142,9 @@ pending 选项：
   --repo <dir>            仓库根目录（默认自动探测）
   --skill <path>          登记该 skill 到待测评区；不给则列出待测 skill
   --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
+  --init                  只创建暂存区目录（方便先把 skill 文件夹拖进去）
+
+  待测评区是常驻目录：skill 文件夹可以直接拖进去，不一定要用 --skill 登记。
 
 产物布局：
   <out>/cases/<variant>/<task>/<attempt>/  单次运行证据（events.json / output.md / result.json）
@@ -749,8 +753,10 @@ async function commandArchive(args: CliArgs): Promise<number> {
 /**
  * 归档成功后，把该 skill 从待测评暂存区移出。
  *
- * 暂存区里的 skill 副本是「候选池」——测评通过就不再是待测评的了。
- * 暂存区清空则整个目录删除，不留空壳。
+ * 暂存区里的 skill 是「候选池」——测评通过就不再是待测评的了，
+ * 该目录被删除，skill 已在 archive/ 里。
+ *
+ * 暂存区**本身保留**——它是常驻的投放入口，用户随时要往里放新 skill。
  */
 function prunePendingAfterArchiveSkill(
   result: ArchiveResult,
@@ -772,21 +778,24 @@ function prunePendingAfterArchiveSkill(
   if (outcome.removed.length > 0) {
     process.stdout.write(`已从待测评区移出：${outcome.removed.join(", ")}\n`);
   }
-  if (outcome.pendingRootDeleted) {
-    process.stdout.write("待测评区已空，目录已删除。\n");
-  } else if (outcome.remaining > 0) {
+  if (outcome.remaining > 0) {
     process.stdout.write(`待测评区剩余 ${outcome.remaining} 个待测 skill。\n`);
+  } else {
+    process.stdout.write("待测评区已空，目录保留——可以继续往里放新的待测 skill。\n");
   }
 }
 
 /**
  * 待测评暂存区管理。
  *
- * - `pending list`  列出待测评的 skill
- * - `pending add`   把 skill 登记进暂存区
+ * - `pending` / `pending list`  列出待测评的 skill（并确保目录存在）
+ * - `pending --skill <路径>`    把 skill 登记进暂存区
+ * - `pending init`              只创建目录，用来「先有地方放 skill」
+ *
+ * 暂存区是**常驻**目录——用户要能直接找到它、把 skill 文件夹拖进去。
+ * 所以不只在登记时创建，任何一次 pending 调用都会确保目录存在。
  */
 function commandPending(args: CliArgs): number {
-  const action = args.flags["list"] === true || args.command === "pending" ? "list" : "list";
   const repoFlag = flagString(args.flags, "repo");
   const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
 
@@ -797,6 +806,18 @@ function commandPending(args: CliArgs): number {
 
   const pendingRoot = flagString(args.flags, "pending-root");
   const skillFlag = flagString(args.flags, "skill");
+
+  // 只创建目录——用户在 IDE 里翻文件时需要先有个地方可放。
+  if (args.flags["init"] === true) {
+    const outcome = ensurePendingRoot({ repoRoot, pendingRoot });
+    process.stdout.write(
+      outcome.created
+        ? `已创建待测评区：${outcome.pendingRoot}\n`
+        : `待测评区已存在：${outcome.pendingRoot}\n`,
+    );
+    process.stdout.write(`把待测评的 skill 文件夹直接放进这个目录即可。\n`);
+    return 0;
+  }
 
   // 登记模式：--skill <路径>
   if (skillFlag) {
@@ -819,7 +840,8 @@ function commandPending(args: CliArgs): number {
     return 0;
   }
 
-  // 列表模式
+  // 列表模式——同时确保目录存在，用户才知道往哪放。
+  ensurePendingRoot({ repoRoot, pendingRoot });
   const state = readPendingState({ repoRoot, pendingRoot });
   if (!state.exists) {
     process.stdout.write(`待测评区为空（目录不存在）：${state.pendingRoot}\n`);
@@ -827,6 +849,7 @@ function commandPending(args: CliArgs): number {
   }
   if (state.skills.length === 0) {
     process.stdout.write(`待测评区为空：${state.pendingRoot}\n`);
+    process.stdout.write("把待测评的 skill 文件夹直接放进这个目录即可。\n");
     return 0;
   }
 
@@ -835,7 +858,7 @@ function commandPending(args: CliArgs): number {
     const source = item.meta?.sourcePath ?? "未登记来源";
     process.stdout.write(`  ${item.name}\n    来源：${source}\n`);
   }
-  process.stdout.write("\n测评通过后 skill 会自动移入 archive/，暂存区清空则目录删除。\n");
+  process.stdout.write("\n测评通过后 skill 会自动移入 archive/，暂存区本身保留常驻。\n");
   return 0;
 }
 

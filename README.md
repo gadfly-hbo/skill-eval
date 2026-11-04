@@ -69,6 +69,9 @@ npm run eval -- archive --run runs/exp-001 --repo .
 # 未测的 skill 先放进待测评暂存区（通过归档后自动移出）
 npm run eval -- pending --repo . --skill ~/.workbuddy/skills/my-skill/SKILL.md
 
+# 只把目录建出来，然后直接把 skill 文件夹拖进去
+npm run eval -- pending --repo . --init
+
 # 查看待测评区里有哪些 skill
 npm run eval -- pending --repo .
 
@@ -86,8 +89,12 @@ npm run eval -- threshold
 
 **没通过测的 skill 也有去处**：报告第 8 节会按四种失败模式（契约未落地 /
 契约无效 / 约束不稳 / 未触发）给出可执行的优化建议，改完可原地复评。
-待测评暂存区 `pending/` 是候选池——归档成功后自动把已归档的 skill 移出，
-暂存区清空则目录删除；**没通过的 skill 会刻意留在里面等二次测评**。
+待测评暂存区 `pending/` 是**常驻的投放入口**——skill 文件夹可以直接拖进去，
+测评通过的 skill 会从里面移走进 `archive/`，但**文件夹本身保留**；
+**没通过的 skill 会刻意留在里面等二次测评**。
+
+> `pending/` 的位置跟着 `--repo` 走：评估某个项目的 skill 时应指向那个项目的仓库，
+> 这样待测队列和归档都在同一个项目里。需要换位置用 `--pending-root <dir>`。
 
 ## 仓库结构
 
