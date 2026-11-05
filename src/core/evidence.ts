@@ -44,15 +44,25 @@ export interface EvidenceOptions {
   maxOutputChars?: number;
 }
 
-const DEFAULT_MAX_CALLS = 24;
-const DEFAULT_MAX_ACTION_CHARS = 220;
-const DEFAULT_MAX_OUTPUT_CHARS = 400;
+const DEFAULT_MAX_CALLS = 16;
+const DEFAULT_MAX_ACTION_CHARS = 180;
+const DEFAULT_MAX_OUTPUT_CHARS = 220;
 
 /** 把绝对路径压缩成可读形态（保留末两段，避免评委被长路径淹没）。 */
 function shortenPath(rawPath: string): string {
   const parts = rawPath.split("/").filter(Boolean);
   if (parts.length <= 2) return rawPath;
   return `…/${parts.slice(-2).join("/")}`;
+}
+
+/**
+ * 压缩文本里的绝对路径。
+ *
+ * 评委只需要知道「哪个目录下的哪个文件」，不需要完整路径；
+ * 完整路径既占上下文，又会把运行机的用户名带进提示词。
+ */
+function shortenPathsInText(text: string): string {
+  return text.replace(/(?:\/[\w.@+-]+){3,}/g, (match) => shortenPath(match));
 }
 
 /** 抽取 bash 命令里的脚本调用特征，让「跑过哪个脚本」一眼可见。 */
@@ -77,7 +87,9 @@ function summarizeEvent(event: PiEvent, options: Required<EvidenceOptions>): Too
     if (!command.trim()) return null;
     const scripts = extractScriptCalls(command);
     const scriptHint = scripts.length ? ` [脚本: ${scripts.join(", ")}]` : "";
-    const action = command.replace(/\s+/g, " ").trim().slice(0, options.maxActionChars) + scriptHint;
+    const action =
+      shortenPathsInText(command.replace(/\s+/g, " ").trim()).slice(0, options.maxActionChars) +
+      scriptHint;
     const result = event.result as Record<string, unknown> | undefined;
     const structured = result?.structuredContent as Record<string, unknown> | undefined;
     const outText =
@@ -182,7 +194,9 @@ export function formatEvidence(calls: ToolCallSummary[]): string {
     if (typeof call.exitCode === "number") tail.push(`退出码 ${call.exitCode}`);
     if (call.isError) tail.push("报错");
     const meta = tail.length ? `（${tail.join("，")}）` : "";
-    const out = call.outputExcerpt ? `\n   结果：${call.outputExcerpt.replace(/\n+/g, " ").slice(0, 400)}` : "";
+    const out = call.outputExcerpt
+      ? `\n   结果：${shortenPathsInText(call.outputExcerpt).replace(/\s+/g, " ").slice(0, 220)}`
+      : "";
     return `${head}${meta}${out}`;
   });
   return lines.join("\n");

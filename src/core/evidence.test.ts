@@ -116,6 +116,32 @@ test("格式化输出包含序号、工具名、退出码与结果摘要", () =>
   assert.match(text, /结果：OK/);
 });
 
+test("命令与结果里的绝对路径被压缩，不把运行机用户名带进评委提示词", () => {
+  const events: PiEvent[] = [
+    {
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "bash",
+      args: { command: "python3 /Users/huangbo/Dev/Projects/x/scripts/calc.py period" },
+    },
+    {
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      toolName: "bash",
+      result: {
+        structuredContent: {
+          output: "写文件到 /Users/huangbo/Dev/Projects/x/scripts/out.json",
+          exit_code: 0,
+        },
+      },
+    },
+  ];
+  const text = formatEvidence(extractToolCalls(events));
+  assert.doesNotMatch(text, /huangbo/);
+  assert.match(text, /…\/scripts\/calc\.py/);
+  assert.match(text, /…\/scripts\/out\.json/);
+});
+
 test("超过 maxCalls 时截断", () => {
   const events: PiEvent[] = Array.from({ length: 30 }, (_, i) => ({
     type: "tool_execution_start",
