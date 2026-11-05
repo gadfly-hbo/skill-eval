@@ -29,7 +29,8 @@ export type FailureMode =
   | "no-effect"
   | "regression"
   | "unstable"
-  | "activation-missing";
+  | "activation-missing"
+  | "assertion-too-strict";
 
 /** 单条失败断言的归因结果。 */
 export interface FailureDiagnosis {
@@ -57,6 +58,14 @@ export interface ImprovementAdvice {
   activationIssue: string | null;
   /** 一句话总结。 */
   summary: string;
+  /**
+   * skill 侧真正要改的条数（排除「断言过严」）。
+   *
+   * 「5 条断言失败」不等于「skill 有 5 处要改」——假失败指向套件。
+   */
+  skillIssueCount: number;
+  /** 判定为「断言过严」的条数——要改的是套件，不是 skill。 */
+  falseFailureCount: number;
 }
 
 /** 各失败模式的建议文案。 */
@@ -76,16 +85,33 @@ const MODE_ADVICE: Record<FailureMode, string> = {
   "activation-missing":
     "skill 没被模型读取，输出根本没走 skill 的约束。优先改 frontmatter 的 description——" +
     "写清「什么场景下该用我」，而不是罗列功能。",
+  "assertion-too-strict":
+    "**这是断言写得过严，不是 skill 的问题**——输出里其实做到了，只是用了断言没覆盖的措辞。" +
+    "要改的是**套件**：把这条断言放宽到能接受 skill 契约里允许的其他写法，" +
+    "或给该断言补上 `equivalentPatterns` 声明等价写法。放宽后必须复验 baseline 仍不命中——" +
+    "放宽到 baseline 也能过，测出来的增益就是假的。",
 };
 
-/** 模式的中文名。 */
-const MODE_LABEL: Record<FailureMode, string> = {
+/** 模式的中文名。报告渲染复用这份，避免两处各写一个而漂移。 */
+export const MODE_LABEL: Record<FailureMode, string> = {
   "contract-missing": "契约未落地",
   "no-effect": "契约无效",
   regression: "质量倒退",
   unstable: "约束不稳",
   "activation-missing": "未触发",
+  "assertion-too-strict": "断言过严（不是 skill 的问题）",
 };
+
+/**
+ * 该模式是否属于「skill 自己的问题」。
+ *
+ * 假失败（断言过严）指向**套件**而不是 skill——把它算进「skill 有几处要改」
+ * 会让用户去改本来正确的地方。这与「baseline 本来就能过的断言不算 skill 的问题」
+ * 是同一条原则的另一面。
+ */
+export function isSkillIssue(mode: FailureMode): boolean {
+  return mode !== "assertion-too-strict";
+}
 
 /**
  * 生成优化建议。
@@ -151,8 +177,30 @@ export function buildImprovementAdvice(
     // skill 侧自身是否不稳定——多次重复里时过时不过。
     const skillMixed = entry.passes.some(Boolean);
 
+    /**
+     * **假失败判定**（本次新增的关键判据）。
+     *
+     * 「断言过严」与「skill 真缺陷」在「两侧逐次通过与否」的布尔数据里**完全无法区分**
+     * ——实测两条假失败与一条真缺陷的签名都是 `baseline ✗✗ / skill ✓✗`。
+     * 区别只存在于输出文本里：假失败的输出命中了断言声明的**等价写法**
+     * （skill 契约里允许、但主 pattern 没覆盖的词形），真缺陷则是连等价写法都没有。
+     *
+     * 因此判据是：**skill 侧至少有一次失败命中了等价写法** → 假失败。
+     * 只有全部失败都没命中等价写法，才算真缺陷。
+     *
+     * 没有声明等价写法的断言（equivalentMatched === undefined）不能判假失败——
+     * 无信息不等于无问题。
+     */
+    const failedOutcomes = entry.outcomes.filter((o) => !o.passed);
+    const equivalentHits = failedOutcomes.filter((o) => o.equivalentMatched === true);
+    const equivalentChecked = failedOutcomes.some((o) => o.equivalentMatched !== undefined);
+    const isFalseFailure = equivalentHits.length > 0 && equivalentChecked;
+
     let mode: FailureMode;
-    if (baselineAllPass) {
+    if (isFalseFailure) {
+      // 内容做到了，只是断言没覆盖到那种措辞——这是**断言的问题，不是 skill 的问题**。
+      mode = "assertion-too-strict";
+    } else if (baselineAllPass) {
       // baseline 稳过、skill 侧有失败——真问题，skill 把本来能做对的事做坏了。
       mode = "contract-missing";
     } else if (skillMixed || baselineAnyPass) {
@@ -175,13 +223,16 @@ export function buildImprovementAdvice(
     });
   }
 
-  // 按模式归类计数，优先级：真问题 > 不稳 > 无效 > 倒退。
+  // 按模式归类计数，优先级：真问题 > 不稳 > 无效 > 倒退 > 断言过严。
+  //
+  // 「断言过严」排在最后——它不是 skill 的问题，先改 skill 的真缺陷更重要。
   const modePriority: FailureMode[] = [
     "contract-missing",
     "unstable",
     "no-effect",
     "regression",
     "activation-missing",
+    "assertion-too-strict",
   ];
   const counts = new Map<FailureMode, number>();
   for (const d of diagnoses) counts.set(d.mode, (counts.get(d.mode) ?? 0) + 1);
@@ -193,6 +244,9 @@ export function buildImprovementAdvice(
       count: counts.get(mode)!,
       advice: MODE_ADVICE[mode],
     }));
+
+  // skill 侧真正要改的条数（排除「断言过严」——那是套件的问题）。
+  const skillIssueCount = diagnoses.filter((d) => isSkillIssue(d.mode)).length;
 
   // 激活率过低是另一类问题——改内容没用，得先改 description。
   const activationIssue =
@@ -218,13 +272,31 @@ export function buildImprovementAdvice(
   } else if (diagnoses.length === 0) {
     summary =
       "规则断言全部通过，没有可加固的契约——如需确认稳定性，可增加 repeat 后复跑。";
+  } else if (skillIssueCount === 0) {
+    // 全部失败都是「断言过严」——skill 本身没问题，要改的是套件。
+    const falseCount = diagnoses.length;
+    summary =
+      (passed ? "skill 已通过测评，" : "") +
+      `${falseCount} 条断言失败，但全部属于「${MODE_LABEL["assertion-too-strict"]}」——` +
+      `**不是 skill 的问题**，输出内容做到了，只是断言没覆盖那种措辞。要改的是套件。`;
   } else {
-    const top = byMode[0];
+    const top = byMode.find((m) => isSkillIssue(m.mode));
+    const falseCount = diagnoses.length - skillIssueCount;
     summary =
       (passed ? "skill 已通过测评，但仍有可加固的契约：" : "skill 未通过：") +
-      `${diagnoses.length} 条断言失败，其中 ${top ? top.count : 0} 条属于「${top ? MODE_LABEL[top.mode] : "未知"}」。` +
-      `优先处理这一类，其余见下方明细。`;
+      `${skillIssueCount} 条断言失败，其中 ${top ? top.count : 0} 条属于「${top ? MODE_LABEL[top.mode] : "未知"}」。` +
+      `优先处理这一类，其余见下方明细。` +
+      (falseCount > 0
+        ? `另有 ${falseCount} 条失败属「${MODE_LABEL["assertion-too-strict"]}」，要改的是套件而非 skill。`
+        : "");
   }
 
-  return { diagnoses, byMode, activationIssue, summary };
+  return {
+    diagnoses,
+    byMode,
+    activationIssue,
+    summary,
+    skillIssueCount,
+    falseFailureCount: diagnoses.length - skillIssueCount,
+  };
 }

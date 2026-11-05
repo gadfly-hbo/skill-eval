@@ -144,3 +144,86 @@ test("evaluateAssertions 空断言集不判定为全部通过", () => {
   assert.equal(report.total, 0);
   assert.equal(report.allPassed, false);
 });
+
+/**
+ * 等价写法（equivalentPatterns）的判定。
+ *
+ * 这是区分「断言过严（假失败）」与「skill 真缺陷」的数据来源：
+ * 失败时若命中等价写法，说明内容做到了、只是措辞没覆盖。
+ */
+test("mustMatch 失败但命中等价写法 → 标记为 equivalentMatched=true", () => {
+  const outcome = evaluateAssertion("建议由谁做负责跟进", {
+    kind: "mustMatch",
+    pattern: "责任人",
+    equivalentPatterns: ["谁做", "谁负责"],
+  });
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.equivalentMatched, true);
+  assert.equal(outcome.detail.includes("等价写法"), true);
+});
+
+test("mustMatch 失败且等价写法也没命中 → equivalentMatched=false", () => {
+  const outcome = evaluateAssertion("今天天气不错", {
+    kind: "mustMatch",
+    pattern: "责任人",
+    equivalentPatterns: ["谁做", "谁负责"],
+  });
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.equivalentMatched, false);
+  assert.equal(outcome.detail.includes("内容确实缺失"), true);
+});
+
+test("mustMatch 通过 → equivalentMatched 为 undefined", () => {
+  const outcome = evaluateAssertion("责任人：张三", {
+    kind: "mustMatch",
+    pattern: "责任人",
+    equivalentPatterns: ["谁做"],
+  });
+  assert.equal(outcome.passed, true);
+  assert.equal(outcome.equivalentMatched, undefined);
+});
+
+test("未声明等价写法时 equivalentMatched 为 undefined（无法据此区分真假失败）", () => {
+  const outcome = evaluateAssertion("无关内容", { kind: "mustMatch", pattern: "责任人" });
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.equivalentMatched, undefined);
+});
+
+test("等价写法里含无效正则时不影响主判定", () => {
+  const outcome = evaluateAssertion("无关内容", {
+    kind: "mustMatch",
+    pattern: "责任人",
+    equivalentPatterns: ["([未闭合"],
+  });
+  assert.equal(outcome.passed, false);
+  assert.equal(outcome.equivalentMatched, false);
+});
+
+test("mustNotMatch 命中时也记录等价写法状态", () => {
+  // 主 pattern 与等价写法都命中 → 断言失败，且说明「覆盖范围可能过宽」
+  const hit = evaluateAssertion("数据含退货且含税", {
+    kind: "mustNotMatch",
+    pattern: "含退货",
+    equivalentPatterns: ["含税"],
+  });
+  assert.equal(hit.passed, false);
+  assert.equal(hit.equivalentMatched, true);
+
+  // 只命中等价写法、主 pattern 没命中 → 断言通过
+  const onlyEquivalent = evaluateAssertion("数据含税", {
+    kind: "mustNotMatch",
+    pattern: "含退货",
+    equivalentPatterns: ["含税"],
+  });
+  assert.equal(onlyEquivalent.passed, true);
+  assert.equal(onlyEquivalent.equivalentMatched, undefined);
+
+  // 主 pattern 命中、等价写法没命中 → 断言失败且等价写法未命中
+  const noEquivalent = evaluateAssertion("数据含退货", {
+    kind: "mustNotMatch",
+    pattern: "含退货",
+    equivalentPatterns: ["含税"],
+  });
+  assert.equal(noEquivalent.passed, false);
+  assert.equal(noEquivalent.equivalentMatched, false);
+});

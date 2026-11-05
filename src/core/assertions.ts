@@ -11,13 +11,31 @@ export interface MustMatchAssertion {
   flags?: string;
   /** 说明该断言意图，便于报告解读。 */
   note?: string;
+  /**
+   * 契约语义的**其他合规写法**（主 pattern 之外的等价表达）。
+   *
+   * 为什么需要这个字段：断言失败有两种完全不同的性质——
+   * - **假失败**：skill 其实做到了，但用了断言没覆盖的词形（「谁做」vs「责任人」）
+   * - **真缺陷**：skill 压根没写这条内容
+   *
+   * 这两者在「baseline/skill 两侧逐次通过与否」的布尔数据里**完全无法区分**
+   * （实测两条假失败与一条真缺陷的签名都是 `baseline ✗✗ / skill ✓✗`）。
+   * 区别只存在于输出文本里：假失败会命中某个等价写法，真缺陷不会。
+   *
+   * 所以要区分，只能让断言**显式声明** skill 契约里允许的其他写法。
+   * 声明后，失败时若等价模式命中 → 判为「断言过严（假失败）」；
+   * 所有次都不命中 → 判为真缺陷。
+   */
+  equivalentPatterns?: string[];
 }
 
 export interface MustNotMatchAssertion {
-  kind: "mustNotMatch";
+  kind: "mustMatch" | "mustNotMatch";
   pattern: string;
   flags?: string;
   note?: string;
+  /** 同 MustMatchAssertion.equivalentPatterns。 */
+  equivalentPatterns?: string[];
 }
 
 export interface MustContainAssertion {
@@ -64,6 +82,16 @@ export interface AssertionOutcome {
   /** 失败原因（人类可读）。 */
   detail: string;
   note?: string | undefined;
+  /**
+   * 失败时，断言声明的**等价写法**是否命中了输出。
+   *
+   * `undefined` = 该断言没声明等价写法（或断言通过了），
+   * 无法据此区分「假失败」与「真缺陷」。
+   *
+   * `true`  = 输出里有等价写法 → 主 pattern 没覆盖到 → **假失败**（断言过严）
+   * `false` = 输出里连等价写法都没有 → **真缺陷**（内容确实缺失）
+   */
+  equivalentMatched?: boolean | undefined;
 }
 
 export interface AssertionReport {
@@ -103,11 +131,27 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
         return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
       }
       const matched = regex.test(output);
+      if (matched) {
+        return {
+          kind: assertion.kind,
+          passed: true,
+          detail: `匹配到 ${assertion.pattern}`,
+          note,
+          equivalentMatched: undefined,
+        };
+      }
+      const eq = evaluateEquivalentPatterns(output, assertion.equivalentPatterns);
       return {
         kind: assertion.kind,
-        passed: matched,
-        detail: matched ? `匹配到 ${assertion.pattern}` : `未匹配到 ${assertion.pattern}`,
+        passed: false,
+        detail:
+          eq.matched === true
+            ? `未匹配到 ${assertion.pattern}，但命中了等价写法（${eq.hitPattern}）——内容做到了，措辞未覆盖`
+            : eq.matched === false
+              ? `未匹配到 ${assertion.pattern}，等价写法也未命中——内容确实缺失`
+              : `未匹配到 ${assertion.pattern}`,
         note,
+        equivalentMatched: eq.matched,
       };
     }
 
@@ -117,11 +161,25 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
         return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
       }
       const matched = regex.test(output);
+      if (!matched) {
+        return {
+          kind: assertion.kind,
+          passed: true,
+          detail: `成功避开 ${assertion.pattern}`,
+          note,
+          equivalentMatched: undefined,
+        };
+      }
+      const eq = evaluateEquivalentPatterns(output, assertion.equivalentPatterns);
       return {
         kind: assertion.kind,
-        passed: !matched,
-        detail: matched ? `不应出现的模式出现了: ${assertion.pattern}` : `成功避开 ${assertion.pattern}`,
+        passed: false,
+        detail:
+          eq.matched === true
+            ? `不应出现的模式出现了: ${assertion.pattern}，但命中的是等价写法（${eq.hitPattern}）——措辞覆盖范围可能过宽`
+            : `不应出现的模式出现了: ${assertion.pattern}`,
         note,
+        equivalentMatched: eq.matched,
       };
     }
 
@@ -197,6 +255,28 @@ function safeRegExp(pattern: string, flags?: string): RegExp | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 判断输出是否命中断言声明的**等价写法**。
+ *
+ * 返回：
+ * - `matched: undefined` → 断言没声明等价写法，无法据此区分真假失败
+ * - `matched: true` → 命中了某个等价写法 → 主 pattern 覆盖不全（假失败）
+ * - `matched: false` → 一个都没命中 → 内容确实缺失（真缺陷）
+ */
+function evaluateEquivalentPatterns(
+  output: string,
+  patterns?: string[],
+): { matched: boolean | undefined; hitPattern?: string } {
+  if (!patterns || patterns.length === 0) return { matched: undefined };
+  for (const pattern of patterns) {
+    const regex = safeRegExp(pattern);
+    if (regex && regex.test(output)) {
+      return { matched: true, hitPattern: pattern };
+    }
+  }
+  return { matched: false };
 }
 
 /**

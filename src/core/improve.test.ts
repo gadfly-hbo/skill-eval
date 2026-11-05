@@ -19,6 +19,14 @@ interface RowSpec {
   /** 每条断言的通过情况。 */
   passes: boolean[];
   notes?: string[];
+  /**
+   * 每条断言的「等价写法是否命中」。
+   *
+   * `true` = 失败但命中了等价写法 → 假失败（断言过严）
+   * `false` = 失败且等价写法也没命中 → 真缺陷
+   * 不给 = 断言没声明等价写法 → 无法据此区分
+   */
+  equivalentMatched?: (boolean | undefined)[];
 }
 
 function makeRows(specs: RowSpec[]): RunResult[] {
@@ -48,6 +56,7 @@ function makeRows(specs: RowSpec[]): RunResult[] {
         passed,
         detail: passed ? "匹配成功" : "未匹配到模式",
         note: spec.notes?.[i] ?? `断言 ${i}`,
+        equivalentMatched: spec.equivalentMatched?.[i],
       })),
     },
     evidenceDir: "",
@@ -247,4 +256,110 @@ test("激活率不足时不出现「未通过」字样（有效结论下）", ()
   assert.equal(advice.activationIssue !== null, true);
   assert.equal(advice.summary.includes("首要问题是激活率不足"), true);
   assert.equal(advice.summary.includes("未通过"), false);
+});
+
+/**
+ * 「断言过严」（假失败）与「skill 真缺陷」的区分。
+ *
+ * 背景（2026-11-05 实测）：这两者**在布尔数据里完全无法区分**——
+ * 两条假失败与一条真缺陷的签名都是 `baseline ✗✗ / skill ✓✗`。
+ * 区别只在输出文本里：假失败命中了断言声明的等价写法，真缺陷连等价写法都没有。
+ *
+ * 所以判据是「skill 侧至少有一次失败命中了等价写法」。
+ */
+test("失败但命中等价写法 → 判为断言过严（不是 skill 的问题）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false], equivalentMatched: [undefined, true] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  const d = firstDiagnosis(advice);
+  assert.equal(d.mode, "assertion-too-strict");
+  assert.equal(advice.skillIssueCount, 0);
+  assert.equal(advice.falseFailureCount, 1);
+});
+
+test("失败且等价写法也没命中 → 判为真缺陷（不判断言过严）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false], equivalentMatched: [undefined, false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  const d = firstDiagnosis(advice);
+  assert.notEqual(d.mode, "assertion-too-strict");
+  assert.equal(advice.skillIssueCount, 1);
+});
+
+test("真假失败的布尔签名相同时，等价模式是唯一区分依据", () => {
+  // 两条断言逐次签名完全一致（baseline ✗✗ / skill ✓✗），只有等价模式不同
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false], equivalentMatched: [undefined, true] },
+    { variantId: "baseline", taskId: "t2", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t2", attempt: 1, passes: [true, false], equivalentMatched: [undefined, false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  const byTask = new Map(advice.diagnoses.map((d) => [d.taskId, d.mode]));
+  assert.equal(byTask.get("t1"), "assertion-too-strict");
+  assert.notEqual(byTask.get("t2"), "assertion-too-strict");
+  assert.equal(advice.skillIssueCount, 1);
+  assert.equal(advice.falseFailureCount, 1);
+});
+
+test("未声明等价写法的断言失败 → 不判断言过严（无信息不等于无问题）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [false] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  assert.notEqual(firstDiagnosis(advice).mode, "assertion-too-strict");
+});
+
+test("断言过严排在优先级最后（先改 skill 的真问题）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false], equivalentMatched: [undefined, false] },
+    { variantId: "baseline", taskId: "t2", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t2", attempt: 1, passes: [true, false], equivalentMatched: [undefined, true] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  const modes = advice.byMode.map((m) => m.mode);
+  assert.equal(modes[modes.length - 1], "assertion-too-strict");
+  // t1 两侧都全失败 → no-effect；t2 skill 侧命中等价写法 → assertion-too-strict
+  assert.equal(modes[0], "no-effect");
+});
+
+test("全部失败都是断言过严时，摘要指向套件而不是 skill", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [false], equivalentMatched: [true] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  assert.equal(advice.skillIssueCount, 0);
+  assert.equal(advice.falseFailureCount, 1);
+  assert.equal(advice.summary.includes("不是 skill 的问题"), true);
+  assert.equal(advice.summary.includes("要改的是套件"), true);
+});
+
+test("混合场景下摘要区分 skill 问题与套件问题", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [true, false], equivalentMatched: [undefined, false] },
+    { variantId: "baseline", taskId: "t2", attempt: 1, passes: [false, false] },
+    { variantId: "skill", taskId: "t2", attempt: 1, passes: [true, false], equivalentMatched: [undefined, true] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  assert.equal(advice.skillIssueCount, 1);
+  assert.equal(advice.falseFailureCount, 1);
+  assert.equal(advice.summary.includes("另有 1 条"), true);
+  assert.equal(advice.summary.includes("要改的是套件"), true);
+});
+
+test("断言过严的建议文案明确指向套件", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [false], equivalentMatched: [true] },
+  ]);
+  const advice = buildImprovementAdvice(rows, 1.0, "effective");
+  assert.equal(firstDiagnosis(advice).advice.includes("套件"), true);
 });

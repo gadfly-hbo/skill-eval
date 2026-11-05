@@ -773,6 +773,21 @@ export async function recomputeSummary(
             timedOut?: boolean;
           };
 
+          const output = readOutput(join(taskDir, attemptDir, "output.md"));
+          // 用**当前套件**重新评估断言，而不是沿用跑批时的旧结果。
+          //
+          // 理由：重算的目的就是「拿新套件重新看这批产物」——
+          // 断言修订（放宽过严断言、补等价写法）只有这样才能生效。
+          // 沿用旧结果会让「改套件后重算」看起来没反应，白白浪费一轮评估。
+          //
+          // 跑批失败（status=failed）时不重新评估——那不是「输出不合规」，
+          // 而是「压根没拿到输出」，重算出来的断言结论会误导人。
+          const taskAssertions = options.tasks.find((t) => t.id === raw.taskId)?.assertions;
+          const assertions =
+            raw.status === "success" && taskAssertions?.length
+              ? evaluateAssertions(output, taskAssertions)
+              : raw.assertions;
+
           results.push({
             id: raw.id,
             variantId: raw.variantId,
@@ -787,9 +802,9 @@ export async function recomputeSummary(
             totalTokens: raw.totalTokens,
             totalCost: raw.totalCost,
             toolCalls: raw.toolCalls,
-            output: readOutput(join(taskDir, attemptDir, "output.md")),
+            output,
             activation: raw.activation,
-            assertions: raw.assertions,
+            assertions,
             evidenceDir: join("cases", raw.variantId, raw.taskId, String(raw.attempt)),
             error: raw.status === "failed" ? (raw.timedOut ? "运行超时" : raw.stderr?.slice(0, 300) ?? "未知错误") : null,
           });

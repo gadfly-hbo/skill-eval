@@ -192,3 +192,102 @@ test("parseResultId 优先匹配更长的 variantId 前缀", () => {
   const parsed = parseResultId("skill-expert-t1-3", ["baseline", "skill", "skill-expert"]);
   assert.deepEqual(parsed, { variantId: "skill-expert", taskId: "t1", attempt: 3 });
 });
+
+/**
+ * 重算时用**当前套件**重新评估断言。
+ *
+ * 背景：重算的目的就是「拿新套件重新看这批产物」。
+ * 沿用跑批时的旧断言结果，会让「改套件后重算」看起来没反应——
+ * 断言修订（放宽过严断言、补等价写法）只有这样才能生效。
+ */
+test("重算时用当前套件重新评估断言（改套件后重算能生效）", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { recomputeSummary } = await import("./runner.ts");
+
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-recompute-"));
+  const caseDir = join(root, "cases", "skill", "t1", "1");
+  mkdirSync(caseDir, { recursive: true });
+  // 输出里只有「谁做」，没有「责任人」——旧断言（只认责任人）会判失败
+  writeFileSync(join(caseDir, "output.md"), "建议由谁做跟进", "utf8");
+  writeFileSync(
+    join(caseDir, "result.json"),
+    JSON.stringify({
+      id: "skill-t1-1",
+      variantId: "skill",
+      taskId: "t1",
+      attempt: 1,
+      status: "success",
+      durationSec: 1,
+      totalTokens: 10,
+      totalCost: 0.001,
+      toolCalls: 1,
+      activation: { activated: true, status: "activated" },
+      // 跑批时的旧断言结果：通过
+      assertions: {
+        total: 1, passed: 1, failed: 0, allPassed: true,
+        outcomes: [{ kind: "mustMatch", passed: true, detail: "匹配成功" }],
+      },
+    }),
+    "utf8",
+  );
+
+  // 当前套件：主 pattern 只认「责任人」，并声明等价写法「谁做」
+  const currentTasks: EvalTask[] = [
+    {
+      id: "t1",
+      prompt: "p",
+      assertions: [
+        { kind: "mustMatch", pattern: "责任人", equivalentPatterns: ["谁做"] },
+      ],
+    },
+  ];
+
+  const summary = await recomputeSummary(root, { variants: [variants[1]!], tasks: currentTasks });
+  const result = summary.results[0]!;
+  // 重新评估后：主 pattern 不命中，但等价写法命中 → 失败且 equivalentMatched=true
+  assert.equal(result.assertions?.outcomes[0]?.passed, false);
+  assert.equal(result.assertions?.outcomes[0]?.equivalentMatched, true);
+});
+
+test("重算时运行失败的用例沿用旧断言结果（不重算，避免把「没输出」误读成「不合规」）", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { recomputeSummary } = await import("./runner.ts");
+
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-recompute-fail-"));
+  const caseDir = join(root, "cases", "skill", "t1", "1");
+  mkdirSync(caseDir, { recursive: true });
+  writeFileSync(join(caseDir, "output.md"), "", "utf8");
+  writeFileSync(
+    join(caseDir, "result.json"),
+    JSON.stringify({
+      id: "skill-t1-1",
+      variantId: "skill",
+      taskId: "t1",
+      attempt: 1,
+      status: "failed",
+      durationSec: 480,
+      totalTokens: 0,
+      totalCost: 0,
+      toolCalls: 0,
+      activation: { activated: false, status: "not_activated" },
+      assertions: null,
+      stderr: "timeout",
+      timedOut: true,
+    }),
+    "utf8",
+  );
+
+  const currentTasks: EvalTask[] = [
+    { id: "t1", prompt: "p", assertions: [{ kind: "mustMatch", pattern: "责任人" }] },
+  ];
+
+  const summary = await recomputeSummary(root, { variants: [variants[1]!], tasks: currentTasks });
+  const result = summary.results[0]!;
+  assert.equal(result.status, "failed");
+  // 失败用例不该有重新评估出来的断言结论
+  assert.equal(result.assertions, null);
+});

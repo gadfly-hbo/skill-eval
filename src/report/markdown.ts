@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import type { EvaluationSummary, VariantSummary, TaskSummary } from "../core/runner.ts";
 import type { EvalTask, Variant } from "../core/runner.ts";
-import { buildImprovementAdvice, type FailureMode } from "../core/improve.ts";
+import { buildImprovementAdvice, MODE_LABEL, type FailureMode } from "../core/improve.ts";
 import { computeAssertionItemRate } from "../core/gain.ts";
 
 export interface ReportMeta {
@@ -301,7 +301,35 @@ export function renderReport(options: ReportOptions): string {
         "> 「契约无效」= baseline 也做不到，说明 skill 没把这条约束写清楚。",
       );
       lines.push(
+        "> 「断言过严」= 输出内容其实做到了，只是用了断言没覆盖的措辞——**要改的是套件，不是 skill**。",
+      );
+      lines.push(
         "> baseline 本来就能过的断言不算 skill 的问题，不列入建议。",
+      );
+      lines.push("");
+    }
+
+    // 断言过严要单独成节：它指向套件而非 skill，混在明细里容易被忽略，
+    // 导致用户去改本来正确的地方。
+    const falseFailures = advice.diagnoses.filter((d) => d.mode === "assertion-too-strict");
+    if (falseFailures.length > 0) {
+      lines.push(`### ${advice.activationIssue ? "8.4" : "8.3"} 断言过严（要改套件，不是 skill）`);
+      lines.push("");
+      lines.push(
+        `以下 ${falseFailures.length} 条失败**不是 skill 的问题**——输出内容做到了，` +
+          `只是断言的正则没覆盖 skill 契约里允许的其他措辞。`,
+      );
+      lines.push("");
+      lines.push("| 用例 | 断言 | 建议 |");
+      lines.push("| --- | --- | --- |");
+      for (const d of falseFailures) {
+        const label = d.note ? `${d.kind}（${d.note}）` : d.kind;
+        lines.push(`| ${d.taskId} | ${label} | 放宽该断言的 pattern，或补 equivalentPatterns 声明等价写法 |`);
+      }
+      lines.push("");
+      lines.push(
+        "> 放宽后**必须复验 baseline 仍不命中**——放宽到 baseline 也能过，" +
+          "测出来的增益就是假的。",
       );
       lines.push("");
     }
@@ -311,16 +339,45 @@ export function renderReport(options: ReportOptions): string {
     if (options.verdict === "effective") {
       lines.push("本 skill 已通过测评并归档。上述失败项是**可选的加固项**，不影响本次结论：");
       lines.push("");
-      lines.push("1. 优先加固上表第一条失败模式对应的契约（多为「结构化元信息」类，可固化进报告模板）。");
-      lines.push("2. 若要改，请**保持同一套件与模型**重新评估，只改 skill 内容——否则无法归因。");
-      lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
+      if (advice.skillIssueCount > 0) {
+        lines.push(
+          `1. skill 侧要改的 ${advice.skillIssueCount} 条：按上表「约束不稳」等模式的建议逐条改 SKILL.md。`,
+        );
+      } else {
+        lines.push("1. skill 侧没有要改的地方——本轮失败全部来自断言写得过严。");
+      }
+      if (advice.falseFailureCount > 0) {
+        lines.push(
+          `2. 套件侧要改的 ${advice.falseFailureCount} 条：放宽对应断言的 pattern（或补 equivalentPatterns），` +
+            "放宽后**复验 baseline 仍不命中**。",
+        );
+      }
+      lines.push(
+        `${advice.falseFailureCount > 0 ? "3" : "2"}. 若要改 skill，请**保持同一套件与模型**重新评估，只改 skill 内容——否则无法归因。`,
+      );
+      lines.push(
+        `${advice.falseFailureCount > 0 ? "4" : "3"}. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。`,
+      );
       lines.push("");
     } else {
       lines.push("按上述建议修改 SKILL.md 后，可进入二次测评准备：");
       lines.push("");
-      lines.push("1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式）。");
-      lines.push("2. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。");
-      lines.push("3. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。");
+      if (advice.skillIssueCount > 0) {
+        lines.push(`1. 按建议逐条修改 skill 内容（优先处理上表第一条失败模式，共 ${advice.skillIssueCount} 条）。`);
+      } else {
+        lines.push("1. skill 侧没有要改的地方——本轮失败全部来自断言写得过严，改套件即可。");
+      }
+      if (advice.falseFailureCount > 0) {
+        lines.push(
+          `2. 套件侧要改的 ${advice.falseFailureCount} 条：放宽对应断言，放宽后**复验 baseline 仍不命中**。`,
+        );
+      }
+      lines.push(
+        `${advice.falseFailureCount > 0 ? "3" : "2"}. 重新评估时**保持同一套件与模型**，只改 skill 内容——否则无法归因。`,
+      );
+      lines.push(
+        `${advice.falseFailureCount > 0 ? "4" : "3"}. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。`,
+      );
       lines.push("");
     }
   }
@@ -392,20 +449,9 @@ function buildLimitations(options: ReportOptions): string[] {
   return items;
 }
 
-/** 失败模式的中文名。 */
+/** 失败模式的中文名。复用 improve.ts 的唯一实现，避免两处各写一份而漂移。 */
 function modeLabel(mode: FailureMode): string {
-  switch (mode) {
-    case "contract-missing":
-      return "契约未落地";
-    case "no-effect":
-      return "契约无效";
-    case "regression":
-      return "质量倒退";
-    case "unstable":
-      return "约束不稳";
-    case "activation-missing":
-      return "未触发";
-  }
+  return MODE_LABEL[mode];
 }
 
 function verdictLabel(verdict: ReportOptions["verdict"]): string {  switch (verdict) {
