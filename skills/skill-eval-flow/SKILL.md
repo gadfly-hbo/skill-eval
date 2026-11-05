@@ -422,6 +422,7 @@ archive/<skill名>/
 | 症状 | 含义 | 处理 |
 |---|---|---|
 | 所有运行 1 秒内 failed，stderr 含 `broker denied delete` 或 `EEXIST ... .lock` | 宿主 IDE 的 fs hook 干扰 pi | CLI 已内置剥离逻辑；重跑 preflight 清残留锁目录后重试一次 |
+| `skill-eval` 命令**无任何输出且退出码为 0** | CLI 静默失败——npm link 把 `src/cli/main.ts` 复制成无 `.ts` 后缀的 bin，node 无法剥离类型报错，而宿主 shim 吞掉 stderr | 用 `node --experimental-strip-types src/cli/main.ts <子命令>` 直跑；已修 v0.3.1（`bin/skill-eval.mjs` 包装器），升级后重跑 `npm link` |
 | 激活率 0% 但回答质量好 | skill 的 description 没写清触发条件 | 建议用户改 description，写「什么时候该用」 |
 | 胜率波动大 | repeat 或 judgeRepeat 太小 | 建议提到 repeat 3 / judgeRepeat 2 |
 | verdict = 结论不足 | 激活率与胜率只达标其一 | 看报告第 4 节对照表定位是哪个不够 |
