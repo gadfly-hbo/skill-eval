@@ -70,15 +70,51 @@ for f in --self-test --selftest; do
 done
 [ -n "$SELF_TEST_FLAG" ] && echo "[ok] 门禁自测可用: $SELF_TEST_FLAG"
 
+# --- 探测门禁脚本的调用方式 -------------------------------------------------
+# 不同 skill 的门禁参数约定不同：有的接裸文件路径，有的要 `--report <路径>`，
+# 有的还要 `--data`（数据体检）。传错参数会拿到 argparse 的 usage 错误（退出码 2），
+# **那不是「输出不合格」，是用法不对**——两者必须分开。
+#
+# 探测顺序：
+#   1. `--report <file>`  （实测 data-analysis 的 quality_check.py 走这条）
+#   2. 裸文件路径
+# 用一个**必然存在但内容无害**的临时报告探测，选第一个不报 usage 的调用方式。
+GATE_INVOKE_MODE=""
+probe_file="$(mktemp -t gate-probe).md"
+printf '# probe\n\n占位内容。\n' > "$probe_file"
+
+# 判据是「有没有报 usage 错误」，不是退出码——
+# 门禁对不合规内容也返回非 0，用退出码探测会选错模式。
+if ! python3 "$GATE" --report "$probe_file" 2>&1 | grep -qi "usage:"; then
+  GATE_INVOKE_MODE="--report"
+elif ! python3 "$GATE" "$probe_file" 2>&1 | grep -qi "usage:"; then
+  GATE_INVOKE_MODE="bare"
+fi
+rm -f "$probe_file"
+
+if [ -z "$GATE_INVOKE_MODE" ]; then
+  echo "[fail] 门禁脚本调用方式探测失败：--report 与裸路径都不接受" >&2
+  echo "       已按「调用失败」记录全部样本（不是「输出不合格」）" >&2
+  GATE_INVOKE_MODE="unknown"
+else
+  echo "[ok] 门禁调用方式: $GATE_INVOKE_MODE"
+fi
+
 # --- 对两侧输出各跑一遍 -----------------------------------------------------
-# 用法约定：门禁脚本接一个文件路径做参数（实测 data-analysis 的 quality_check.py
-# 接受报告文本路径）。不同 skill 的参数可能不同，这里优先按「传文件路径」试，
-# 失败时记为「调用失败」而不是「不合格」——两者含义不同，不能混。
 run_one() {
   local variant="$1" task="$2" n="$3" file="$4"
   local out code
-  out="$(python3 "$GATE" "$file" 2>&1)"
+  case "$GATE_INVOKE_MODE" in
+    --report) out="$(python3 "$GATE" --report "$file" 2>&1)" ;;
+    bare)    out="$(python3 "$GATE" "$file" 2>&1)" ;;
+    *)       out="调用方式未知（探测失败）"; code=99 ;;
+  esac
   code=$?
+  # usage 错误 = 参数不对，不是输出不合格
+  if printf '%s' "$out" | grep -qi "usage:"; then
+    echo "error|$variant|$task|$n|门禁用法不对（usage 错误） ${out//$'\n'/ }"
+    return
+  fi
   if [ "$code" -eq 0 ]; then
     echo "pass|$variant|$task|$n|退出码=0 ${out//$'\n'/ }"
   elif [ "$code" -eq 1 ] || [ "$code" -eq 2 ]; then
