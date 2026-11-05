@@ -15,7 +15,7 @@
  */
 
 import { readFileSync, existsSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 
 export type ActivationEvidenceKind = "tool_call" | "output_keyword";
 
@@ -37,6 +37,8 @@ export interface ActivationResult {
   matchedKeywords: string[];
   /** 被实际读取的 skill 路径。 */
   readSkillPaths: string[];
+  /** 被实际读取的 skill 附属文件路径（如 references/*.md、scripts/*.py）。 */
+  readSubPaths?: string[];
   evidence: ActivationEvidence[];
 }
 
@@ -60,18 +62,41 @@ export interface ActivationInput {
 export function detectActivation(input: ActivationInput): ActivationResult {
   const evidence: ActivationEvidence[] = [];
   const readSkillPaths = new Set<string>();
+  const readSubPaths = new Set<string>();
   const matchedKeywords = new Set<string>();
 
-  const readSet = new Set(input.readPaths.map((path) => resolve(path)));
+  const resolvedReadList = input.readPaths.map((path) => resolve(path));
+  const readSet = new Set(resolvedReadList);
   const output = input.output.toLowerCase();
 
   for (const skillPath of input.skillPaths) {
     const resolved = resolve(skillPath);
+    const skillDir = dirname(resolved);
+    const isStandardSkillFile = basename(resolved).toLowerCase() === "skill.md";
+    const dirPrefix = `${skillDir}${sep}`;
 
-    // 强证据：模型确实读取了该 skill 文件。
+    let hitByTool = false;
+
+    // 强证据 1：模型直接读取了 SKILL.md。
     if (readSet.has(resolved)) {
       readSkillPaths.add(skillPath);
       evidence.push({ kind: "tool_call", value: resolved, skillPath });
+      hitByTool = true;
+    }
+
+    // 强证据 2：模型读取了该 skill 包目录下的附属文件（references/、scripts/ 等）。
+    if (isStandardSkillFile && skillDir !== sep) {
+      for (const readPath of resolvedReadList) {
+        if (readPath !== resolved && readPath.startsWith(dirPrefix)) {
+          readSubPaths.add(readPath);
+          readSkillPaths.add(skillPath);
+          evidence.push({ kind: "tool_call", value: readPath, skillPath });
+          hitByTool = true;
+        }
+      }
+    }
+
+    if (hitByTool) {
       continue; // 已有强证据，不必再看关键词。
     }
 
@@ -95,6 +120,7 @@ export function detectActivation(input: ActivationInput): ActivationResult {
     activated,
     matchedKeywords: [...matchedKeywords],
     readSkillPaths: [...readSkillPaths],
+    readSubPaths: [...readSubPaths],
     evidence,
   };
 }

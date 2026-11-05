@@ -323,3 +323,21 @@ test("正反轮一致时不被误判为位置偏好（实测 trap-incomplete-per
 test("评委默认超时宽于 120 秒（实测 120s 会导致反轮空输出）", () => {
   assert.ok(DEFAULT_JUDGE_TIMEOUT_MS >= 240_000);
 });
+
+test("超长输出（> 24000 字符）采用头尾保留窗口，不截断报告末尾的结论与免责声明", () => {
+  const longOutput =
+    "【报告开头核心摘要】\n" +
+    "正文填充".repeat(7000) +
+    "\n【末尾参考文献与免责声明：本报告仅供参考】";
+
+  const prompt = buildJudgePrompt({
+    ...baseOptions,
+    outputA: longOutput,
+    outputB: "短输出",
+  });
+
+  assert.match(prompt, /报告开头核心摘要/);
+  assert.match(prompt, /末尾参考文献与免责声明/);
+  assert.match(prompt, /中间省略/);
+});
+

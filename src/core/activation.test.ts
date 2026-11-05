@@ -105,3 +105,23 @@ test("parseFrontmatter 解析 name 与 description", () => {
 test("parseFrontmatter 对无 frontmatter 返回空对象", () => {
   assert.deepEqual(parseFrontmatter("没有 frontmatter"), {});
 });
+
+test("读取 skill 目录下的附属文件（references/scripts）同样记录并计入工具调用取证", () => {
+  const skillPath = makeSkill("data-skill", "数据分析契约");
+  const refPath = join(skillPath, "..", "references", "method.md");
+  const bothRead = detectActivation({
+    skillPaths: [skillPath],
+    readPaths: [skillPath, refPath],
+    output: "报告正文",
+  });
+  assert.equal(bothRead.activated, true);
+  assert.deepEqual(bothRead.readSubPaths, [refPath]);
+
+  const subOnly = detectActivation({
+    skillPaths: [skillPath],
+    readPaths: [refPath],
+    output: "报告正文",
+  });
+  assert.equal(subOnly.activated, true);
+  assert.deepEqual(subOnly.readSubPaths, [refPath]);
+});

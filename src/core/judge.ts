@@ -97,6 +97,32 @@ const DEFAULT_RUBRIC = [
   "格式合规：满足任务明确指定的输出格式要求。",
 ].join("\n");
 
+/** 评委提示词单份输出最大保留字符数（头尾保留窗口，防止静默截断末尾结论/出处/免责声明）。 */
+export const JUDGE_MAX_OUTPUT_CHARS = 24_000;
+export const JUDGE_HEAD_CHARS = 18_000;
+export const JUDGE_TAIL_CHARS = 6_000;
+
+/**
+ * 对超长输出做头尾保留采样，避免 `.slice(0, 12000)` 静默截断报告末尾的结论、参考文献与免责声明。
+ */
+export function formatJudgeOutputWindow(
+  text: string,
+  maxChars: number = JUDGE_MAX_OUTPUT_CHARS,
+  headChars: number = JUDGE_HEAD_CHARS,
+  tailChars: number = JUDGE_TAIL_CHARS,
+): string {
+  if (text.length <= maxChars) return text;
+  const safeHead = Math.min(headChars, Math.floor(maxChars * 0.75));
+  const safeTail = Math.min(tailChars, maxChars - safeHead);
+  const omitted = text.length - safeHead - safeTail;
+  if (omitted <= 0) return text;
+  return (
+    text.slice(0, safeHead) +
+    `\n\n[...中间省略 ${omitted.toLocaleString()} 字符，以下保留输出末尾段落（结论/出处/声明）...]\n\n` +
+    text.slice(text.length - safeTail)
+  );
+}
+
 /**
  * 构造评委提示词。
  *
@@ -129,10 +155,10 @@ ${expectedPoints}
 ${rubric}
 
 # 输出 A
-${options.outputA.slice(0, 12000)}
+${formatJudgeOutputWindow(options.outputA)}
 
 # 输出 B
-${options.outputB.slice(0, 12000)}
+${formatJudgeOutputWindow(options.outputB)}
 
 只输出 JSON 对象，不要输出 Markdown，不要用代码块包裹：
 {"verdict":"win|tie|loss","scoreA":0,"scoreB":0,"confidence":0.8,"reason":"一句话说明关键差异"}`;

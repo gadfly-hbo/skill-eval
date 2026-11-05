@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildImprovementAdvice } from "./improve.ts";
+import { buildImprovementAdvice, generateLlmRewriteAdvice } from "./improve.ts";
 import type { RunResult } from "./runner.ts";
 
 /**
@@ -29,6 +29,8 @@ interface RowSpec {
   equivalentMatched?: (boolean | undefined)[];
   /** 断言类型，默认 mustMatch。 */
   kinds?: string[];
+  /** 显式覆盖激活状态（默认 baseline=false, skill=true）。 */
+  activated?: boolean;
 }
 
 function makeRows(specs: RowSpec[]): RunResult[] {
@@ -47,7 +49,10 @@ function makeRows(specs: RowSpec[]): RunResult[] {
     totalCost: 0,
     toolCalls: 0,
     output: "",
-    activation: { activated: spec.variantId !== "baseline", status: "activated" },
+    activation: {
+      activated: spec.activated ?? spec.variantId !== "baseline",
+      status: (spec.activated ?? spec.variantId !== "baseline") ? "activated" : "not_activated",
+    },
     assertions: {
       total: spec.passes.length,
       passed: spec.passes.filter(Boolean).length,
@@ -389,3 +394,86 @@ test("断言过严的建议文案明确指向套件", () => {
   const advice = buildImprovementAdvice(rows, 1.0, "effective");
   assert.equal(firstDiagnosis(advice).advice.includes("套件"), true);
 });
+
+test("0% 激活用例上的断言失败归因为 activation-missing（而非怪罪正文契约无效）", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "strip-disclaimer", attempt: 1, passes: [false, false] },
+    {
+      variantId: "skill",
+      taskId: "strip-disclaimer",
+      attempt: 1,
+      passes: [false, false],
+      activated: false,
+      notes: ["禁止末尾免责声明", "必须给出处"],
+    },
+  ]);
+
+  const advice = buildImprovementAdvice(rows, 0.85, "inconclusive");
+  assert.equal(advice.diagnoses.length, 2);
+  assert.ok(advice.diagnoses.every((d) => d.mode === "activation-missing"));
+  assert.match(advice.diagnoses[0]!.advice, /description/);
+});
+
+test("shouldActivate=false 的负向用例误触发时产生 over-trigger 归因", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "neg-1", attempt: 1, passes: [] },
+    { variantId: "skill", taskId: "neg-1", attempt: 1, passes: [], activated: true },
+  ]);
+
+  const advice = buildImprovementAdvice(rows, 1.0, {
+    verdict: "inconclusive",
+    tasks: [{ id: "neg-1", shouldActivate: false }],
+  });
+  assert.equal(advice.diagnoses.length, 1);
+  assert.equal(advice.diagnoses[0]!.mode, "over-trigger");
+});
+
+test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp 并识别未读附属文件", async () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [false, true], notes: ["红线：禁止免责声明", "标题规范"] },
+    { variantId: "skill", taskId: "t1", attempt: 1, passes: [false, true], notes: ["红线：禁止免责声明", "标题规范"] },
+    { variantId: "baseline", taskId: "t2", attempt: 1, passes: [false, true], notes: ["红线：禁止免责声明", "标题规范"] },
+    { variantId: "skill", taskId: "t2", attempt: 1, passes: [false, true], notes: ["红线：禁止免责声明", "标题规范"] },
+  ]);
+
+  const advice = buildImprovementAdvice(rows, 1.0, {
+    verdict: "inconclusive",
+    skillContext: {
+      skillContent: "# Deep Research\n\n遵循研究流程输出。",
+      subFiles: {
+        "references/report-structure.md": "报告末尾严禁添加免责声明。",
+      },
+      readSubPaths: [],
+    },
+  });
+
+  // 2 条逐用例诊断合并为 1 条核心根因，失败条目 2 / 总条目 4 = +50.0pp 预计增益
+  assert.equal(advice.diagnoses.length, 2);
+  assert.equal(advice.groupedDiagnoses.length, 1);
+  assert.deepEqual(advice.groupedDiagnoses[0]!.tasks, ["t1", "t2"]);
+  assert.equal(advice.groupedDiagnoses[0]!.expectedGainPp, 50);
+  assert.match(advice.groupedDiagnoses[0]!.skillLocationHint ?? "", /report-structure\.md/);
+  assert.match(advice.groupedDiagnoses[0]!.skillLocationHint ?? "", /未读取/);
+
+  const draft = await generateLlmRewriteAdvice({
+    skillContent: "# Deep Research",
+    groupedDiagnoses: advice.groupedDiagnoses,
+    workspaceRoot: "/tmp",
+    runner: async () => ({
+      exitCode: 0,
+      metrics: {
+        totalTokens: 100,
+        totalCost: 0.001,
+        toolCalls: 0,
+        output: "Before: ...\nAfter: 严禁在末尾添加免责声明。",
+        readPaths: [],
+        toolNames: [],
+      },
+      events: [],
+      stderr: "",
+      timedOut: false,
+    }),
+  });
+  assert.match(draft ?? "", /严禁在末尾添加免责声明/);
+});
+
