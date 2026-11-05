@@ -487,7 +487,7 @@ test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp �
 test("关键词抽取能命中改版后的等义措辞", async () => {
   const mod = await import("./improve.ts");
   const locate = (mod as unknown as {
-    locateInSkillDocs?: (note: string, mode: string, ctx: unknown) => string | undefined;
+    locateInSkillDocs?: (note: string, mode: string, ctx: unknown, pattern?: string) => string | undefined;
   }).locateInSkillDocs;
   assert.equal(typeof locate, "function", "locateInSkillDocs 应导出以便测试");
 
@@ -525,7 +525,7 @@ test("关键词抽取能命中改版后的等义措辞", async () => {
 test("关键词抽取对确实缺失的约束仍报规则缺失", async () => {
   const mod = await import("./improve.ts");
   const locate = (mod as unknown as {
-    locateInSkillDocs?: (note: string, mode: string, ctx: unknown) => string | undefined;
+    locateInSkillDocs?: (note: string, mode: string, ctx: unknown, pattern?: string) => string | undefined;
   }).locateInSkillDocs;
   assert.equal(typeof locate, "function");
 

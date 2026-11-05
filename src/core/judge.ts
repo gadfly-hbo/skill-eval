@@ -30,6 +30,14 @@ export interface JudgeOptions {
   outputA: string;
   /** 输出 B。 */
   outputB: string;
+  /**
+   * 输出 A 的执行证据摘要（工具调用、脚本执行等）。
+   * 让评委能核实输出里的过程性声明（如「已用 calc.py 复算」）——
+   * 没有它，评委只能凭输出自述判断，把真实执行误判成「无依据断言」。
+   */
+  evidenceA?: string | undefined;
+  /** 输出 B 的执行证据摘要。 */
+  evidenceB?: string | undefined;
   /** 评委模型。 */
   model?: string | undefined;
   /** 隔离 HOME。 */
@@ -159,6 +167,8 @@ ${formatJudgeOutputWindow(options.outputA)}
 
 # 输出 B
 ${formatJudgeOutputWindow(options.outputB)}
+
+${formatExecutionEvidence(options.evidenceA, options.evidenceB)}
 
 只输出 JSON 对象，不要输出 Markdown，不要用代码块包裹：
 {"verdict":"win|tie|loss","scoreA":0,"scoreB":0,"confidence":0.8,"reason":"一句话说明关键差异"}`;
@@ -480,4 +490,33 @@ export function detectPositionBias(forward: Verdict, reversed: Verdict): BiasPro
       ? "正反两次结论相反，评委存在位置偏好，该判定可信度需打折"
       : "正反两次结论一致或并列，未检测到明显位置偏好",
   };
+}
+
+/**
+ * 渲染执行证据摘要。
+ *
+ * 为什么需要：有些 skill 的核心机制是「用脚本复算」（如 data-analysis 的
+ * `scripts/calc.py`），输出里会写「全部经 calc.py 复算」。但评委只看得到
+ * 两份输出，看不到工具执行记录——于是把**真实执行过的脚本**判成
+ * 「无依据断言」。
+ *
+ * 实测（2026-11-05 data-analysis）：skill 侧确实执行了
+ * `calc.py period` 与 `quality_check.py --data/--report`（events.json 有据），
+ * 评委却写「目录中并无任何脚本」并判 loss，直接压低了整体胜率。
+ */
+function formatExecutionEvidence(evidenceA?: string, evidenceB?: string): string {
+  const a = evidenceA?.trim();
+  const b = evidenceB?.trim();
+  if (!a && !b) return "";
+  return `
+# 执行证据（工具调用记录摘要）
+> 下面是两份输出在生成过程中的实际工具调用记录，用于核实输出里对执行过程的声明。
+> 只依据本节判断「某份输出声称做过的事是否真的做过」，不要用本节判断内容质量。
+
+## 输出 A 的执行记录
+${a || "（无工具调用记录）"}
+
+## 输出 B 的执行记录
+${b || "（无工具调用记录）"}
+`;
 }

@@ -32,6 +32,7 @@ import {
   type BiasProbe,
 } from "./judge.ts";
 import { evaluateCostEfficiency, type CostEfficiency } from "./cost.ts";
+import { loadEvidenceFromDir } from "./evidence.ts";
 import { computeAssertionItemRate, computeGainPp } from "./gain.ts";
 import { wilsonInterval } from "./stats.ts";
 
@@ -473,6 +474,12 @@ async function judgeAll(
     const judgeDir = join(options.runRoot, "pairwise", result.id);
     mkdirSync(judgeDir, { recursive: true });
 
+    // 执行证据：评委只看到两份输出，看不到工具调用记录，
+    // 于是把「确实跑过脚本」误判成「无依据断言」（实测 2026-11-05 data-analysis）。
+    // 这里从两端的 events.json 提取摘要注入评委提示词。
+    const evidenceA = loadEvidenceFromDir(join(options.runRoot, base.evidenceDir));
+    const evidenceB = loadEvidenceFromDir(join(options.runRoot, result.evidenceDir));
+
     const runs: JudgeResult[] = [];
     const forward = await runPairwiseJudge({
       judgeDir: join(judgeDir, "forward"),
@@ -482,6 +489,8 @@ async function judgeAll(
       rubric: task.rubric,
       outputA: base.output,
       outputB: result.output,
+      evidenceA,
+      evidenceB,
       model: options.judgeModel,
       home: options.home,
       timeoutMs: options.judgeTimeoutMs,
@@ -500,6 +509,8 @@ async function judgeAll(
         rubric: task.rubric,
         outputA: result.output,
         outputB: base.output,
+        evidenceA: evidenceB,
+        evidenceB: evidenceA,
         model: options.judgeModel,
         home: options.home,
         timeoutMs: options.judgeTimeoutMs,
@@ -519,6 +530,8 @@ async function judgeAll(
         rubric: task.rubric,
         outputA: base.output,
         outputB: result.output,
+        evidenceA,
+        evidenceB,
         model: options.judgeModel,
         home: options.home,
         timeoutMs: options.judgeTimeoutMs,
