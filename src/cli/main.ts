@@ -707,7 +707,27 @@ async function commandArchive(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
+  // verdict 必须与 report 同口径：优先从 pairwise/ 原始产物用当前代码重算。
+  //
+  // summary.json 存的是跑批当时的旧汇总——若评估器此后修过 bug（如评委标签
+  // 一致性校验），旧 summary 的 winRate 会带着已知错误，归档门控据此拒绝，
+  // 而 report --suite-file 重算出的却是相反结论——「报告说有效、归档说不足」
+  // 的口径分裂就是这么来的。
+  //
+  // 原始产物缺失（已清理、只入库 summary.json）时退回旧 summary，
+  // 此时 report 有守卫拒绝空重算，这里同样保持只读旧值。
+  const storedSummary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
+  const pairwiseDir = join(absoluteRun, "pairwise");
+  const summary = existsSync(pairwiseDir)
+    ? await recomputeSummary(absoluteRun, {
+        variants: (storedSummary.variantSummaries ?? []).map(
+          (item): Variant => ({ id: item.variantId, label: item.variantLabel, skillPaths: [] }),
+        ),
+        tasks: (storedSummary.taskSummaries ?? []).map(
+          (task): EvalTask => ({ id: task.taskId, prompt: "", kind: task.kind }),
+        ),
+      })
+    : storedSummary;
 
   // 被测 skill 路径：命令行优先，否则从运行产物的 skillPaths 反推。
   const skillFlag = flagString(args.flags, "skill");
