@@ -19,6 +19,7 @@ import { join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runPi } from "./pi.ts";
 import { detectActivation, summarizeActivation, type ActivationResult } from "./activation.ts";
+import { detectContamination, type ContaminationReport } from "./contamination.ts";
 import { evaluateAssertions, type Assertion, type AssertionReport } from "./assertions.ts";
 import {
   runPairwiseJudge,
@@ -90,6 +91,13 @@ export interface RunnerOptions {
   timeoutMs?: number;
   /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
   judgeTimeoutMs?: number;
+  /**
+   * 被测 skill 的 SKILL.md 路径，仅用于污染检测。
+   * baseline 侧若自行读到了它，说明对照实验被污染。
+   */
+  skillPathForContamination?: string;
+  /** 被测 skill 所在目录，仅用于污染检测。 */
+  skillDirForContamination?: string;
   /** 进度回调。 */
   onProgress?: (event: ProgressEvent) => void;
 }
@@ -119,6 +127,12 @@ export interface RunResult {
   output: string;
   activation: ActivationResult;
   assertions: AssertionReport | null;
+  /**
+   * 污染判定（仅 baseline 侧有值）。
+   * 非 null 表示该次 baseline 运行自行读到了被测 skill 或会泄漏 skill 路径的
+   * 元数据文件——对照实验的唯一变量被破坏，该次输出不代表「不装 skill」的水平。
+   */
+  contamination?: ContaminationReport | null;
   /** 证据目录（相对 runRoot）。 */
   evidenceDir: string;
   error: string | null;
@@ -341,6 +355,18 @@ async function runCase(
     keywordSignal: options.keywordSignal,
   });
 
+  // 污染检测：baseline 侧若自行读到了被测 skill 或会泄漏 skill 路径的元数据文件，
+  // 对照实验的唯一变量就被破坏了——该次运行的输出不能代表「不装 skill」的水平。
+  // 只有 variant 侧显式加载 skill 才是合法的，因此只对 baseline 侧判定。
+  const contamination =
+    variant.skillPaths.length === 0
+      ? detectContamination(
+          run.metrics.readPaths,
+          options.skillPathForContamination ?? "",
+          options.skillDirForContamination ?? "",
+        )
+      : null;
+
   // 失败/超时的运行没有有效输出，禁止执行断言（否则 mustNotMatch 会在空输出上假阳性通过）。
   const assertions = !failed && task.assertions?.length ? evaluateAssertions(output, task.assertions) : null;
 
@@ -363,6 +389,7 @@ async function runCase(
         readPaths: run.metrics.readPaths,
         activation,
         assertions,
+        contamination,
         stderr: run.stderr.slice(0, 2000),
         timedOut: run.timedOut,
       },
@@ -389,6 +416,7 @@ async function runCase(
     output,
     activation,
     assertions,
+    contamination,
     evidenceDir: join("cases", variant.id, task.id, String(attempt)),
     error: failed
       ? run.timedOut

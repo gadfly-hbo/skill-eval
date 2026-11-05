@@ -407,6 +407,10 @@ async function runSingleModelEval(params: {
     keywordSignal: params.keywordSignal,
     timeoutMs: params.timeoutMs,
     judgeTimeoutMs: params.judgeTimeoutMs,
+    // 污染检测：baseline 侧若自行读到了被测 skill 或含 skill 路径的元数据文件，
+    // 对照实验的唯一变量就被破坏了。检测需要知道 skill 的位置。
+    skillPathForContamination: skillPath,
+    skillDirForContamination: dirname(resolve(skillPath)),
     onProgress: (event) => {
       process.stderr.write(`  [${event.phase}] ${event.message}\n`);
     },

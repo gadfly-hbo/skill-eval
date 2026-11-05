@@ -98,6 +98,36 @@ export function renderReport(options: ReportOptions): string {
   const baseline = summary.variantSummaries.find((v) => v.variantId === "baseline");
   const variant = summary.variantSummaries.find((v) => v.variantId !== "baseline");
 
+  // ---- 污染告警（对照实验有效性前提）----
+  // baseline 侧若自行读到了被测 skill 或含 skill 路径的元数据文件，
+  // 对照实验的唯一变量就被破坏，增益会被系统性压低，结论不再可信。
+  // 这类问题必须出现在首屏，不能只埋在明细里。
+  const contaminatedResults = summary.results.filter((r) => r.contamination?.contaminated);
+  if (contaminatedResults.length > 0) {
+    lines.push("> ⚠️ **对照实验污染告警**");
+    lines.push(">");
+    lines.push(
+      `> 有 ${contaminatedResults.length} 次 baseline 运行自行读到了被测 skill 或含 skill 路径的元数据文件，` +
+        "该次输出**不代表「不装 skill」的水平**，增益会被系统性压低。",
+    );
+    lines.push(">");
+    lines.push("> 受影响的运行：");
+    for (const r of contaminatedResults) {
+      const reason =
+        r.contamination?.reasons.includes("skill-file-read") === true
+          ? "读到了 skill 目录内文件"
+          : "读到了含 skill 路径的元数据文件";
+      lines.push(`> - \`${r.id}\`（${reason}）`);
+    }
+    lines.push(">");
+    lines.push(
+      "> 常见成因：运行目录里存在 `suite.json`（内含 `skill.path` 绝对路径），模型 `find` 到后顺着路径读取 skill。",
+    );
+    lines.push(">");
+    lines.push("> 修法：把套件放在运行目录**之外**，并重新跑批；不要选择性剔除受影响样本。");
+    lines.push("");
+  }
+
   if (variant) {
     const gainFromResults = evaluateGainFromResults(summary.results, variant.variantId);
     const baselineItemRate = gainFromResults.baselineCounts.rate;
