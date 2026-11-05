@@ -93,3 +93,12 @@ test("回填不修改传入的 recovered 对象", () => {
   mergeMeta({ skillPath: "/other/SKILL.md" }, recovered);
   assert.deepEqual(recovered, before);
 });
+
+test("套件与套件哈希互不串扰地精确反解", () => {
+  const md = "| 套件哈希 | `sha256:1122334455667788` |\n| 套件 | demo-suite (v3) |\n";
+  const recovered = recoverMetaFromReport(md);
+  assert.equal(recovered.suiteId, "demo-suite");
+  assert.equal(recovered.suiteVersion, "3");
+  assert.equal(recovered.suiteHash, "sha256:1122334455667788");
+});
+

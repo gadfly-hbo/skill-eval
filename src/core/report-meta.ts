@@ -18,6 +18,7 @@ export interface RecoveredMeta {
   skillVersion: string | null;
   suiteId: string | null;
   suiteVersion: string | null;
+  suiteHash?: string | null;
   /** pi 隔离 HOME（运行配置表里的一行） */
   piHome: string | null;
 }
@@ -28,6 +29,7 @@ const EMPTY_META: RecoveredMeta = {
   skillVersion: null,
   suiteId: null,
   suiteVersion: null,
+  suiteHash: null,
   piHome: null,
 };
 
@@ -72,6 +74,12 @@ export function recoverMetaFromReport(reportText: string): RecoveredMeta {
     meta.suiteVersion = parsed.version;
   }
 
+  const suiteHash = matchCell(reportText, "套件哈希");
+  if (suiteHash !== null) {
+    const value = stripBackticks(suiteHash).trim();
+    meta.suiteHash = isPlaceholder(value) ? null : value;
+  }
+
   const piHome = matchCell(reportText, "pi 隔离 HOME");
   if (piHome !== null) {
     const value = stripBackticks(piHome).trim();
@@ -103,15 +111,16 @@ export function mergeMeta(
     skillVersion: pick(explicit.skillVersion, recovered.skillVersion),
     suiteId: pick(explicit.suiteId, recovered.suiteId),
     suiteVersion: pick(explicit.suiteVersion, recovered.suiteVersion),
+    suiteHash: pick(explicit.suiteHash, recovered.suiteHash ?? null),
     piHome: pick(explicit.piHome, recovered.piHome),
   };
 }
 
 /**
- * 解析表格单元：找到 `| <标签> | <值> |` 这样的行并取出值部分。
+ * 解析表格单元：精确匹配 `| <标签> | <值> |` 这样的行并取出值部分（避免「套件」误匹配「套件哈希」）。
  */
 function matchCell(text: string, label: string): string | null {
-  const pattern = new RegExp(`^\\|[^|]*${escapeRegExp(label)}[^|]*\\|(.+)\\|\\s*$`, "m");
+  const pattern = new RegExp(`^\\|\\s*${escapeRegExp(label)}\\s*\\|(.+)\\|\\s*$`, "m");
   const match = pattern.exec(text);
   return match?.[1]?.trim() ?? null;
 }

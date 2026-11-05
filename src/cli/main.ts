@@ -3,21 +3,43 @@
  * skill-eval 命令行入口。
  *
  * 子命令：
- *   eval       执行对照评估并生成报告
- *   check      校验套件文件（不调用模型）
+ *   eval       执行对照评估（支持单模型或 --models 多模型矩阵）并生成报告
+ *   check      静态校验套件质量（可选结合 --run 做实证灵敏度体检）
  *   report     从已有运行产物重新生成报告
- *   threshold  查看或设置回归门禁阈值
+ *   archive    归档通过测评的 skill 快照
+ *   verify     阴性对照元评估（生成契约剥离版 skill 或验证原版 vs 破坏版区分度）
+ *   calibrate  导出人工匿名盲审表或计算人机评委一致性（Cohen's κ）
+ *   pending    管理待测评 skill 暂存区
+ *   threshold  查看全局判定门槛与回归门禁阈值
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { dirname, resolve, join, isAbsolute, basename } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+} from "node:fs";
+import { dirname, resolve, join, isAbsolute, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runEvaluation, recomputeSummary, newRunId, type EvalTask, type Variant, type EvaluationSummary } from "../core/runner.ts";
+import {
+  runEvaluation,
+  recomputeSummary,
+  newRunId,
+  type EvalTask,
+  type Variant,
+  type EvaluationSummary,
+} from "../core/runner.ts";
 import { renderReport, hashFile, type ReportMeta } from "../report/markdown.ts";
-import { DEFAULT_THRESHOLDS, parseThresholds, type RegressionThresholds } from "../core/regression.ts";
+import {
+  DEFAULT_THRESHOLDS,
+  parseThresholds,
+  type RegressionThresholds,
+} from "../core/regression.ts";
 import { expandTilde } from "../core/paths.ts";
 import { evaluateGain, DEFAULT_GAIN_THRESHOLD_PP } from "../core/gain.ts";
 import { evaluateRecomputeGuard } from "../core/report-safety.ts";
+import { evaluateOverwriteGuard } from "../core/report-quality.ts";
 import { recoverMetaFromReport, mergeMeta } from "../core/report-meta.ts";
 import {
   pendingRootFor,
@@ -33,18 +55,49 @@ import {
   collectArchiveInput,
   type ArchiveResult,
 } from "../core/archive.ts";
-
-interface SuiteFile {
-  id: string;
-  name?: string;
-  description?: string;
-  version?: string;
-  skill?: { path?: string; version?: string; note?: string };
-  contextPrefix?: string;
-  repeat?: number;
-  judgeRepeat?: number;
-  tasks: EvalTask[];
-}
+import { decideVerdict, type VerdictDecision } from "../core/verdict.ts";
+import {
+  loadSuite,
+  checkSuite,
+  hashSuite,
+  type SuiteFile,
+} from "../core/suite.ts";
+import {
+  evaluateNegativeControl,
+  formatNegativeControlReport,
+  stripBehavioralContract,
+} from "../core/verify.ts";
+import {
+  exportCalibrationSheet,
+  evaluateCalibration,
+  type BlindReviewSheet,
+  type CalibrationAnswerKey,
+  type CalibrationResult,
+} from "../core/calibration.ts";
+import {
+  summarizeModelMatrix,
+  renderMatrixMarkdown,
+  type ModelMatrixCell,
+} from "../core/matrix.ts";
+import {
+  buildImprovementAdvice,
+  generateLlmRewriteAdvice,
+  type SkillDocContext,
+} from "../core/improve.ts";
+import {
+  ACTIVATION_THRESHOLD,
+  COST_WARN_TOKENS_PER_PP,
+  COST_WARN_TOKEN_RATIO,
+  DEFAULT_JUDGE_REPEAT,
+  DEFAULT_REPEAT,
+  GAIN_THRESHOLD_PP,
+  MAX_FALSE_ACTIVATION_RATE,
+  MAX_VARIANT_TIMEOUT_RATE,
+  MIN_JUDGED_PAIRS,
+  MIN_PAIR_COVERAGE,
+  MIN_WIN_RATE_LOWER_BOUND,
+  WIN_RATE_THRESHOLD,
+} from "../core/thresholds.ts";
 
 interface CliArgs {
   command: string;
@@ -96,66 +149,58 @@ function printHelp(): void {
 
 用法：
   skill-eval eval --suite <套件.json> --skill <SKILL.md> [选项]
-  skill-eval check --suite <套件.json>
-  skill-eval report --run <运行目录>
-  skill-eval archive --run <运行目录> --skill <SKILL.md>
+  skill-eval check --suite <套件.json> [--run <运行目录>] [--strict]
+  skill-eval report --run <运行目录> [--suite-file <套件.json>] [--llm-advice]
+  skill-eval archive --run <运行目录> --skill <SKILL.md> [选项]
+  skill-eval verify --original <原版目录> --broken <破坏版目录>
+  skill-eval verify --generate-broken <SKILL.md> --out <输出目录>
+  skill-eval calibrate --run <运行目录> --export <盲审表.json>
+  skill-eval calibrate --run <运行目录> --score <已填盲审表.json>
+  skill-eval pending [--skill <SKILL.md> | --init | --json]
   skill-eval threshold [--score-drop <n>] [--activation-rate-drop <n>]
 
 eval 选项：
   --suite <path>          评估套件定义（必填）
   --skill <path>          被测 SKILL.md 路径（可覆盖套件中的设置）
-  --model <id>            被评模型，如 provider/model（可覆盖套件）
-  --judge-model <id>      评委模型（默认同被评模型）
-  --repeat <n>            每用例重复次数（默认取套件值或 3）
-  --judge-repeat <n>      评委轮数，≥2 启用位置偏好探测（默认 1）
+  --model <id>            被评模型，如 provider/model
+  --models <m1,m2,...>    多模型矩阵评估（逗号分隔多个模型，输出 MATRIX_REPORT.md）
+  --judge-model <id>      评委模型（默认同被评模型；强烈建议跨模型做评委）
+  --repeat <n>            每用例重复次数（默认取套件值或 ${DEFAULT_REPEAT}）
+  --judge-repeat <n>      评委轮数，≥2 启用位置偏好探测（默认取套件值或 ${DEFAULT_JUDGE_REPEAT}）
   --out <dir>             输出目录（默认 runs/<run-id>）
   --home <dir>            pi 隔离 HOME，避免污染全局配置
   --context <text>        附加上下文前缀（覆盖套件）
   --no-keyword-signal     关闭关键词弱证据，仅用工具调用取证
-  --timeout <ms>          单次运行超时
-  --judge-timeout <ms>    评委单次超时（默认 300000，评委思考链比被评模型长）
+  --timeout <ms>          单次运行超时（默认 480000）
+  --judge-timeout <ms>    评委单次超时（默认 300000）
+  --llm-advice            额外调用模型针对失败根因生成 SKILL.md 段落级改写草案
   --archive-to <dir>      评估后把通过测评的 skill 归档到该仓库（默认归档到 <dir>/archive）
   --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
   --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
-  --allow-inconclusive    允许归档「结论不足」的评估（配合 --archive-to 使用）
-  --allow-low-gain        允许归档断言增益未达标的评估（配合 --archive-to 使用）
-  --gain-threshold <pp>   增益门槛（百分点，默认 10）
+  --allow-inconclusive    允许归档「结论不足」的评估（标记 provisional=true）
+  --allow-partial         允许归档存在部分超时/失败的跑批（标记 provisional=true）
+  --allow-low-gain        允许归档断言增益未达标的评估（标记 lowGain=true）
+  --gain-threshold <pp>   增益门槛（百分点，默认 ${GAIN_THRESHOLD_PP}）
 
 check 选项：
-  --suite <path>          仅校验套件结构，不调用模型
+  --suite <path>          校验套件结构、正则合法性、恒真断言与负向断言覆盖
+  --run <dir>             结合历史跑批结果诊断「白送断言」（baseline ≥ 80%）与零区分度用例
+  --strict                存在警告时也返回非零退出码
 
-report 选项：
-  --run <dir>             从已有运行产物重新生成报告
-  --suite-file <path>     提供套件定义，从原始产物重算汇总（推荐）
-  --suite <id>            套件标识（仅写入报告元信息）
-  --skill <path>          被测 skill 路径（仅写入报告元信息）
+verify 选项：
+  --generate-broken <p>   剥离 SKILL.md 的正文行为契约（保留 frontmatter 触发契约）写入 --out
+  --out <dir>             生成的破坏版 skill 目录
+  --original <dir>        原版 skill 跑批产物目录
+  --broken <dir>          破坏版 skill 跑批产物目录
+  --gain-threshold <pp>   区分度增益门槛（默认 ${GAIN_THRESHOLD_PP}）
+  --json                  以 JSON 输出验证结果
 
-archive 选项：
-  --run <dir>             评估运行目录（必填，提供 verdict 与元信息）
-  --skill <path>          被测 SKILL.md 路径（可从运行产物推断）
-  --archive-root <dir>    归档根目录（默认 <仓库>/archive）
-  --repo <dir>            仓库根目录（用于安全校验，默认自动探测）
-  --version <id>          显式版本标识（默认 <frontmatter版本>__<时间戳>）
-  --allow-inconclusive    放行「结论不足」的评估，默认拒绝
-  --allow-low-gain        放行断言增益未达标的评估，默认拒绝
-  --gain-threshold <pp>   增益门槛（百分点，默认 10）
-  --force                 忽略 verdict 强制归档（用于诊断，不建议）
-  --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
-
-pending 选项：
-  --repo <dir>            仓库根目录（默认自动探测）
-  --skill <path>          登记该 skill 到待测评区；不给则列出待测 skill
-  --pending-root <dir>    待测评暂存区（默认 <仓库>/pending）
-  --init                  只创建暂存区目录（方便先把 skill 文件夹拖进去）
-  --json                  输出 JSON（给 agent 解析用）
-
-  待测评区是常驻目录：skill 文件夹可以直接拖进去，不一定要用 --skill 登记。
-
-产物布局：
-  <out>/cases/<variant>/<task>/<attempt>/  单次运行证据（events.json / output.md / result.json）
-  <out>/pairwise/<variant>-<task>-<attempt>/ 评委产物（forward / reversed，各含 output.md / prompt.md / events.json）
-  <out>/summary.json      运行摘要
-  <out>/REPORT.md         评估报告
+calibrate 选项：
+  --run <dir>             评估运行目录（必填）
+  --export <file>         导出打乱 A/B 顺序的匿名盲审表 JSON
+  --score <file>          读取人工回填的盲审表，计算一致率、Cohen's κ 与乐观偏置
+  --suite-file <path>     可选套件定义（用于在盲审表中附带原始 prompt 与要点）
+  --limit <n>             限制导出的抽检对数
 `);
 }
 
@@ -171,6 +216,10 @@ async function main(): Promise<number> {
       return await commandReport(args);
     case "archive":
       return await commandArchive(args);
+    case "verify":
+      return commandVerify(args);
+    case "calibrate":
+      return commandCalibrate(args);
     case "pending":
       return commandPending(args);
     case "threshold":
@@ -187,27 +236,67 @@ async function main(): Promise<number> {
   }
 }
 
-/** 加载并校验套件。 */
-function loadSuite(suitePath: string): SuiteFile {
-  const absolute = resolve(suitePath);
-  if (!existsSync(absolute)) {
-    throw new Error(`套件文件不存在: ${absolute}`);
-  }
-  const parsed = JSON.parse(readFileSync(absolute, "utf8")) as SuiteFile;
-
-  if (!parsed.id) throw new Error("套件缺少 id 字段");
-  if (!Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
-    throw new Error("套件缺少 tasks 或 tasks 为空");
-  }
-  const seen = new Set<string>();
-  for (const task of parsed.tasks) {
-    if (!task.id) throw new Error("存在缺少 id 的用例");
-    if (seen.has(task.id)) throw new Error(`用例 id 重复: ${task.id}`);
-    seen.add(task.id);
-    if (!task.prompt || !task.prompt.trim()) throw new Error(`用例 ${task.id} 缺少 prompt`);
+/** 收集 SKILL.md 与包内附属文档内容，供优化建议定位规则是在主文件、未读附属文件还是完全缺失。 */
+function buildSkillDocContext(
+  skillPath: string | undefined,
+  summary: EvaluationSummary,
+): SkillDocContext | undefined {
+  if (!skillPath || !existsSync(skillPath)) return undefined;
+  let skillContent = "";
+  try {
+    skillContent = readFileSync(skillPath, "utf8");
+  } catch {
+    return undefined;
   }
 
-  return parsed;
+  const skillDir = dirname(resolve(skillPath));
+  const subFiles: Record<string, string> = {};
+  const scanSubDir = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scanSubDir(full);
+      } else if (
+        entry.isFile() &&
+        full !== resolve(skillPath) &&
+        (entry.name.endsWith(".md") || entry.name.endsWith(".txt"))
+      ) {
+        try {
+          const rel = relative(skillDir, full).replace(/\\/g, "/");
+          subFiles[rel] = readFileSync(full, "utf8").slice(0, 65536);
+        } catch {
+          // 忽略不可读文件
+        }
+      }
+    }
+  };
+  scanSubDir(skillDir);
+
+  const readSubSet = new Set<string>();
+  for (const row of summary.results) {
+    if (row.variantId === "baseline") continue;
+    for (const p of row.activation?.readSubPaths ?? []) {
+      readSubSet.add(p);
+    }
+  }
+
+  return {
+    skillContent,
+    subFiles,
+    readSubPaths: Array.from(readSubSet),
+  };
+}
+
+function loadCalibrationIfPresent(runDir: string): CalibrationResult | null {
+  const p = join(runDir, "calibration-result.json");
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, "utf8")) as CalibrationResult;
+  } catch {
+    return null;
+  }
 }
 
 function commandCheck(args: CliArgs): number {
@@ -219,24 +308,171 @@ function commandCheck(args: CliArgs): number {
 
   try {
     const suite = loadSuite(suitePath);
-    const assertionCount = suite.tasks.reduce((acc, task) => acc + (task.assertions?.length ?? 0), 0);
-    const scoredCount = suite.tasks.filter((task) => (task.kind ?? "scored") === "scored").length;
-    const diagnosticCount = suite.tasks.length - scoredCount;
-
-    process.stdout.write(`套件校验通过：${suite.id}\n`);
-    process.stdout.write(`  用例总数：${suite.tasks.length}（计分 ${scoredCount} / 诊断 ${diagnosticCount}）\n`);
-    process.stdout.write(`  断言条数：${assertionCount}\n`);
-    if (suite.repeat) process.stdout.write(`  重复次数：${suite.repeat}\n`);
-    if (suite.judgeRepeat) process.stdout.write(`  评委轮数：${suite.judgeRepeat}\n`);
-
-    if (assertionCount === 0) {
-      process.stdout.write("\n⚠️ 该套件没有规则断言，将完全依赖模型评委判定，可信度较弱。\n");
+    const runDir = flagString(args.flags, "run");
+    let empiricalSummary: EvaluationSummary | undefined;
+    if (runDir) {
+      const summaryPath = join(resolve(runDir), "summary.json");
+      if (!existsSync(summaryPath)) {
+        process.stderr.write(`未找到历史运行摘要：${summaryPath}\n`);
+        return 1;
+      }
+      empiricalSummary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
     }
+
+    const report = checkSuite(suite, empiricalSummary);
+    const s = report.stats;
+
+    process.stdout.write(
+      `${report.valid ? "套件校验通过" : "套件校验失败"}：${suite.id}（${report.suiteHash}）\n`,
+    );
+    process.stdout.write(
+      `  用例总数：${s.taskCount}（计分 ${s.scoredCount} / 诊断 ${s.diagnosticCount} / 负向误触发 ${s.negativeTriggerCount}）\n`,
+    );
+    process.stdout.write(
+      `  断言条数：${s.assertionCount}（含负向红线断言 ${s.negativeAssertionCount}）\n`,
+    );
+    process.stdout.write(`  重复次数：${suite.repeat ?? `${DEFAULT_REPEAT}（默认）`}\n`);
+    process.stdout.write(`  评委轮数：${suite.judgeRepeat ?? `${DEFAULT_JUDGE_REPEAT}（默认）`}\n`);
+
+    if (report.errors.length > 0) {
+      process.stderr.write("\n❌ 错误（必须修复）：\n");
+      for (const err of report.errors) {
+        process.stderr.write(`  - ${err}\n`);
+      }
+    }
+
+    if (report.warnings.length > 0) {
+      process.stdout.write("\n⚠️ 质量提示：\n");
+      for (const warn of report.warnings) {
+        process.stdout.write(`  - ${warn}\n`);
+      }
+    }
+
+    if (!report.valid) return 1;
+    if (args.flags["strict"] === true && report.warnings.length > 0) return 1;
     return 0;
   } catch (error) {
     process.stderr.write(`套件校验失败：${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+}
+
+async function runSingleModelEval(params: {
+  suite: SuiteFile;
+  suiteHash: string;
+  skillPath: string;
+  model: string;
+  judgeModel: string;
+  repeat: number;
+  judgeRepeat: number;
+  outDir: string;
+  runId: string;
+  piHome: string | undefined;
+  contextPrefix: string | undefined;
+  keywordSignal: boolean;
+  timeoutMs: number | undefined;
+  judgeTimeoutMs: number | undefined;
+  gainThresholdPp: number | undefined;
+  wantLlmAdvice: boolean;
+}): Promise<{ summary: EvaluationSummary; decision: VerdictDecision; reportPath: string }> {
+  const { suite, skillPath, model, judgeModel, repeat, judgeRepeat, outDir, runId } = params;
+  mkdirSync(outDir, { recursive: true });
+
+  const variants: Variant[] = [
+    { id: "baseline", label: "Baseline（不装 skill）", skillPaths: [] },
+    { id: "skill", label: `Skill（${suite.skill?.version ?? "当前版本"}）`, skillPaths: [skillPath] },
+  ];
+
+  const totalRuns = variants.length * suite.tasks.length * repeat;
+  process.stderr.write(
+    `开始评估：${suite.id}（${params.suiteHash}）\n` +
+      `  被测 skill：${skillPath}\n` +
+      `  模型：${model}（评委：${judgeModel}）\n` +
+      `  用例 ${suite.tasks.length} × 变体 ${variants.length} × 重复 ${repeat} = ${totalRuns} 次运行\n` +
+      `  评委轮数：${judgeRepeat}\n` +
+      `  输出：${outDir}\n\n`,
+  );
+
+  const summary = await runEvaluation({
+    runRoot: outDir,
+    runId,
+    model,
+    judgeModel,
+    variants,
+    tasks: suite.tasks,
+    repeat,
+    judgeRepeat,
+    contextPrefix: params.contextPrefix,
+    home: params.piHome,
+    keywordSignal: params.keywordSignal,
+    timeoutMs: params.timeoutMs,
+    judgeTimeoutMs: params.judgeTimeoutMs,
+    onProgress: (event) => {
+      process.stderr.write(`  [${event.phase}] ${event.message}\n`);
+    },
+  });
+
+  summary.suiteMeta = {
+    suiteId: suite.id,
+    suiteVersion: suite.version ?? "未标注",
+    suiteHash: params.suiteHash,
+    skillVersion: suite.skill?.version ?? "未标注",
+    skillPath,
+  };
+  writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
+
+  const decision = decideVerdict(summary, {
+    ...(params.gainThresholdPp !== undefined ? { gainThresholdPp: params.gainThresholdPp } : {}),
+  });
+  const skillContext = buildSkillDocContext(skillPath, summary);
+
+  let llmAdviceDraft: string | null = null;
+  if (params.wantLlmAdvice && skillContext?.skillContent) {
+    const variantSummary = summary.variantSummaries.find((v) => v.variantId !== "baseline");
+    const advice = buildImprovementAdvice(summary.results, variantSummary?.activationRate ?? 0, {
+      verdict: decision.verdict,
+      tasks: suite.tasks,
+      skillContext,
+    });
+    llmAdviceDraft = await generateLlmRewriteAdvice({
+      skillContent: skillContext.skillContent,
+      groupedDiagnoses: advice.groupedDiagnoses,
+      workspaceRoot: outDir,
+      model: judgeModel,
+      home: params.piHome,
+    });
+  }
+
+  const meta: ReportMeta = {
+    skillPath,
+    skillHash: hashFile(skillPath),
+    skillVersion: suite.skill?.version ?? "未标注",
+    suiteId: suite.id,
+    suiteVersion: suite.version ?? "未标注",
+    suiteHash: params.suiteHash,
+    runRoot: outDir,
+    piHome: params.piHome ?? null,
+    generatedAt: new Date().toISOString(),
+  };
+
+  const report = renderReport({
+    summary,
+    meta,
+    tasks: suite.tasks,
+    variants,
+    verdict: decision.verdict,
+    expensive: decision.expensive,
+    verdictReason: decision.reason,
+    skillContext,
+    llmAdviceDraft,
+    calibration: loadCalibrationIfPresent(outDir),
+  });
+
+  const reportPath = join(outDir, "REPORT.md");
+  writeFileSync(reportPath, report, "utf8");
+  process.stderr.write(`\n报告已生成：${reportPath}\n`);
+
+  return { summary, decision, reportPath };
 }
 
 async function commandEval(args: CliArgs): Promise<number> {
@@ -247,9 +483,13 @@ async function commandEval(args: CliArgs): Promise<number> {
   }
 
   const suite = loadSuite(suitePath);
+  const suiteCheck = checkSuite(suite);
+  if (!suiteCheck.valid) {
+    process.stderr.write(`套件存在阻断性错误，无法启动评估：\n  ${suiteCheck.errors.join("\n  ")}\n`);
+    return 1;
+  }
   const suiteDir = dirname(resolve(suitePath));
 
-  // 被测 skill 路径：命令行优先于套件。
   const skillFlag = flagString(args.flags, "skill");
   const skillFromSuite = suite.skill?.path
     ? isAbsolute(expandTilde(suite.skill.path))
@@ -267,96 +507,105 @@ async function commandEval(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const model = flagString(args.flags, "model") ?? process.env.SKILL_EVAL_MODEL;
-  if (!model) {
-    process.stderr.write("缺少被评模型：用 --model 指定，或设置 SKILL_EVAL_MODEL 环境变量\n");
+  const modelsFlag = flagString(args.flags, "models");
+  const modelList = modelsFlag
+    ? modelsFlag.split(",").map((m) => m.trim()).filter(Boolean)
+    : [];
+  const singleModel = flagString(args.flags, "model") ?? process.env.SKILL_EVAL_MODEL;
+
+  if (modelList.length === 0 && !singleModel) {
+    process.stderr.write("缺少被评模型：用 --model 或 --models 指定，或设置 SKILL_EVAL_MODEL 环境变量\n");
     return 1;
   }
 
-  const repeat = flagNumber(args.flags, "repeat") ?? suite.repeat ?? 3;
-  const judgeRepeat = flagNumber(args.flags, "judge-repeat") ?? suite.judgeRepeat ?? 1;
-  const judgeModel = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL ?? model;
+  const repeat = flagNumber(args.flags, "repeat") ?? suite.repeat ?? DEFAULT_REPEAT;
+  const judgeRepeat = flagNumber(args.flags, "judge-repeat") ?? suite.judgeRepeat ?? DEFAULT_JUDGE_REPEAT;
   const timeoutMs = flagNumber(args.flags, "timeout");
   const judgeTimeoutMs = flagNumber(args.flags, "judge-timeout");
   const keywordSignal = args.flags["no-keyword-signal"] !== true;
   const contextPrefix = flagString(args.flags, "context") ?? suite.contextPrefix;
   const piHome = flagString(args.flags, "home") ?? process.env.SKILL_EVAL_PI_HOME ?? undefined;
+  const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
+  const wantLlmAdvice = args.flags["llm-advice"] === true;
 
+  // 多模型矩阵模式（--models m1,m2,...）
+  if (modelList.length > 1) {
+    const matrixRunId = newRunId();
+    const matrixRoot = flagString(args.flags, "out")
+      ? resolve(flagString(args.flags, "out")!)
+      : resolve("runs", `matrix-${matrixRunId}`);
+    mkdirSync(matrixRoot, { recursive: true });
+
+    const cells: ModelMatrixCell[] = [];
+    const judgeOverride = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL;
+
+    for (const m of modelList) {
+      const safeName = m.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const subOut = join(matrixRoot, safeName);
+      const res = await runSingleModelEval({
+        suite,
+        suiteHash: suiteCheck.suiteHash,
+        skillPath,
+        model: m,
+        judgeModel: judgeOverride ?? m,
+        repeat,
+        judgeRepeat,
+        outDir: subOut,
+        runId: `${matrixRunId}-${safeName}`,
+        piHome,
+        contextPrefix,
+        keywordSignal,
+        timeoutMs,
+        judgeTimeoutMs,
+        gainThresholdPp,
+        wantLlmAdvice,
+      });
+      cells.push({
+        model: m,
+        runDir: subOut,
+        summary: res.summary,
+        decision: res.decision,
+      });
+    }
+
+    const matrixReport = summarizeModelMatrix(cells);
+    const matrixMd = renderMatrixMarkdown(matrixReport, {
+      suiteId: suite.id,
+      skillPath,
+      judgeModel: judgeOverride ?? "各模型自评",
+      generatedAt: new Date().toISOString(),
+    });
+    writeFileSync(join(matrixRoot, "MATRIX_REPORT.md"), matrixMd, "utf8");
+    writeFileSync(join(matrixRoot, "matrix-summary.json"), JSON.stringify(matrixReport, null, 2), "utf8");
+    process.stdout.write(`${matrixReport.classification}\n${matrixReport.summaryText}\n`);
+    return 0;
+  }
+
+  // 单模型标准模式
+  const model = (modelList[0] ?? singleModel)!;
+  const judgeModel = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL ?? model;
   const runId = newRunId();
   const outDir = flagString(args.flags, "out") ? resolve(flagString(args.flags, "out")!) : resolve("runs", runId);
-  mkdirSync(outDir, { recursive: true });
 
-  const variants: Variant[] = [
-    { id: "baseline", label: "Baseline（不装 skill）", skillPaths: [] },
-    { id: "skill", label: `Skill（${suite.skill?.version ?? "当前版本"}）`, skillPaths: [skillPath] },
-  ];
-
-  const totalRuns = variants.length * suite.tasks.length * repeat;
-  process.stderr.write(
-    `开始评估：${suite.id}\n` +
-      `  被测 skill：${skillPath}\n` +
-      `  模型：${model}（评委：${judgeModel}）\n` +
-      `  用例 ${suite.tasks.length} × 变体 ${variants.length} × 重复 ${repeat} = ${totalRuns} 次运行\n` +
-      `  评委轮数：${judgeRepeat}\n` +
-      `  输出：${outDir}\n\n`,
-  );
-
-  const summary = await runEvaluation({
-    runRoot: outDir,
-    runId,
+  const { summary, decision } = await runSingleModelEval({
+    suite,
+    suiteHash: suiteCheck.suiteHash,
+    skillPath,
     model,
     judgeModel,
-    variants,
-    tasks: suite.tasks,
     repeat,
     judgeRepeat,
+    outDir,
+    runId,
+    piHome,
     contextPrefix,
-    home: piHome,
     keywordSignal,
     timeoutMs,
     judgeTimeoutMs,
-    onProgress: (event) => {
-      process.stderr.write(`  [${event.phase}] ${event.message}\n`);
-    },
+    gainThresholdPp,
+    wantLlmAdvice,
   });
 
-  // 落盘运行摘要，便于重新生成报告。
-  summary.suiteMeta = {
-    suiteId: suite.id,
-    suiteVersion: suite.version ?? "未标注",
-    skillVersion: suite.skill?.version ?? "未标注",
-    skillPath,
-  };
-  writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
-
-  const meta: ReportMeta = {
-    skillPath,
-    skillHash: hashFile(skillPath),
-    skillVersion: suite.skill?.version ?? "未标注",
-    suiteId: suite.id,
-    suiteVersion: suite.version ?? "未标注",
-    runRoot: outDir,
-    piHome: piHome ?? null,
-    generatedAt: new Date().toISOString(),
-  };
-
-  const verdict = decideVerdict(summary);
-  const report = renderReport({
-    summary,
-    meta,
-    tasks: suite.tasks,
-    variants,
-    verdict: verdict.verdict,
-    verdictReason: verdict.reason,
-  });
-
-  const reportPath = join(outDir, "REPORT.md");
-  writeFileSync(reportPath, report, "utf8");
-
-  process.stderr.write(`\n报告已生成：${reportPath}\n`);
-
-  // 可选：把通过测评的 skill 归档进仓库。
-  // 传 --archive-to <仓库根> 即启用；不传则 eval 行为与从前完全一致。
   const archiveTo = flagString(args.flags, "archive-to");
   if (archiveTo) {
     const repoRoot = resolve(archiveTo);
@@ -369,86 +618,35 @@ async function commandEval(args: CliArgs): Promise<number> {
       runDir: outDir,
       skillPath,
       summary,
-      decision: verdict,
+      decision,
       archiveRoot,
       repoRoot,
       version: flagString(args.flags, "archive-version"),
       allowInconclusive: args.flags["allow-inconclusive"] === true,
+      allowPartial: args.flags["allow-partial"] === true,
       force: false,
       suiteId: suite.id,
       suiteVersion: suite.version,
+      suiteHash: suiteCheck.suiteHash,
       skillVersion: suite.skill?.version,
-      gainThresholdPp: flagNumber(args.flags, "gain-threshold"),
+      gainThresholdPp,
       allowLowGain: args.flags["allow-low-gain"] === true,
     });
 
-    // 归档失败不影响评估结论——评估本身已经成功，报告已落盘。
     if (outcome.ok && outcome.result && outcome.input) {
-      printArchiveResult(outcome.result, outcome.input, verdict.verdict);
-      // 归档成功后，把该 skill 从待测评暂存区移出（与 archive 子命令同一套逻辑）。
+      printArchiveResult(outcome.result, outcome.input, decision);
       prunePendingAfterArchiveSkill(outcome.result, repoRoot, args);
     } else {
       process.stderr.write("归档未完成，评估结论不受影响。\n");
     }
   }
 
-  process.stdout.write(`${verdict.verdict}\n${verdict.reason}\n`);
-
+  process.stdout.write(`${decision.verdict}\n${decision.reason}\n`);
   return summary.status === "failed" ? 1 : 0;
 }
 
 /**
- * 判定结论。
- *
- * 判定要求：激活率达标 **且** 胜率有实质提升。
- * 只满足其一 → 结论不足。
- */
-function decideVerdict(summary: EvaluationSummary): { verdict: "effective" | "ineffective" | "inconclusive"; reason: string } {
-  const variant = summary.variantSummaries.find((item) => item.variantId !== "baseline");
-  if (!variant) {
-    return { verdict: "inconclusive", reason: "没有可判定的 variant" };
-  }
-
-  if (variant.total === 0) {
-    return { verdict: "inconclusive", reason: "没有运行记录" };
-  }
-
-  const activationOk = variant.activationRate >= 0.6;
-  const winRate = variant.winRate;
-  const winOk = winRate !== null && winRate >= 0.6;
-
-  if (variant.activationRate === 0 && (winRate === null || winRate === 0)) {
-    return {
-      verdict: "ineffective",
-      reason: `skill 从未被模型读取（激活率 0%），且未观察到任何相对 baseline 的改善。该 skill 在当前用例集下不产生实际价值。`,
-    };
-  }
-
-  if (activationOk && winOk) {
-    return {
-      verdict: "effective",
-      reason: `激活率 ${(variant.activationRate * 100).toFixed(1)}%（触发稳定），胜率 ${((winRate ?? 0) * 100).toFixed(1)}%（有实质提升）。该 skill 在当前用例集下有效。`,
-    };
-  }
-
-  if (!activationOk && !winOk) {
-    return {
-      verdict: "ineffective",
-      reason: `激活率 ${(variant.activationRate * 100).toFixed(1)}% 未达 60% 门槛，胜率 ${winRate === null ? "不可判定" : `${(winRate * 100).toFixed(1)}%`} 未达 60% 门槛。skill 未产生稳定可观测的价值。`,
-    };
-  }
-
-  return {
-    verdict: "inconclusive",
-    reason: `激活率 ${(variant.activationRate * 100).toFixed(1)}%、胜率 ${winRate === null ? "不可判定" : `${(winRate * 100).toFixed(1)}%`}，两项未同时达标。建议用更多重复次数与多轮评委复核。`,
-  };
-}
-
-/**
  * 从已有运行产物重新生成报告。
- *
- * 汇总一律从 cases/ 与 pairwise/ 的原始产物重算，不复用 summary.json 里的旧汇总——
- * 否则汇总逻辑修正后，旧报告仍会显示已知错误。
  */
 async function commandReport(args: CliArgs): Promise<number> {
   const runDir = flagString(args.flags, "run");
@@ -466,16 +664,16 @@ async function commandReport(args: CliArgs): Promise<number> {
 
   const stored = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
 
-  // 套件定义决定用例与断言，必须由用户提供以正确重算。
   const suitePath = flagString(args.flags, "suite-file");
   let tasks: EvalTask[];
   let variants: Variant[];
-  // 套件元信息用于报告的「套件」栏位与标题——取 id 字段，不是文件路径。
   let loadedSuite: SuiteFile | undefined;
+  let computedSuiteHash: string | undefined;
 
   if (suitePath) {
     const suite = loadSuite(suitePath);
     loadedSuite = suite;
+    computedSuiteHash = hashSuite(suite);
     const suiteDir = dirname(resolve(suitePath));
     const skillPath = suite.skill?.path
       ? isAbsolute(suite.skill.path)
@@ -488,9 +686,13 @@ async function commandReport(args: CliArgs): Promise<number> {
       { id: "skill", label: `Skill（${suite.skill?.version ?? "当前版本"}）`, skillPaths: skillPath ? [skillPath] : [] },
     ];
   } else {
-    // 未提供套件时，从旧摘要还原最小信息（仅供重新渲染，不重算断言）。
     tasks = (stored.taskSummaries ?? []).map(
-      (task): EvalTask => ({ id: task.taskId, prompt: "", kind: task.kind }),
+      (task): EvalTask => ({
+        id: task.taskId,
+        prompt: "",
+        kind: task.kind,
+        ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
+      }),
     );
     variants = (stored.variantSummaries ?? []).map(
       (item): Variant => ({ id: item.variantId, label: item.variantLabel, skillPaths: [] }),
@@ -499,9 +701,6 @@ async function commandReport(args: CliArgs): Promise<number> {
 
   const summary = suitePath ? await recomputeSummary(absolute, { variants, tasks }) : stored;
 
-  // 守卫：重算依赖 cases/ 下的原始产物。产物缺失（已清理、只入了库 summary.json）
-  // 时重算会得到空汇总，若照常写盘就会用空报告覆盖掉原本完好的报告。
-  // 这是不可逆的数据丢失，必须拒绝而不是静默降级。
   if (suitePath) {
     const guard = evaluateRecomputeGuard({
       resultCount: summary.results.length,
@@ -509,92 +708,126 @@ async function commandReport(args: CliArgs): Promise<number> {
       hasStored: Boolean(stored),
     });
     if (guard.blocked) {
-      process.stderr.write(
-        `拒绝重算：${absolute}\n  ${guard.reason}\n  ${guard.hint}\n`,
-      );
+      process.stderr.write(`拒绝重算：${absolute}\n  ${guard.reason}\n  ${guard.hint}\n`);
       return 1;
     }
   }
 
-  // 候选身份回填：显式传入的优先，否则从已有 REPORT.md 反解。
-  // 没有这一步，重生成报告会把「被测 skill / 内容哈希 / 版本 / 套件」全写成
-  // 「（未记录）」——读者再也无法知道这份结论测的是哪个文件。
   const existingReportPath = join(absolute, "REPORT.md");
-  const recovered = existsSync(existingReportPath)
-    ? recoverMetaFromReport(readFileSync(existingReportPath, "utf8"))
+  const existingReportText = existsSync(existingReportPath)
+    ? readFileSync(existingReportPath, "utf8")
+    : null;
+  const recovered = existingReportText
+    ? recoverMetaFromReport(existingReportText)
     : recoverMetaFromReport("");
 
   const merged = mergeMeta(
     {
-      skillPath: flagString(args.flags, "skill"),
+      skillPath: flagString(args.flags, "skill") ?? stored.suiteMeta?.skillPath,
       skillHash: flagString(args.flags, "skill-hash"),
-      skillVersion: flagString(args.flags, "skill-version"),
-      // 套件标识取套件文件里的 id 字段，不是套件文件的路径。
-      // 此前直接用路径，报告标题会变成
-      // 「# Skill 评估报告：/Users/.../suite.json」——既难读，也泄漏本地路径。
-      suiteId: loadedSuite?.id,
-      suiteVersion: flagString(args.flags, "suite-version") ?? loadedSuite?.version,
+      skillVersion: flagString(args.flags, "skill-version") ?? stored.suiteMeta?.skillVersion,
+      suiteId: loadedSuite?.id ?? flagString(args.flags, "suite") ?? stored.suiteMeta?.suiteId,
+      suiteVersion:
+        flagString(args.flags, "suite-version") ??
+        loadedSuite?.version ??
+        stored.suiteMeta?.suiteVersion,
+      suiteHash: computedSuiteHash ?? stored.suiteMeta?.suiteHash ?? null,
       piHome: flagString(args.flags, "home"),
     },
     recovered,
   );
 
+  const resolvedSkillPath =
+    merged.skillPath && merged.skillPath !== "（未记录）"
+      ? resolve(expandTilde(merged.skillPath))
+      : undefined;
+
   const meta: ReportMeta = {
     skillPath: merged.skillPath ?? "（未记录）",
-    skillHash: merged.skillHash ?? "（未记录）",
+    skillHash:
+      merged.skillHash ??
+      (resolvedSkillPath && existsSync(resolvedSkillPath)
+        ? hashFile(resolvedSkillPath)
+        : "（未记录）"),
     skillVersion: merged.skillVersion ?? "（未记录）",
     suiteId: merged.suiteId ?? "（未记录）",
     suiteVersion: merged.suiteVersion ?? "（未记录）",
+    suiteHash: merged.suiteHash ?? null,
     runRoot: absolute,
     piHome: merged.piHome ?? null,
     generatedAt: new Date().toISOString(),
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(summary, {
+    ...(flagNumber(args.flags, "gain-threshold") !== undefined
+      ? { gainThresholdPp: flagNumber(args.flags, "gain-threshold")! }
+      : {}),
+  });
+  const skillContext = buildSkillDocContext(resolvedSkillPath, summary);
+
+  let llmAdviceDraft: string | null = null;
+  if (args.flags["llm-advice"] === true && skillContext?.skillContent) {
+    const variantSummary = summary.variantSummaries.find((v) => v.variantId !== "baseline");
+    const advice = buildImprovementAdvice(summary.results, variantSummary?.activationRate ?? 0, {
+      verdict: decision.verdict,
+      tasks,
+      skillContext,
+    });
+    llmAdviceDraft = await generateLlmRewriteAdvice({
+      skillContent: skillContext.skillContent,
+      groupedDiagnoses: advice.groupedDiagnoses,
+      workspaceRoot: absolute,
+      model: summary.judgeModel || summary.model,
+    });
+  }
+
   const report = renderReport({
     summary,
     meta,
     tasks,
     variants,
     verdict: decision.verdict,
+    expensive: decision.expensive,
     verdictReason: decision.reason,
+    skillContext,
+    llmAdviceDraft,
+    calibration: loadCalibrationIfPresent(absolute),
   });
 
-  const reportPath = join(absolute, "REPORT.md");
-  writeFileSync(reportPath, report, "utf8");
-  process.stdout.write(`报告已重新生成：${reportPath}\n`);
-  process.stdout.write(`${decision.verdict}\n${decision.reason}\n`);
+  if (args.flags["force"] !== true) {
+    const qualityGuard = evaluateOverwriteGuard(report, existingReportText);
+    if (qualityGuard.blocked) {
+      process.stderr.write(`拒绝覆盖报告：${qualityGuard.reason}\n  如需强制覆盖请加 --force。\n`);
+      return 1;
+    }
+  }
+
+  writeFileSync(existingReportPath, report, "utf8");
+  process.stdout.write(`报告已重新生成：${existingReportPath}\n`);
+  process.stdout.write(`${decision.verdict}${decision.expensive ? " (expensive)" : ""}\n${decision.reason}\n`);
   return 0;
 }
 
-/**
- * 执行归档的核心流程。
- *
- * `archive` 子命令与 `eval --archive-to` 共用此函数——
- * 两条入口必须走同一套门控与写入逻辑，否则会出现「手动归档能过、
- * 自动归档被拒」这种行为不一致。
- */
 function performArchive(options: {
   runDir: string;
   skillPath: string;
   summary: EvaluationSummary;
-  decision: { verdict: "effective" | "ineffective" | "inconclusive"; reason: string };
+  decision: VerdictDecision;
   archiveRoot: string;
   repoRoot: string | null;
   version?: string | undefined;
   allowInconclusive: boolean;
+  allowPartial: boolean;
   force: boolean;
   suiteId?: string | undefined;
   suiteVersion?: string | undefined;
+  suiteHash?: string | undefined;
   skillVersion?: string | undefined;
-  /** 增益门槛（百分点）。默认 10。 */
   gainThresholdPp?: number | undefined;
-  /** 放行增益不达标。 */
   allowLowGain?: boolean | undefined;
 }): { ok: boolean; result?: ArchiveResult; input?: ReturnType<typeof collectArchiveInput> } {
   const { decision } = options;
 
-  // 门控：只有「有效」才归档。「结论不足」需显式放行，「无效」永不放行。
   if (!options.force) {
     if (decision.verdict === "ineffective") {
       process.stderr.write(
@@ -606,8 +839,18 @@ function performArchive(options: {
     if (decision.verdict === "inconclusive" && !options.allowInconclusive) {
       process.stderr.write(
         `拒绝归档：评估结论为「结论不足」。\n  ${decision.reason}\n` +
-          "  如确认 skill 本身可用（如只是重复次数偏小），加 --allow-inconclusive 放行，\n" +
-          "  归档后会在 latest.json 中标记 provisional=true。\n",
+          "  如确认需要临时留档，加 --allow-inconclusive 放行，归档后会在 latest.json 中标记 provisional=true。\n",
+      );
+      return { ok: false };
+    }
+    if (
+      options.summary.status === "partial" &&
+      !options.allowPartial &&
+      !options.allowInconclusive
+    ) {
+      process.stderr.write(
+        "拒绝归档：本次跑批存在失败或超时运行（status=partial），默认禁止归档为干净通过版本。\n" +
+          "  建议消除超时后重跑，或显式加 --allow-partial 放行（归档后标记 provisional=true）。\n",
       );
       return { ok: false };
     }
@@ -618,23 +861,20 @@ function performArchive(options: {
     skillPath: options.skillPath,
     verdict: decision.verdict,
     verdictReason: decision.reason,
+    expensive: decision.expensive,
     suiteId: options.suiteId,
     suiteVersion: options.suiteVersion,
+    suiteHash: options.suiteHash,
     skillVersion: options.skillVersion,
   });
 
-  // 增益门槛：光有「有效」结论不够，还要断言层面的改善确实存在。
-  //
-  // 阴性对照实验证明断言整体灵敏度只有 51.9%——skill 完全无效时通过率仍可达
-  // 75.9%。只看结论等级会把「模型本来就能做对」误当成 skill 的功劳。
   const thresholdPp = options.gainThresholdPp ?? DEFAULT_GAIN_THRESHOLD_PP;
   const gainCheck = evaluateGain(input.baselineAssertionRate, input.variantAssertionRate, thresholdPp);
   if (!gainCheck.passed && !options.allowLowGain && !options.force) {
     process.stderr.write(
       `拒绝归档：断言增益未达标。\n  ${gainCheck.reason}\n` +
         `  门槛 ${thresholdPp}pp 来自阴性对照实验——原版 skill +50.0pp，契约剥离后仅 +8.6pp。\n` +
-        "  确认 skill 确实带来了改善时，加 --allow-low-gain 放行，\n" +
-        "  归档后会在 latest.json 中标记 lowGain=true。\n",
+        "  确认 skill 确实带来了改善时，加 --allow-low-gain 放行（标记 lowGain=true）。\n",
     );
     return { ok: false };
   }
@@ -659,11 +899,10 @@ function performArchive(options: {
   return { ok: true, result, input };
 }
 
-/** 打印归档结果。 */
 function printArchiveResult(
   result: ArchiveResult,
   input: { skillHash: string; gainCheck?: { passed: boolean; gainPp: number | null; thresholdPp: number } },
-  verdict: string,
+  decision: VerdictDecision,
 ): void {
   if (result.skipped) {
     process.stdout.write(`已存在同内容版本，跳过：${result.versionDir}\n`);
@@ -671,28 +910,29 @@ function printArchiveResult(
   }
   process.stdout.write(`归档完成：${result.versionDir}\n`);
   process.stdout.write(`  版本标识：${result.version}\n`);
-  const flags = [result.provisional ? "provisional" : "", result.lowGain ? "low-gain" : ""]
+  const flags = [
+    decision.expensive || result.expensive ? "有效但昂贵" : "",
+    result.provisional ? "provisional" : "",
+    result.lowGain ? "low-gain" : "",
+    result.suiteDrift ? "suite-drift" : "",
+  ]
     .filter(Boolean)
     .join(" / ");
-  process.stdout.write(`  结论：${verdict}${flags ? `（${flags}）` : ""}\n`);
+  process.stdout.write(`  结论：${decision.verdict}${flags ? `（${flags}）` : ""}\n`);
   if (input.gainCheck) {
     const g = input.gainCheck.gainPp === null ? "不可判定" : `${input.gainCheck.gainPp.toFixed(1)} pp`;
     process.stdout.write(
       `  增益门槛：${g}（门槛 ${input.gainCheck.thresholdPp} pp）${input.gainCheck.passed ? "达标" : "未达标·已放行"}\n`,
     );
   }
+  if (result.suiteDrift) {
+    process.stdout.write("  ⚠️ 检测到与上一归档版本的套件哈希不同，跨版本指标不可直接横向对比。\n");
+  }
   process.stdout.write(`  复制文件：${result.fileCount} 个（跳过噪声 ${result.skippedNoise} 项）\n`);
   process.stdout.write(`  内容哈希：${input.skillHash}\n`);
   process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
 }
 
-/**
- * 归档一次通过的评估。
- *
- * 以 `--run` 为主入口——归档必须绑定某一次评估的产物，只给 skill 路径
- * 无法确定对应的 verdict 与内容哈希。verdict 复用 decideVerdict，
- * 不产生第二套判定逻辑。
- */
 async function commandArchive(args: CliArgs): Promise<number> {
   const runDir = flagString(args.flags, "run");
   if (!runDir) {
@@ -707,15 +947,6 @@ async function commandArchive(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  // verdict 必须与 report 同口径：优先从 pairwise/ 原始产物用当前代码重算。
-  //
-  // summary.json 存的是跑批当时的旧汇总——若评估器此后修过 bug（如评委标签
-  // 一致性校验），旧 summary 的 winRate 会带着已知错误，归档门控据此拒绝，
-  // 而 report --suite-file 重算出的却是相反结论——「报告说有效、归档说不足」
-  // 的口径分裂就是这么来的。
-  //
-  // 原始产物缺失（已清理、只入库 summary.json）时退回旧 summary，
-  // 此时 report 有守卫拒绝空重算，这里同样保持只读旧值。
   const storedSummary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
   const pairwiseDir = join(absoluteRun, "pairwise");
   const summary = existsSync(pairwiseDir)
@@ -724,15 +955,21 @@ async function commandArchive(args: CliArgs): Promise<number> {
           (item): Variant => ({ id: item.variantId, label: item.variantLabel, skillPaths: [] }),
         ),
         tasks: (storedSummary.taskSummaries ?? []).map(
-          (task): EvalTask => ({ id: task.taskId, prompt: "", kind: task.kind }),
+          (task): EvalTask => ({
+            id: task.taskId,
+            prompt: "",
+            kind: task.kind,
+            ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
+          }),
         ),
       })
     : storedSummary;
 
-  // 被测 skill 路径：命令行优先，否则从运行产物的 skillPaths 反推。
   const skillFlag = flagString(args.flags, "skill");
-  const inferred = summary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0];
-  const skillPath = skillFlag ? resolve(skillFlag) : inferred ? resolve(inferred) : undefined;
+  const inferred =
+    summary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0] ??
+    storedSummary.suiteMeta?.skillPath;
+  const skillPath = skillFlag ? resolve(expandTilde(skillFlag)) : inferred ? resolve(expandTilde(inferred)) : undefined;
 
   if (!skillPath) {
     process.stderr.write("无法确定被测 skill 路径：用 --skill 指定\n");
@@ -743,11 +980,11 @@ async function commandArchive(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const decision = decideVerdict(summary);
-  const allowInconclusive = args.flags["allow-inconclusive"] === true;
-  const force = args.flags["force"] === true;
+  const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
+  const decision = decideVerdict(summary, {
+    ...(gainThresholdPp !== undefined ? { gainThresholdPp } : {}),
+  });
 
-  // 仓库根目录：显式指定，否则从当前工作目录向上找含 skills/ 的目录。
   const repoFlag = flagString(args.flags, "repo");
   const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
   const archiveRoot = flagString(args.flags, "archive-root")
@@ -764,33 +1001,165 @@ async function commandArchive(args: CliArgs): Promise<number> {
     archiveRoot,
     repoRoot,
     version: flagString(args.flags, "version"),
-    allowInconclusive,
-    force,
-    suiteId: flagString(args.flags, "suite"),
-    suiteVersion: flagString(args.flags, "suite-version"),
-    skillVersion: flagString(args.flags, "skill-version"),
-    gainThresholdPp: flagNumber(args.flags, "gain-threshold"),
+    allowInconclusive: args.flags["allow-inconclusive"] === true,
+    allowPartial: args.flags["allow-partial"] === true,
+    force: args.flags["force"] === true,
+    suiteId: flagString(args.flags, "suite") ?? storedSummary.suiteMeta?.suiteId,
+    suiteVersion: flagString(args.flags, "suite-version") ?? storedSummary.suiteMeta?.suiteVersion,
+    suiteHash: storedSummary.suiteMeta?.suiteHash,
+    skillVersion: flagString(args.flags, "skill-version") ?? storedSummary.suiteMeta?.skillVersion,
+    gainThresholdPp,
     allowLowGain: args.flags["allow-low-gain"] === true,
   });
 
   if (!outcome.ok || !outcome.result || !outcome.input) return 1;
 
-  printArchiveResult(outcome.result, outcome.input, decision.verdict);
-
-  // 归档成功后，把该 skill 从待测评暂存区移出。
-  // 暂存区清空则整个目录删除——不留空壳。
+  printArchiveResult(outcome.result, outcome.input, decision);
   prunePendingAfterArchiveSkill(outcome.result, repoRoot, args);
   return 0;
 }
 
-/**
- * 归档成功后，把该 skill 从待测评暂存区移出。
- *
- * 暂存区里的 skill 是「候选池」——测评通过就不再是待测评的了，
- * 该目录被删除，skill 已在 archive/ 里。
- *
- * 暂存区**本身保留**——它是常驻的投放入口，用户随时要往里放新 skill。
- */
+/** 阴性对照元评估子命令（`skill-eval verify`）。 */
+function commandVerify(args: CliArgs): number {
+  const genBrokenSource = flagString(args.flags, "generate-broken");
+  if (genBrokenSource) {
+    const srcPath = resolve(expandTilde(genBrokenSource));
+    if (!existsSync(srcPath)) {
+      process.stderr.write(`找不到源 SKILL.md：${srcPath}\n`);
+      return 1;
+    }
+    const outDirFlag = flagString(args.flags, "out");
+    if (!outDirFlag) {
+      process.stderr.write("使用 --generate-broken 时须通过 --out 指定破坏版输出目录\n");
+      return 1;
+    }
+    const outDir = resolve(expandTilde(outDirFlag));
+    mkdirSync(outDir, { recursive: true });
+    const raw = readFileSync(srcPath, "utf8");
+    const stripped = stripBehavioralContract(raw);
+    const destFile = join(outDir, "SKILL.md");
+    writeFileSync(destFile, stripped.content, "utf8");
+    process.stdout.write(
+      `已生成行为契约剥离版 SKILL.md：${destFile}\n` +
+        `  原版行数：${stripped.originalLines} → 剥离后行数：${stripped.strippedLines}\n` +
+        `  保留 YAML frontmatter 触发契约：${stripped.preservedFrontmatter ? "是" : "否"}\n`,
+    );
+    return 0;
+  }
+
+  const origDir = flagString(args.flags, "original");
+  const brokenDir = flagString(args.flags, "broken");
+  if (!origDir || !brokenDir) {
+    process.stderr.write(
+      "用法：\n" +
+        "  skill-eval verify --original <原版运行目录> --broken <破坏版运行目录>\n" +
+        "  skill-eval verify --generate-broken <SKILL.md> --out <破坏版目录>\n",
+    );
+    return 1;
+  }
+
+  const origSummaryPath = join(resolve(origDir), "summary.json");
+  const brokenSummaryPath = join(resolve(brokenDir), "summary.json");
+  if (!existsSync(origSummaryPath)) {
+    process.stderr.write(`找不到原版运行摘要：${origSummaryPath}\n`);
+    return 1;
+  }
+  if (!existsSync(brokenSummaryPath)) {
+    process.stderr.write(`找不到破坏版运行摘要：${brokenSummaryPath}\n`);
+    return 1;
+  }
+
+  const origSummary = JSON.parse(readFileSync(origSummaryPath, "utf8")) as EvaluationSummary;
+  const brokenSummary = JSON.parse(readFileSync(brokenSummaryPath, "utf8")) as EvaluationSummary;
+  const thresholdPp = flagNumber(args.flags, "gain-threshold");
+  const report = evaluateNegativeControl(origSummary, brokenSummary, {
+    ...(thresholdPp !== undefined ? { thresholdPp } : {}),
+  });
+
+  if (args.flags["json"] === true) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(formatNegativeControlReport(report));
+  }
+
+  return report.passed ? 0 : 1;
+}
+
+/** 人工盲审抽检与评委校准子命令（`skill-eval calibrate`）。 */
+function commandCalibrate(args: CliArgs): number {
+  const runDirFlag = flagString(args.flags, "run");
+  if (!runDirFlag) {
+    process.stderr.write("缺少 --run <运行目录>\n");
+    return 1;
+  }
+  const runDir = resolve(runDirFlag);
+  const summaryPath = join(runDir, "summary.json");
+  if (!existsSync(summaryPath)) {
+    process.stderr.write(`找不到运行摘要：${summaryPath}\n`);
+    return 1;
+  }
+
+  const exportPathFlag = flagString(args.flags, "export");
+  const scorePathFlag = flagString(args.flags, "score");
+
+  if (exportPathFlag) {
+    const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
+    const suiteFileFlag = flagString(args.flags, "suite-file");
+    const tasks = suiteFileFlag ? loadSuite(suiteFileFlag).tasks : [];
+    const limit = flagNumber(args.flags, "limit");
+
+    const { blindSheet, answerKey } = exportCalibrationSheet(summary, tasks, limit);
+    const exportPath = resolve(exportPathFlag);
+    const keyPath = join(runDir, "calibration-key.json");
+    mkdirSync(dirname(exportPath), { recursive: true });
+    writeFileSync(exportPath, JSON.stringify(blindSheet, null, 2), "utf8");
+    writeFileSync(keyPath, JSON.stringify(answerKey, null, 2), "utf8");
+
+    process.stdout.write(
+      `已导出匿名盲审表（共 ${blindSheet.items.length} 对）：${exportPath}\n` +
+        `映射密钥已保存至：${keyPath}\n` +
+        "填写每条的 humanVerdict ('A' | 'B' | 'tie') 后执行：\n" +
+        `  skill-eval calibrate --run ${runDir} --score ${exportPath}\n`,
+    );
+    return 0;
+  }
+
+  if (scorePathFlag) {
+    const keyPath = join(runDir, "calibration-key.json");
+    if (!existsSync(keyPath)) {
+      process.stderr.write(`未找到映射密钥：${keyPath}（请先执行 --export）\n`);
+      return 1;
+    }
+    const sheetPath = resolve(scorePathFlag);
+    if (!existsSync(sheetPath)) {
+      process.stderr.write(`未找到已填写的盲审表：${sheetPath}\n`);
+      return 1;
+    }
+
+    const blindSheet = JSON.parse(readFileSync(sheetPath, "utf8")) as BlindReviewSheet;
+    const answerKey = JSON.parse(readFileSync(keyPath, "utf8")) as CalibrationAnswerKey;
+    const result = evaluateCalibration(blindSheet, answerKey);
+    const outPath = join(runDir, "calibration-result.json");
+    writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
+
+    process.stdout.write(`人工盲审校准完成（已审核 ${result.reviewedCount}/${result.totalItems} 对）：\n`);
+    process.stdout.write(
+      `  人机一致率：${result.agreementRate === null ? "—" : `${(result.agreementRate * 100).toFixed(1)}%`}\n`,
+    );
+    process.stdout.write(
+      `  Cohen's κ：${result.kappa === null ? "—" : result.kappa.toFixed(3)}\n`,
+    );
+    process.stdout.write(
+      `  评委乐观偏置：${result.optimismBiasPp === null ? "—" : `${result.optimismBiasPp >= 0 ? "+" : ""}${result.optimismBiasPp.toFixed(1)}pp`}\n`,
+    );
+    process.stdout.write(`  结果已落盘：${outPath}（运行 skill-eval report 可自动写入报告）\n`);
+    return 0;
+  }
+
+  process.stderr.write("请指定 --export <盲审表.json> 或 --score <已填盲审表.json>\n");
+  return 1;
+}
+
 function prunePendingAfterArchiveSkill(
   result: ArchiveResult,
   repoRoot: string | null,
@@ -800,7 +1169,6 @@ function prunePendingAfterArchiveSkill(
   const pendingRoot = flagString(args.flags, "pending-root");
   if (!existsSync(pendingRootFor(repoRoot, pendingRoot))) return;
 
-  // 归档目录名就是 skill 名（archive/<skill名>/<版本>/）。
   const skillName = basename(result.archiveRoot);
   const outcome = prunePendingAfterArchive({
     repoRoot,
@@ -818,16 +1186,6 @@ function prunePendingAfterArchiveSkill(
   }
 }
 
-/**
- * 待测评暂存区管理。
- *
- * - `pending` / `pending list`  列出待测评的 skill（并确保目录存在）
- * - `pending --skill <路径>`    把 skill 登记进暂存区
- * - `pending init`              只创建目录，用来「先有地方放 skill」
- *
- * 暂存区是**常驻**目录——用户要能直接找到它、把 skill 文件夹拖进去。
- * 所以不只在登记时创建，任何一次 pending 调用都会确保目录存在。
- */
 function commandPending(args: CliArgs): number {
   const repoFlag = flagString(args.flags, "repo");
   const repoRoot = repoFlag ? resolve(repoFlag) : detectRepoRoot(process.cwd());
@@ -840,7 +1198,6 @@ function commandPending(args: CliArgs): number {
   const pendingRoot = flagString(args.flags, "pending-root");
   const skillFlag = flagString(args.flags, "skill");
 
-  // 只创建目录——用户在 IDE 里翻文件时需要先有个地方可放。
   if (args.flags["init"] === true) {
     const outcome = ensurePendingRoot({ repoRoot, pendingRoot });
     process.stdout.write(
@@ -848,11 +1205,10 @@ function commandPending(args: CliArgs): number {
         ? `已创建待测评区：${outcome.pendingRoot}\n`
         : `待测评区已存在：${outcome.pendingRoot}\n`,
     );
-    process.stdout.write(`把待测评的 skill 文件夹直接放进这个目录即可。\n`);
+    process.stdout.write("把待测评的 skill 文件夹直接放进这个目录即可。\n");
     return 0;
   }
 
-  // 登记模式：--skill <路径>
   if (skillFlag) {
     const skillPath = resolve(expandTilde(skillFlag));
     if (!existsSync(skillPath)) {
@@ -873,12 +1229,9 @@ function commandPending(args: CliArgs): number {
     return 0;
   }
 
-  // 列表模式——同时确保目录存在，用户才知道往哪放。
   ensurePendingRoot({ repoRoot, pendingRoot });
   const state = readPendingState({ repoRoot, pendingRoot });
 
-  // JSON 模式：给 agent 解析用。待测评区的 skill 需要能被自动发现，
-  // 人类可读的表格对 agent 来说不如结构化输出可靠。
   if (args.flags["json"] === true) {
     process.stdout.write(`${JSON.stringify(toPendingJson(state), null, 2)}\n`);
     return 0;
@@ -903,19 +1256,6 @@ function commandPending(args: CliArgs): number {
   return 0;
 }
 
-/** 从起始目录向上寻找含 skills/ 的仓库根目录。 */
-/**
- * 探测仓库根目录。
- *
- * 逐层兜底，保证「用户在任何目录发起评估」都能找到待测评区：
- * 1. 显式 `--repo`（最高优先级，由调用方处理）
- * 2. 环境变量 `SKILL_EVAL_REPO`
- * 3. 从当前目录向上找含 `skills/` + `package.json` 的目录
- * 4. 从 skill-eval 自身安装位置反推
- *
- * 第 4 层是兜底：agent 的 cwd 常常是会话工作区而不是 skill-eval 仓库，
- * 此时前 3 层都会失败，但待测评区就在 skill-eval 仓库里。
- */
 function detectRepoRoot(startDir: string): string | null {
   return detectRepoRootCore({
     startDir,
@@ -924,17 +1264,28 @@ function detectRepoRoot(startDir: string): string | null {
   });
 }
 
-/** 查看回归门禁阈值。 */
+/** 查看全局判定门槛与回归门禁阈值。 */
 function commandThreshold(args: CliArgs): number {
   const scoreDrop = flagNumber(args.flags, "score-drop");
   const activationRateDrop = flagNumber(args.flags, "activation-rate-drop");
 
   if (scoreDrop === undefined && activationRateDrop === undefined) {
     process.stdout.write(
-      `默认回归门禁阈值：\n` +
+      `全局有效判定门槛（src/core/thresholds.ts）：\n` +
+        `  默认重复运行次数（repeat）：${DEFAULT_REPEAT}\n` +
+        `  默认评委轮数（judgeRepeat）：${DEFAULT_JUDGE_REPEAT}\n` +
+        `  正向激活率门槛：${(ACTIVATION_THRESHOLD * 100).toFixed(0)}%\n` +
+        `  负向最大误触发率：${(MAX_FALSE_ACTIVATION_RATE * 100).toFixed(0)}%\n` +
+        `  成对评委胜率门槛（含超时惩罚与规则纠偏后）：${(WIN_RATE_THRESHOLD * 100).toFixed(0)}%\n` +
+        `  全样本胜率下界门槛：${(MIN_WIN_RATE_LOWER_BOUND * 100).toFixed(0)}%\n` +
+        `  有效评判覆盖率门槛：${(MIN_PAIR_COVERAGE * 100).toFixed(0)}%（且计分对 ≥ ${MIN_JUDGED_PAIRS}）\n` +
+        `  skill 侧最大超时率：${(MAX_VARIANT_TIMEOUT_RATE * 100).toFixed(0)}%\n` +
+        `  规则断言增益门槛：+${GAIN_THRESHOLD_PP}pp（且 95% Newcombe 置信下界 > 0）\n` +
+        `  成本昂贵警告线：token > ${COST_WARN_TOKEN_RATIO}x 或 > ${COST_WARN_TOKENS_PER_PP} tokens/pp\n\n` +
+        `默认回归门禁阈值：\n` +
         `  胜率最大下降：${DEFAULT_THRESHOLDS.scoreDrop}\n` +
         `  激活率最大下降：${DEFAULT_THRESHOLDS.activationRateDrop}\n` +
-        `  接受门：严格接受（候选必须严格优于当前版本，平局判 reject）\n`,
+        `  接受门：严格接受（候选必须严格优于当前版本，且套件哈希未漂移）\n`,
     );
     return 0;
   }
@@ -952,11 +1303,20 @@ function commandThreshold(args: CliArgs): number {
   return 0;
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error) => {
-    process.stderr.write(`执行失败：${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-    process.exitCode = 1;
-  });
+// 仅在直接作为 CLI 脚本执行时触发 main()，方便单测直接 import parseArgs 等辅助函数。
+const isMainModule =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+
+if (isMainModule) {
+  main()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      process.stderr.write(
+        `执行失败：${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    });
+}

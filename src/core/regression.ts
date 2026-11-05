@@ -12,6 +12,8 @@
  * 门禁是**严格接受**：分数必须严格优于当前版本，平局不算改进。
  */
 
+import { REGRESSION_MAX_ACTIVATION_DROP, REGRESSION_MAX_SCORE_DROP } from "./thresholds.ts";
+
 export interface RegressionThresholds {
   /** 胜率最大允许下降幅度。默认 0.1。 */
   scoreDrop: number;
@@ -20,13 +22,15 @@ export interface RegressionThresholds {
 }
 
 export const DEFAULT_THRESHOLDS: RegressionThresholds = {
-  scoreDrop: 0.1,
-  activationRateDrop: 0.2,
+  scoreDrop: REGRESSION_MAX_SCORE_DROP,
+  activationRateDrop: REGRESSION_MAX_ACTIVATION_DROP,
 };
 
 export interface EvalMetrics {
   score: number | null;
   activationRate: number | null;
+  /** 套件内容哈希：套件漂移后旧分数不可直接横向对比。 */
+  suiteHash?: string | null;
 }
 
 export interface EvalHistoryEntry {
@@ -44,6 +48,7 @@ export interface RegressionComparison {
   regressionReason: string | null;
   scoreDelta: number | null;
   activationDelta: number | null;
+  suiteDrift?: boolean;
   previous: EvalHistoryEntry | null;
 }
 
@@ -85,7 +90,23 @@ export function compareRegression(
       regressionReason: "无历史基线，无法比较",
       scoreDelta: null,
       activationDelta: null,
+      suiteDrift: false,
       previous: null,
+    };
+  }
+
+  if (
+    current.suiteHash &&
+    previous.metrics.suiteHash &&
+    current.suiteHash !== previous.metrics.suiteHash
+  ) {
+    return {
+      regressionStatus: "unknown",
+      regressionReason: `套件哈希已变更（${previous.metrics.suiteHash} → ${current.suiteHash}），不同判据的分数不可直接比较`,
+      scoreDelta: null,
+      activationDelta: null,
+      suiteDrift: true,
+      previous,
     };
   }
 

@@ -42,9 +42,9 @@ agent_created: true
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| 被评模型 | `minimax-cn/MiniMax-M3.1-Flash` | 用户指定则以用户为准 |
+| 被评模型 | `minimax-cn/MiniMax-M3.1-Flash` | 用户指定则以用户为准；关键资产可用 `--models` 跑跨模型矩阵 |
 | 评委模型 | `xiaomi-token-plan-cn/mimo-v2.6-flash` | 与被评模型不同 provider，避免自我偏好 |
-| repeat | 2 | 每用例重复次数 |
+| repeat | 3 | 每用例重复次数（默认 3，避免小样本 1/2 单次翻转定胜负） |
 | judgeRepeat | 2 | 评委轮数，≥2 才有位置偏好探测 |
 | pi 隔离 HOME | `~/.skill-eval/pi-home` | preflight 会自动准备 |
 | 运行目录 | `~/.skill-eval/runs/<YYYYMMDD-HHmmss>-<skill名>/` | 套件、产物、报告都在这里 |
@@ -458,8 +458,9 @@ archive/<skill名>/
 4. 三组数据并列判定：
 
 ```bash
-node --experimental-strip-types <仓库>/scripts/negative-control-compare.ts \
-  --original <原版run-dir> --broken <破坏版run-dir>
+skill-eval verify --generate-broken <原版SKILL.md> --out <破坏版目录>
+# 对破坏版跑完同一套件后执行：
+skill-eval verify --original <原版run-dir> --broken <破坏版run-dir>
 ```
 
 **判定阈值**：原版增益 ≥ 10pp 且破坏版增益 < 10pp → 工具具备区分能力。

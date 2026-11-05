@@ -57,10 +57,21 @@ npm run eval -- eval --suite ... --home ~/.skill-eval/pi-home
 ### 常用命令
 
 ```bash
-# 只校验套件结构，不调用模型
+# 只校验套件结构、正则合法性、恒真断言与白送断言（可选结合 --run）
 npm run eval -- check --suite suites/example-suite.json
 
-# 从原始产物重算并重新生成报告（汇总逻辑修正后用这个）
+# 多模型矩阵评估（防止弱模型结论外推到强模型失效）
+npm run eval -- eval --suite suites/example-suite.json --skill path/to/SKILL.md --models minimax-cn/MiniMax-M3.1-Flash,openai/gpt-5.4
+
+# 阴性对照元评估：剥离行为契约后验证工具与套件的区分能力
+npm run eval -- verify --generate-broken path/to/SKILL.md --out /tmp/broken-skill
+npm run eval -- verify --original runs/orig --broken runs/broken
+
+# 导出匿名盲审表并校准评委一致性（Cohen's κ 与乐观偏置）
+npm run eval -- calibrate --run runs/exp-001 --export /tmp/blind.json --suite-file suites/example-suite.json
+npm run eval -- calibrate --run runs/exp-001 --score /tmp/blind.json
+
+# 从原始产物重算并重新生成报告（支持 --llm-advice 生成段落级改写草案）
 npm run eval -- report --run runs/exp-001 --suite-file suites/example-suite.json
 
 # 把通过测评的 skill 快照存进仓库 archive/
@@ -102,14 +113,22 @@ npm run eval -- threshold
 src/
 ├── core/          评估内核（无业务耦合，可单测）
 │   ├── runner.ts        对照实验编排
-│   ├── activation.ts    激活检测（工具取证 + 关键词取证）
-│   ├── judge.ts         成对评委与多轮聚合
+│   ├── verdict.ts       综合结论判定引擎（覆盖率/超时惩罚/规则纠偏/置信区间/成本分级）
+│   ├── thresholds.ts    全局判定与展示阈值单一真相来源
+│   ├── stats.ts         Wilson / Newcombe-Wilson 95% 置信区间与 Cohen's κ
+│   ├── activation.ts    激活检测（工具取证含包内附属文件 + 正负向触发分离）
+│   ├── judge.ts         成对评委、头尾保留采样与多轮聚合
 │   ├── assertions.ts    规则断言判定
-│   ├── efc.ts           反馈效率 EFC 评分
-│   ├── regression.ts    回归门禁
-│   ├── archive.ts       通过测评的 skill 归档
-│   ├── gain.ts          断言增益门槛（归档单一真相来源）
-│   ├── improve.ts       未通过 skill 的失败归因与优化建议
+│   ├── sensitivity.ts   白送断言（baseline ≥ 80%）与零区分度用例筛查
+│   ├── suite.ts         套件加载、内容哈希（suiteHash）与静态质量检查
+│   ├── verify.ts        阴性对照元评估（契约剥离与区分能力检验）
+│   ├── calibration.ts   人工匿名盲审导出与评委校准
+│   ├── matrix.ts        多模型矩阵评估汇总与分化识别
+│   ├── cost.ts          可解释成本效率评级（lean / moderate / expensive / runaway）
+│   ├── regression.ts    回归门禁（含 suiteHash 漂移拦截）
+│   ├── archive.ts       通过测评的 skill 归档（含 partial 拦截与套件漂移告警）
+│   ├── gain.ts          断言条目累计增益门槛与置信区间（排除失败空输出）
+│   ├── improve.ts       激活感知归因、跨用例根因合并与 SKILL.md 定位建议
 │   ├── pending.ts       待测评暂存区管理
 │   ├── paths.ts         路径处理（~ 展开）
 │   └── pi.ts            pi CLI 适配层
