@@ -85,11 +85,17 @@ export interface AssertionOutcome {
   /**
    * 失败时，断言声明的**等价写法**是否命中了输出。
    *
-   * `undefined` = 该断言没声明等价写法（或断言通过了），
-   * 无法据此区分「假失败」与「真缺陷」。
+   * 语义按断言类型区分：
    *
-   * `true`  = 输出里有等价写法 → 主 pattern 没覆盖到 → **假失败**（断言过严）
-   * `false` = 输出里连等价写法都没有 → **真缺陷**（内容确实缺失）
+   * **mustMatch**：
+   * - `undefined` = 没声明等价写法（或断言通过），无法区分「假失败」与「真缺陷」
+   * - `true`  = 输出里有等价写法 → 主 pattern 没覆盖到 → **假失败**（断言过严）
+   * - `false` = 输出里连等价写法都没有 → **真缺陷**（内容确实缺失）
+   *
+   * **mustNotMatch**（等价写法同样被禁，命中即 fail）：
+   * - `true`  = 输出里出现了等价写法——这是**违反禁令**的证据，
+   *   归因层不得把它判成「断言过严」（要改的是 skill，不是套件）
+   * - `false` = 命中的是主 pattern 本身，等价写法未出现
    */
   equivalentMatched?: boolean | undefined;
 }
@@ -161,7 +167,13 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
         return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
       }
       const matched = regex.test(output);
-      if (!matched) {
+      // 等价写法对 mustNotMatch 的语义是「同样被禁」——
+      // 声明了 equivalentPatterns 却不拦截它，等于该拦的不拦
+      // （实测：禁「平均的平均」、等价写法「avg of avg」，输出只含后者时旧实现直接放行）。
+      // 所以主 pattern 与等价写法要**分别测试**，命中任一即 fail。
+      const eq = evaluateEquivalentPatterns(output, assertion.equivalentPatterns);
+
+      if (!matched && eq.matched !== true) {
         return {
           kind: assertion.kind,
           passed: true,
@@ -170,16 +182,19 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
           equivalentMatched: undefined,
         };
       }
-      const eq = evaluateEquivalentPatterns(output, assertion.equivalentPatterns);
       return {
         kind: assertion.kind,
         passed: false,
         detail:
-          eq.matched === true
-            ? `不应出现的模式出现了: ${assertion.pattern}，但命中的是等价写法（${eq.hitPattern}）——措辞覆盖范围可能过宽`
-            : `不应出现的模式出现了: ${assertion.pattern}`,
+          matched
+            ? eq.matched === true
+              ? `不应出现的模式出现了: ${assertion.pattern}（等价写法 ${eq.hitPattern} 也出现）`
+              : `不应出现的模式出现了: ${assertion.pattern}`
+            : `不应出现的模式出现了: 等价写法 ${eq.hitPattern}（主 pattern ${assertion.pattern} 未直接命中）`,
         note,
-        equivalentMatched: eq.matched,
+        // mustNotMatch 的等价命中 = 违反禁令的证据，不是「断言过严」——
+        // 归因层（improve.ts）只对 mustMatch 判假失败。
+        equivalentMatched: matched ? eq.matched : true,
       };
     }
 

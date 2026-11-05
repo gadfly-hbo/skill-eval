@@ -190,10 +190,15 @@ export function buildImprovementAdvice(
      *
      * 没有声明等价写法的断言（equivalentMatched === undefined）不能判假失败——
      * 无信息不等于无问题。
+     *
+     * **只对 mustMatch 生效**：mustNotMatch 失败时 equivalentMatched=true 的含义是
+     * 「输出出现了被禁的等价写法」——那是**违反禁令**，该改 skill，
+     * 把它判成「断言过严」会让归因方向完全反掉。
      */
     const failedOutcomes = entry.outcomes.filter((o) => !o.passed);
-    const equivalentHits = failedOutcomes.filter((o) => o.equivalentMatched === true);
-    const equivalentChecked = failedOutcomes.some((o) => o.equivalentMatched !== undefined);
+    const mustMatchFailures = failedOutcomes.filter((o) => o.kind === "mustMatch");
+    const equivalentHits = mustMatchFailures.filter((o) => o.equivalentMatched === true);
+    const equivalentChecked = mustMatchFailures.some((o) => o.equivalentMatched !== undefined);
     const isFalseFailure = equivalentHits.length > 0 && equivalentChecked;
 
     let mode: FailureMode;

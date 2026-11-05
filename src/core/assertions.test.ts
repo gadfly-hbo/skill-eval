@@ -199,8 +199,8 @@ test("等价写法里含无效正则时不影响主判定", () => {
   assert.equal(outcome.equivalentMatched, false);
 });
 
-test("mustNotMatch 命中时也记录等价写法状态", () => {
-  // 主 pattern 与等价写法都命中 → 断言失败，且说明「覆盖范围可能过宽」
+test("mustNotMatch 的等价写法同样被禁——命中任一即失败", () => {
+  // 主 pattern 与等价写法都命中 → 断言失败
   const hit = evaluateAssertion("数据含退货且含税", {
     kind: "mustNotMatch",
     pattern: "含退货",
@@ -209,14 +209,17 @@ test("mustNotMatch 命中时也记录等价写法状态", () => {
   assert.equal(hit.passed, false);
   assert.equal(hit.equivalentMatched, true);
 
-  // 只命中等价写法、主 pattern 没命中 → 断言通过
+  // **只命中等价写法、主 pattern 没命中 → 仍然失败**。
+  // 等价写法对 mustNotMatch 的语义是「同样被禁」——
+  // 旧实现这里直接放行（passed=true），等于声明了禁令却不执行，
+  // 审核时确认这是缺陷并修复。
   const onlyEquivalent = evaluateAssertion("数据含税", {
     kind: "mustNotMatch",
     pattern: "含退货",
     equivalentPatterns: ["含税"],
   });
-  assert.equal(onlyEquivalent.passed, true);
-  assert.equal(onlyEquivalent.equivalentMatched, undefined);
+  assert.equal(onlyEquivalent.passed, false, "只命中等价写法也必须拦截");
+  assert.equal(onlyEquivalent.equivalentMatched, true);
 
   // 主 pattern 命中、等价写法没命中 → 断言失败且等价写法未命中
   const noEquivalent = evaluateAssertion("数据含退货", {
@@ -226,4 +229,14 @@ test("mustNotMatch 命中时也记录等价写法状态", () => {
   });
   assert.equal(noEquivalent.passed, false);
   assert.equal(noEquivalent.equivalentMatched, false);
+
+  // 什么都没命中 → 通过
+  const clean = evaluateAssertion("干净输出", {
+    kind: "mustNotMatch",
+    pattern: "含退货",
+    equivalentPatterns: ["含税"],
+  });
+  assert.equal(clean.passed, true);
+  assert.equal(clean.equivalentMatched, undefined);
 });
+

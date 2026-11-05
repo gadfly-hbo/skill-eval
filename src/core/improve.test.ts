@@ -27,6 +27,8 @@ interface RowSpec {
    * 不给 = 断言没声明等价写法 → 无法据此区分
    */
   equivalentMatched?: (boolean | undefined)[];
+  /** 断言类型，默认 mustMatch。 */
+  kinds?: string[];
 }
 
 function makeRows(specs: RowSpec[]): RunResult[] {
@@ -52,7 +54,7 @@ function makeRows(specs: RowSpec[]): RunResult[] {
       failed: spec.passes.filter((p) => !p).length,
       allPassed: spec.passes.every(Boolean),
       outcomes: spec.passes.map((passed, i) => ({
-        kind: "mustMatch",
+        kind: (spec.kinds?.[i] ?? "mustMatch") as "mustMatch",
         passed,
         detail: passed ? "匹配成功" : "未匹配到模式",
         note: spec.notes?.[i] ?? `断言 ${i}`,
@@ -83,6 +85,30 @@ test("全部断言通过时不给优化建议", () => {
   assert.equal(advice.diagnoses.length, 0);
   assert.equal(advice.activationIssue, null);
   assert.match(advice.summary, /规则断言全部通过/);
+});
+
+test("mustNotMatch 失败且命中等价写法 → 不判「断言过严」（违反禁令是真缺陷）", () => {
+  // 审核发现的原缺陷：mustNotMatch 失败时 equivalentMatched=true 的含义是
+  // 「输出出现了被禁的等价写法」——那是违反禁令，该改 skill。
+  // 旧判据不区分 kind，会把它误判成「断言过严（要改套件）」，归因方向完全反掉。
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "t1", attempt: 1, passes: [true] },
+    {
+      variantId: "skill",
+      taskId: "t1",
+      attempt: 1,
+      passes: [false],
+      kinds: ["mustNotMatch"],
+      equivalentMatched: [true],
+      notes: ["红线：禁止编造来源"],
+    },
+  ]);
+
+  const advice = buildImprovementAdvice(rows, 1);
+  const d = firstDiagnosis(advice);
+
+  assert.notEqual(d.mode, "assertion-too-strict", "违反禁令绝不能归成套件问题");
+  assert.equal(d.mode, "contract-missing", "baseline 稳过、skill 违反禁令 → 真问题（契约未落地）");
 });
 
 test("baseline 能过、skill 侧过不了 → 判定为契约未落地", () => {
