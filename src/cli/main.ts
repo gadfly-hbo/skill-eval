@@ -113,6 +113,7 @@ eval 选项：
   --context <text>        附加上下文前缀（覆盖套件）
   --no-keyword-signal     关闭关键词弱证据，仅用工具调用取证
   --timeout <ms>          单次运行超时
+  --judge-timeout <ms>    评委单次超时（默认 300000，评委思考链比被评模型长）
   --archive-to <dir>      评估后把通过测评的 skill 归档到该仓库（默认归档到 <dir>/archive）
   --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
   --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
@@ -276,6 +277,7 @@ async function commandEval(args: CliArgs): Promise<number> {
   const judgeRepeat = flagNumber(args.flags, "judge-repeat") ?? suite.judgeRepeat ?? 1;
   const judgeModel = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL ?? model;
   const timeoutMs = flagNumber(args.flags, "timeout");
+  const judgeTimeoutMs = flagNumber(args.flags, "judge-timeout");
   const keywordSignal = args.flags["no-keyword-signal"] !== true;
   const contextPrefix = flagString(args.flags, "context") ?? suite.contextPrefix;
   const piHome = flagString(args.flags, "home") ?? process.env.SKILL_EVAL_PI_HOME ?? undefined;
@@ -312,6 +314,7 @@ async function commandEval(args: CliArgs): Promise<number> {
     home: piHome,
     keywordSignal,
     timeoutMs,
+    judgeTimeoutMs,
     onProgress: (event) => {
       process.stderr.write(`  [${event.phase}] ${event.message}\n`);
     },

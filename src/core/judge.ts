@@ -36,6 +36,8 @@ export interface JudgeOptions {
   home?: string | undefined;
   /** 运行标识。 */
   runId: string;
+  /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
+  timeoutMs?: number;
 }
 
 export interface JudgeResult {
@@ -48,7 +50,39 @@ export interface JudgeResult {
   confidence: number | null;
   reason: string;
   error: string | null;
+  /**
+   * 标签与分差方向冲突时的纠正记录。
+   *
+   * 评委偶尔会给出自相矛盾的输出：标签说 A 更好，分数却说 B 更高。
+   * 实测（2026-11-05 data-analysis）出现
+   * `{"verdict":"loss","scoreA":65,"scoreB":90}`——分差 +25 方向应为 win，
+   * 且 reason 文字也明确说 B 更好，标签却写 loss。
+   *
+   * 这一条就能翻转整轮 verdict（5/10=50% inconclusive ↔ 6/10=60% effective），
+   * 因此工具必须自己校验，不能全盘采信模型标签。
+   */
+  labelConflict?: LabelConflict | null;
 }
+
+export interface LabelConflict {
+  /** 评委原始返回的标签。 */
+  originalVerdict: Verdict;
+  /** 以分差方向为准纠正后的标签。 */
+  correctedVerdict: Verdict;
+  /** 触发纠正的分差绝对值。 */
+  scoreDelta: number;
+  /** 纠正说明。 */
+  note: string;
+}
+
+/**
+ * 触发纠正的最小分差阈值。
+ *
+ * 实测数据里的边界情况：4 条 tie 的分差在 ±1~2 之间——那是评委在表达
+ * 「差异很小」，属于合理容差，不是矛盾。因此阈值取 10：
+ * 分差 ≥ 10 分（0-100 尺度）时，「B 分数明显更高」与「判 A 胜」不可能同时成立。
+ */
+export const LABEL_CONFLICT_MIN_DELTA = 10;
 
 /**
  * 默认评分标准。
@@ -105,6 +139,19 @@ ${options.outputB.slice(0, 12000)}
 }
 
 /**
+ * 评委单次运行的默认超时。
+ *
+ * 原为 120s，实测（2026-11-05 data-analysis）偏短：
+ * 两条 adversarial 判定的反向轮思考了 1338 个 event 后仍未输出 JSON，
+ * 产出 0 字节 output.md，被判 `not_judged`，
+ * 导致位置偏好探测在 10 条里有 2 条失效（「存在未判定轮次，无法检测位置偏好」）。
+ *
+ * 被评模型本身要 156–317s，评委要在两份长输出之间做比较，思考链比被评模型更长，
+ * 超时应当比被评模型更宽。此处取 300s。
+ */
+export const DEFAULT_JUDGE_TIMEOUT_MS = 300_000;
+
+/**
  * 执行一次成对评判。
  *
  * 失败时返回 `not_judged` 并附错误信息，不抛异常。
@@ -119,7 +166,7 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
     // 评委不需要工具，也不需要任何 skill。
     skillPaths: [],
     home: options.home,
-    timeoutMs: 120_000,
+    timeoutMs: options.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS,
   });
 
   // 评委原始产物落盘，供复核与重算使用。
@@ -163,6 +210,15 @@ export function parseJudgeResponse(text: string, options: JudgeOptions): JudgeRe
     const scoreB = typeof parsed.scoreB === "number" ? clamp(parsed.scoreB, 0, 100) : null;
     const confidence = typeof parsed.confidence === "number" ? clamp(parsed.confidence, 0, 1) : null;
 
+    // 这里**不做**标签与分差的一致性校验——解析层只负责忠实记录评委说了什么。
+    //
+    // 校验必须在「统一口径」下进行，否则正反轮会得出互相矛盾的结论：
+    // 评委的标签实际语义是「分数更高的那份更好」，而不是提示词字面写的
+    // 「B 更好」。前向轮恰好 A=baseline、B=skill 两者重合；
+    // 反向轮 A=skill、B=baseline 就分道扬镳——若在解析层按字面语义校验，
+    // 反向轮会被误判成「评委自相矛盾」。
+    //
+    // 正确做法见 reconcileJudgeRun()：先把 A/B 换算回正轮口径，再校验。
     return {
       verdict,
       scoreA,
@@ -171,6 +227,7 @@ export function parseJudgeResponse(text: string, options: JudgeOptions): JudgeRe
       confidence,
       reason: typeof parsed.reason === "string" ? parsed.reason : "",
       error: verdict === "not_judged" ? "评委返回了非法 verdict（应为 win/tie/loss）" : null,
+      labelConflict: null,
     };
   } catch {
     return {
@@ -191,6 +248,101 @@ function extractJsonObject(text: string): string {
   const end = text.lastIndexOf("}");
   if (start >= 0 && end > start) return text.slice(start, end + 1);
   return text;
+}
+
+/**
+ * 用分差方向校验评委标签，必要时纠正。
+ *
+ * **为什么必须做**：评委是模型，会自相矛盾。实测（2026-11-05）出现
+ * `{"verdict":"loss","scoreA":65,"scoreB":90}`——分数说 B 高出 25 分，
+ * 标签却说 A 胜，reason 文字也明确支持 B。
+ * 这类矛盾在多轮聚合里会被当成一票实票，直接决定最终 verdict。
+ *
+ * **校验锚点是「分差方向」，不是提示词字面语义**：
+ * 提示词写「输出 B 遗漏关键要点…时返回 loss」（字面即 win=B 更好），
+ * 但实测评委实际按「分数更高的那份更好」打标签。两种语义在前向轮
+ * （A=baseline、B=skill）恰好重合，在反向轮就分道扬镳。
+ * 因此校验必须在**统一口径**下做——见 reconcileJudgeRun()。
+ *
+ * **纠正规则**：
+ * - 分差绝对值 < `LABEL_CONFLICT_MIN_DELTA` → 不动。评委说 tie 而分差只差 1~2 分
+ *   是「差异很小」的合理表达，不是矛盾。
+ * - 标签为 tie 但分差超过阈值 → 视为矛盾，按分差方向纠正。
+ * - 标签与分差方向相反（如 loss 但分差为正）→ 按分差方向纠正。
+ * - 分差缺失 → 不动，无法校验。
+ *
+ * 返回纠正后的标签与冲突记录（无冲突时 conflict 为 null）。
+ */
+export function reconcileVerdictWithScores(
+  verdict: Verdict,
+  scoreDelta: number | null,
+): { verdict: Verdict; conflict: LabelConflict | null } {
+  if (verdict === "not_judged" || scoreDelta === null) return { verdict, conflict: null };
+  if (Math.abs(scoreDelta) < LABEL_CONFLICT_MIN_DELTA) return { verdict, conflict: null };
+
+  const deltaVerdict: Verdict = scoreDelta > 0 ? "win" : "loss";
+  // 标签与分差方向一致。
+  if (verdict === deltaVerdict) return { verdict, conflict: null };
+
+  // 到这里只剩两种矛盾：方向相反，或标签是 tie 而分差够大。
+  const note =
+    verdict === "tie"
+      ? `评委标签为 tie，但分差 ${scoreDelta > 0 ? "+" : ""}${scoreDelta} 已超过 ` +
+        `${LABEL_CONFLICT_MIN_DELTA} 分阈值，按分差方向纠正为 ${deltaVerdict}`
+      : `评委标签 ${verdict} 与分差 ${scoreDelta > 0 ? "+" : ""}${scoreDelta} 方向矛盾，按分差方向纠正为 ${deltaVerdict}`;
+
+  return {
+    verdict: deltaVerdict,
+    conflict: {
+      originalVerdict: verdict,
+      correctedVerdict: deltaVerdict,
+      scoreDelta,
+      note,
+    },
+  };
+}
+
+/**
+ * 把一次判定换算到「A=baseline、B=skill」的正轮口径，并做标签一致性校验。
+ *
+ * 这是判定链路上唯一做标签校验的地方——正反轮都走它，口径统一。
+ *
+ * **为什么校验必须放在换算之后**：
+ * 评委的标签实际语义是「分数更高的那份更好」（实测反轮 A=skill(95) B=baseline(58)
+ * 返回 `win` 可证），而非提示词字面写的「B 更好」。
+ * 前向轮 A=baseline、B=skill 时两种语义重合；
+ * 反向轮 A=skill、B=baseline 时分道扬镳——
+ * 若在换算前按字面语义校验，反向轮会被误判成「评委自相矛盾」，
+ * 位置偏好探测也会跟着误报。
+ *
+ * 换算后 `scoreDelta` 恒为「skill 相对 baseline 的优势」，
+ * 标签方向与它一致即自洽，不一致才是真矛盾。
+ *
+ * @param run 解析出的原始判定
+ * @param swapped 该判定是否来自反向轮（A/B 与正轮相反）
+ */
+export function reconcileJudgeRun(run: JudgeResult, swapped: boolean): JudgeResult {
+  // 1) 先换算 A/B 口径。
+  const oriented: JudgeResult = swapped ? flipScores(run) : run;
+
+  // 2) 再用换算后的分差校验标签方向。
+  const { verdict, conflict } = reconcileVerdictWithScores(oriented.verdict, oriented.scoreDelta);
+
+  return {
+    ...oriented,
+    verdict,
+    labelConflict: conflict,
+  };
+}
+
+/** 只翻转 A/B 分数，不动标签（标签方向由后续校验决定）。 */
+function flipScores(run: JudgeResult): JudgeResult {
+  return {
+    ...run,
+    scoreA: run.scoreB,
+    scoreB: run.scoreA,
+    scoreDelta: run.scoreDelta !== null ? -run.scoreDelta : null,
+  };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -241,6 +393,8 @@ export function aggregateJudgeRuns(runs: JudgeResult[]): JudgeResult {
       Math.abs(avgDelta("win")) >= Math.abs(avgDelta("loss")) ? "win" : "loss";
   }
 
+  const conflicted = judged.filter((run) => run.labelConflict);
+
   return {
     verdict,
     scoreA: average(judged.map((run) => run.scoreA)),
@@ -249,6 +403,16 @@ export function aggregateJudgeRuns(runs: JudgeResult[]): JudgeResult {
     confidence: average(judged.map((run) => run.confidence)),
     reason: `聚合 ${judged.length}/${runs.length} 轮（win:${counts.win} tie:${counts.tie} loss:${counts.loss}）`,
     error: null,
+    // 聚合结果保留冲突条数——单次判定的冲突明细在 judgeRuns 里，
+    // 这里只留计数，避免同一个冲突被重复渲染。
+    labelConflict: conflicted.length
+      ? {
+          originalVerdict: conflicted[0]!.labelConflict!.originalVerdict,
+          correctedVerdict: conflicted[0]!.labelConflict!.correctedVerdict,
+          scoreDelta: conflicted[0]!.labelConflict!.scoreDelta,
+          note: `本轮 ${conflicted.length} 条单次判定存在标签与分差方向矛盾，已按分差方向纠正`,
+        }
+      : null,
   };
 }
 
@@ -272,6 +436,11 @@ export interface BiasProbe {
   note: string;
 }
 
+/**
+ * 比较正反两次判定，检测评委是否存在位置偏好。
+ *
+ * 传入的两个 verdict 必须已在同一口径下（正轮：A=baseline、B=skill）。
+ */
 export function detectPositionBias(forward: Verdict, reversed: Verdict): BiasProbe {
   if (forward === "not_judged" || reversed === "not_judged") {
     return { forward, reversed, biased: false, note: "存在未判定轮次，无法检测位置偏好" };

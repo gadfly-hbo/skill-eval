@@ -25,6 +25,7 @@ import {
   aggregateJudgeRuns,
   detectPositionBias,
   parseJudgeResponse,
+  reconcileJudgeRun,
   type JudgeResult,
   type Verdict,
   type BiasProbe,
@@ -86,6 +87,8 @@ export interface RunnerOptions {
   keywordSignal?: boolean;
   /** 单次运行超时。 */
   timeoutMs?: number;
+  /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
+  judgeTimeoutMs?: number;
   /** 进度回调。 */
   onProgress?: (event: ProgressEvent) => void;
 }
@@ -425,8 +428,9 @@ async function judgeAll(
       outputB: result.output,
       model: options.judgeModel,
       home: options.home,
+      timeoutMs: options.judgeTimeoutMs,
     });
-    runs.push(forward);
+    runs.push(reconcileJudgeRun(forward, false));
 
     let biasProbe: BiasProbe | null = null;
     let flippedRun: JudgeResult | null = null;
@@ -441,16 +445,15 @@ async function judgeAll(
         outputB: base.output,
         model: options.judgeModel,
         home: options.home,
+        timeoutMs: options.judgeTimeoutMs,
       });
       // 反向轮次只用于位置偏好探测，**不参与主判定聚合**。
       // 否则同一份评委输出会被计成两票（reversed 与 flipped 是同一次判定的两种解读），
       // 人为放大票权，且把「位置偏差」混进「质量差异」。
-      const flipped: JudgeResult = {
-        ...reversed,
-        scoreA: reversed.scoreB,
-        scoreB: reversed.scoreA,
-        scoreDelta: reversed.scoreDelta !== null ? -reversed.scoreDelta : null,
-      };
+      //
+      // 反向轮的 A/B 与正轮相反（A=skill、B=baseline），必须换算回正轮口径
+      // 再做标签校验——否则会把「顺序不同」误判成「评委自相矛盾」。
+      const flipped: JudgeResult = reconcileJudgeRun(reversed, true);
       flippedRun = flipped;
       biasProbe = detectPositionBias(forward.verdict, flipped.verdict);
     }
@@ -467,8 +470,9 @@ async function judgeAll(
         outputB: result.output,
         model: options.judgeModel,
         home: options.home,
+        timeoutMs: options.judgeTimeoutMs,
       });
-      runs.push(extra);
+      runs.push(reconcileJudgeRun(extra, false));
     }
 
     // 主判定轮（forward + round-N）全部失败时，降级使用反向轮，避免丢失整条判定。
@@ -932,14 +936,10 @@ function readJudgeDirs(caseDir: string): JudgeResult[] {
 
     if (roundDir === "reversed") {
       // 反向轮次的 A/B 是对调的，换回来才能与正向可比。
-      reversedRuns.push({
-        ...parsed,
-        scoreA: parsed.scoreB,
-        scoreB: parsed.scoreA,
-        scoreDelta: parsed.scoreDelta !== null ? -parsed.scoreDelta : null,
-      });
+      // 走 reconcileJudgeRun：换算口径 + 标签校验，与跑批路径完全一致。
+      reversedRuns.push(reconcileJudgeRun(parsed, true));
     } else {
-      forwardRuns.push(parsed);
+      forwardRuns.push(reconcileJudgeRun(parsed, false));
     }
   }
 

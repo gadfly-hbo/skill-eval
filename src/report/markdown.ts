@@ -180,7 +180,6 @@ export function renderReport(options: ReportOptions): string {
   }
   lines.push("");
 
-  // 断言逐项明细
   const assertionRows = summary.results.filter((result) => result.assertions && result.assertions.total > 0);
   if (assertionRows.length > 0) {
     lines.push("### 5.3 规则断言明细");
@@ -193,6 +192,31 @@ export function renderReport(options: ReportOptions): string {
           `| ${result.variantLabel} | ${result.taskId} | ${result.attempt} | ${outcome.kind}${outcome.note ? ` (${outcome.note})` : ""} | ${outcome.passed ? "✅" : "❌"} ${outcome.detail} |`,
         );
       }
+    }
+    lines.push("");
+  }
+
+  // 评委标签与分差冲突的纠正记录。
+  // 静默纠正等于偷偷改结论——必须让读者看见工具替评委做了什么判断。
+  const conflicts = summary.pairwise.flatMap((item) =>
+    (item.judgeRuns ?? [])
+      .filter((run) => run.labelConflict)
+      .map((run) => ({ item, conflict: run.labelConflict! })),
+  );
+  if (conflicts.length > 0) {
+    lines.push("### 5.4 评委标签纠正记录");
+    lines.push("");
+    lines.push(
+      `评委返回的标签与它自己给出的分差方向矛盾时，工具以分差方向为准并在此记录。` +
+        `本轮共纠正 ${conflicts.length} 条。`,
+    );
+    lines.push("");
+    lines.push("| 用例 | 次数 | 原始标签 | 纠正后 | 分差 | 说明 |");
+    lines.push("| --- | --- | --- | --- | --- | --- |");
+    for (const { item, conflict } of conflicts) {
+      lines.push(
+        `| ${item.taskId} | ${item.attempt} | ${conflict.originalVerdict} | ${conflict.correctedVerdict} | ${conflict.scoreDelta > 0 ? "+" : ""}${conflict.scoreDelta} | ${conflict.note} |`,
+      );
     }
     lines.push("");
   }
