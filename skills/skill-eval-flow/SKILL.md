@@ -123,13 +123,18 @@ bash <本skill目录>/scripts/preflight.sh
 
 - **用户自带套件** → 直接 `skill-eval check --suite <路径>`。
 - **需要生成** → 先读 `references/suite-design.md`（相对本 skill 目录），严格按其规范
-  从被测 SKILL.md 提取契约并生成 3–5 个任务，写入 `<运行目录>/suite.json`，再跑 check。
+  从被测 SKILL.md 提取契约并生成 3–5 个任务，写入 `<仓库>/suites/<skill名>-v1.json`，再跑 check。
 
 ```bash
-skill-eval check --suite <运行目录>/suite.json
+skill-eval check --suite <仓库>/suites/<skill名>-v1.json
 ```
 
 check 不通过 → 按报错修正后重新生成，最多 2 次；仍不通过则把校验报错给用户，转人工。
+
+> ⚠️ **套件不要放进运行目录**。运行目录是模型的 cwd（`<运行目录>/cases/...`），
+> 模型会 `find` 向上摸到运行目录；若里面有 `suite.json`（内含 `skill.path` 绝对路径），
+> baseline 侧就会顺着路径读到被测 skill 全文——**对照实验的唯一变量被破坏，增益被系统性压低**。
+> 套件放仓库 `suites/` 目录，`--suite` 直接指过去。
 
 ### 二次测评：优先复用仓库里已有的套件
 
@@ -178,7 +183,7 @@ check 通过后、进入 S3 之前，向用户确认（WorkBuddy 用 AskUserQues
 
 ```bash
 skill-eval eval \
-  --suite <运行目录>/suite.json \
+  --suite <仓库>/suites/<skill名>-v*.json \
   --skill <被测SKILL.md绝对路径> \
   --model <被评模型> \
   --judge-model <评委模型> \
@@ -191,6 +196,15 @@ skill-eval eval \
 
 后台执行并等待完成（WorkBuddy 用 run_in_background；其他 agent 前台等待即可），
 把 CLI 的进度输出（`[run]`/`[judge]` 行）精简转述给用户。完成后进入 S4。
+
+> ⚠️ **跑批前必须确保运行目录是干净的**——不要把 `suite.json` 复制进去。
+> 模型 cwd 在运行目录里，会 `find` 到 `suite.json` 并顺着 `skill.path` 读到被测 skill，
+> 污染 baseline 侧（工具会自动检测并在报告首屏告警，但重跑代价更高）。
+> 正确做法：`--suite` 直接指仓库 `suites/` 里的文件，运行目录只放产物。
+
+> ⚠️ **CLI 调用方式**：`skill-eval` 命令在部分环境下会**静默失败**（无输出、退出码仍为 0），
+> 表现为「跑批看起来跑了其实没跑」。若命令无输出，改用源码直跑：
+> `node --experimental-strip-types <仓库>/src/cli/main.ts <子命令> ...`
 
 ## S3.5 门禁复跑（被测 skill 自带检查脚本时必做）
 
@@ -327,7 +341,7 @@ bash <本skill目录>/scripts/run-gate.sh <被测SKILL.md绝对路径> <运行�
 
 ```bash
 skill-eval eval \
-  --suite <运行目录>/suite.json \
+  --suite <仓库>/suites/<skill名>-v*.json \
   --skill <被测SKILL.md绝对路径> \
   --model <被评模型> \
   --judge-model <评委模型> \
@@ -423,6 +437,7 @@ archive/<skill名>/
 |---|---|---|
 | 所有运行 1 秒内 failed，stderr 含 `broker denied delete` 或 `EEXIST ... .lock` | 宿主 IDE 的 fs hook 干扰 pi | CLI 已内置剥离逻辑；重跑 preflight 清残留锁目录后重试一次 |
 | `skill-eval` 命令**无任何输出且退出码为 0** | CLI 静默失败——npm link 把 `src/cli/main.ts` 复制成无 `.ts` 后缀的 bin，node 无法剥离类型报错，而宿主 shim 吞掉 stderr | 用 `node --experimental-strip-types src/cli/main.ts <子命令>` 直跑；已修 v0.3.1（`bin/skill-eval.mjs` 包装器），升级后重跑 `npm link` |
+| 报告首屏出现「对照实验污染告警」 | baseline 侧自行读到了被测 skill 或含 skill 路径的 `suite.json`——对照实验唯一变量被破坏，增益被系统性压低 | **不要**选择性剔除受影响样本。把套件移出运行目录（放仓库 `suites/`），确认运行目录干净后**整轮重跑** |
 | 激活率 0% 但回答质量好 | skill 的 description 没写清触发条件 | 建议用户改 description，写「什么时候该用」 |
 | 胜率波动大 | repeat 或 judgeRepeat 太小 | 建议提到 repeat 3 / judgeRepeat 2 |
 | verdict = 结论不足 | 激活率与胜率只达标其一 | 看报告第 4 节对照表定位是哪个不够 |
