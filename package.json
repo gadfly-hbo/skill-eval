@@ -5,7 +5,7 @@
   "type": "module",
   "description": "独立评估 Agent Skill 的激活率与实际增益",
   "bin": {
-    "skill-eval": "./src/cli/main.ts"
+    "skill-eval": "./bin/skill-eval.mjs"
   },
   "scripts": {
     "check": "npm run typecheck && npm run test",
