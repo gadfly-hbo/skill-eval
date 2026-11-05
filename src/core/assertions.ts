@@ -83,6 +83,12 @@ export interface AssertionOutcome {
   detail: string;
   note?: string | undefined;
   /**
+   * 断言的字面 pattern（未转义的原始字符串）。
+   * 归因层用它做 SKILL.md 定位——断言 note 常写旧版措辞，
+   * pattern 里的字面量更贴近契约本身。
+   */
+  pattern?: string | undefined;
+  /**
    * 失败时，断言声明的**等价写法**是否命中了输出。
    *
    * 语义按断言类型区分：
@@ -134,7 +140,7 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
     case "mustMatch": {
       const regex = safeRegExp(assertion.pattern, assertion.flags);
       if (!regex) {
-        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
+        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note, pattern: assertion.pattern };
       }
       const matched = regex.test(output);
       if (matched) {
@@ -142,6 +148,7 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
           kind: assertion.kind,
           passed: true,
           detail: `匹配到 ${assertion.pattern}`,
+          pattern: assertion.pattern,
           note,
           equivalentMatched: undefined,
         };
@@ -164,7 +171,7 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
     case "mustNotMatch": {
       const regex = safeRegExp(assertion.pattern, assertion.flags);
       if (!regex) {
-        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
+        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note, pattern: assertion.pattern };
       }
       const matched = regex.test(output);
       // 等价写法对 mustNotMatch 的语义是「同样被禁」——
@@ -235,7 +242,7 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
     case "numeric": {
       const regex = safeRegExp(assertion.pattern);
       if (!regex) {
-        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note };
+        return { kind: assertion.kind, passed: false, detail: `无效正则: ${assertion.pattern}`, note, pattern: assertion.pattern };
       }
       const match = regex.exec(output);
       if (!match) {

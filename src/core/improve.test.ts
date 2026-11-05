@@ -477,3 +477,63 @@ test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp �
   assert.match(draft ?? "", /严禁在末尾添加免责声明/);
 });
 
+
+// --- 关键词抽取：skill 改版后措辞变化，定位不应再落空 ---------------------
+//
+// 回归背景（2026-11-05）：断言 note 写的是旧版措辞（「第六段四要素含时限」
+// 「须识别期间不完整」），新版 SKILL.md 改成（「何时完成」「期间不完整」）。
+// 关键词抽取只产出长语，长语匹配必然落空 → 报告误报「SKILL.md 正文未检索到
+// 对应约束关键词，属于规则缺失」，把「措辞变了」说成「规则没写」。
+test("关键词抽取能命中改版后的等义措辞", async () => {
+  const mod = await import("./improve.ts");
+  const locate = (mod as unknown as {
+    locateInSkillDocs?: (note: string, mode: string, ctx: unknown) => string | undefined;
+  }).locateInSkillDocs;
+  assert.equal(typeof locate, "function", "locateInSkillDocs 应导出以便测试");
+
+  const skillContent = [
+    "六、行动建议与跟踪指标：做什么＋谁做＋何时完成＋什么指标验证",
+    "2. 期间不完整：进行中的本期 vs 完整基期",
+  ].join("\n");
+
+  // 断言 pattern 里的字面量（时限|责任人|跟踪指标…）参与匹配——
+  // note 写旧版措辞时靠它兜底。
+  const cases: Array<[string, string | undefined, RegExp]> = [
+    [
+      "第六段四要素含时限（SKILL.md 第二节第六段写法）",
+      "时限|个工作日|天内|完成时间",
+      /已提及相关概念/,
+    ],
+    [
+      "第六段四要素含跟踪指标（SKILL.md 第二节第六段写法）",
+      "跟踪指标|监控指标|验证指标",
+      /已提及相关概念/,
+    ],
+    [
+      "红线 7：期间不等就比禁止，须识别期间不完整（SKILL.md 第五节硬禁止 7）",
+      "期间不完整|未完成期间|未完成|进行中",
+      /已提及相关概念/,
+    ],
+  ];
+
+  for (const [note, pattern, expected] of cases) {
+    const hint = locate!(note, "unstable", { skillContent }, pattern);
+    assert.match(hint ?? "", expected, `note「${note}」应定位为「已提及相关概念」`);
+  }
+});
+
+test("关键词抽取对确实缺失的约束仍报规则缺失", async () => {
+  const mod = await import("./improve.ts");
+  const locate = (mod as unknown as {
+    locateInSkillDocs?: (note: string, mode: string, ctx: unknown) => string | undefined;
+  }).locateInSkillDocs;
+  assert.equal(typeof locate, "function");
+
+  const skillContent = "# 运营数据分析\n\n只讲数据口径。";
+  const hint = locate!(
+    "红线 9：必须声明火星轨道倾角与近日点距离（SKILL.md 第九节）",
+    "unstable",
+    { skillContent },
+  );
+  assert.match(hint ?? "", /未检索到对应约束关键词|规则缺失/);
+});

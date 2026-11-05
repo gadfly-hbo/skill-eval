@@ -33,6 +33,8 @@ export interface FailureDiagnosis {
   kind: string;
   note: string;
   detail: string;
+  /** 断言的字面 pattern，用于在 SKILL.md 里定位约束。 */
+  pattern?: string | undefined;
   taskId: string;
   mode: FailureMode;
   advice: string;
@@ -44,6 +46,8 @@ export interface GroupedDiagnosis {
   kind: string;
   note: string;
   detail: string;
+  /** 断言的字面 pattern，用于在 SKILL.md 里定位约束。 */
+  pattern?: string | undefined;
   /** 受该同一根因影响的用例列表。 */
   tasks: string[];
   /** 累计失败的断言条目次数。 */
@@ -149,8 +153,10 @@ export function isSkillIssue(mode: FailureMode): boolean {
   return mode !== "assertion-too-strict";
 }
 
-const ZH_DIRECTIVE_SPLIT =
-  /禁止|严禁|不得|切勿|不要|必须|应当|应该|要求|确保|给出|输出|包含|明确|提供|附上|使用|不能|需要|出现|添加|带有|以及|或者|[与和的在中对为以]/g;
+const ZH_DIRECTIVE_SPLIT =  /禁止|严禁|不得|切勿|不要|必须|应当|应该|要求|确保|给出|输出|包含|明确|提供|附上|使用|不能|需要|出现|添加|带有|以及|或者|[与和的在中对为以]/g;
+
+/** 从中文短语里切出可独立检索的子片段。 */
+const ZH_SUBTOKEN_SPLIT = /[与和的在中对为以及]/g;
 
 function extractContractKeywords(note: string): string[] {
   const cleaned = note.replace(/^红线\s*\d*\s*[：:]\s*/, "");
@@ -159,25 +165,47 @@ function extractContractKeywords(note: string): string[] {
   const zhTokens: string[] = [];
   for (const run of zhRuns) {
     for (const part of run.split(ZH_DIRECTIVE_SPLIT)) {
-      if (part.length >= 2 && !STOP_WORDS.has(part)) {
-        zhTokens.push(part);
+      if (part.length < 2 || STOP_WORDS.has(part)) continue;
+      zhTokens.push(part);
+      // 长语再切子片段——skill 改版后措辞常变（「时限」→「何时完成」、
+      // 「期间不等就比」→「期间不完整」），只拿整条长语做匹配必然落空。
+      //
+      // 用**滑窗子串**而非按连接词切：「须识别期间不完整」按连接词切不出
+      // 「期间不完整」（「识别」黏在中间），滑窗能取到 2~4 字的候选片段。
+      for (const sub of part.split(ZH_SUBTOKEN_SPLIT)) {
+        if (sub.length >= 2 && sub !== part && !STOP_WORDS.has(sub)) {
+          zhTokens.push(sub);
+        }
+      }
+      for (let len = 2; len <= 4; len += 1) {
+        for (let i = 0; i + len <= part.length; i += 1) {
+          const sub = part.slice(i, i + len);
+          if (!STOP_WORDS.has(sub)) zhTokens.push(sub);
+        }
       }
     }
   }
   return [...asciiTokens.filter((tok) => !STOP_WORDS.has(tok)), ...zhTokens];
 }
 
-function locateInSkillDocs(
+export function locateInSkillDocs(
   note: string,
   mode: FailureMode,
   ctx?: SkillDocContext,
+  pattern?: string,
 ): string | undefined {
   if (!ctx?.skillContent || !isSkillIssue(mode)) return undefined;
   if (mode === "activation-missing" || mode === "over-trigger") {
     return "定位：SKILL.md 顶部 YAML frontmatter 的 `description` 字段";
   }
 
-  const keywords = extractContractKeywords(note);
+  // 断言 note 常写旧版措辞（「时限」），而 skill 已改版（「何时完成」）——
+  // 只靠 note 会落空。断言 pattern 里的字面量（时限|责任人|跟踪指标…）更贴近
+  // 契约本身，两者合并后一起参与匹配。
+  const keywords = [
+    ...extractContractKeywords(note),
+    ...(pattern ? extractContractKeywords(pattern) : []),
+  ];
   if (keywords.length === 0) return undefined;
 
   const inMainSkill = keywords.some((kw) => ctx.skillContent!.includes(kw));
@@ -344,6 +372,7 @@ export function buildImprovementAdvice(
       kind: outcome.kind,
       note: outcome.note ?? "",
       detail: outcome.detail,
+      pattern: outcome.pattern,
       taskId: entry.taskId,
       mode,
       advice: MODE_ADVICE[mode],
@@ -394,11 +423,12 @@ export function buildImprovementAdvice(
         kind: d.kind,
         note: d.note,
         detail: d.detail,
+        pattern: d.pattern,
         tasks: [d.taskId],
         failedItemCount: failedCount,
         expectedGainPp: 0,
         advice: d.advice,
-        skillLocationHint: locateInSkillDocs(d.note || d.detail, d.mode, options.skillContext),
+        skillLocationHint: locateInSkillDocs(d.note || d.detail, d.mode, options.skillContext, d.pattern),
       });
     }
   });
