@@ -7,7 +7,7 @@
     "path": "../examples/json-contract-skill/SKILL.md",
     "version": "1.0.0"
   },
-  "repeat": 2,
+  "repeat": 3,
   "judgeRepeat": 2,
   "tasks": [
     {

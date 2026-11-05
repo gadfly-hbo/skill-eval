@@ -92,6 +92,11 @@
             "default": "scored",
             "description": "scored 计入胜率；diagnostic 仅诊断不计分"
           },
+          "shouldActivate": {
+            "type": "boolean",
+            "default": true,
+            "description": "该用例是否应当触发被测 skill；设为 false 时作为负向误触发测试"
+          },
           "assertions": {
             "type": "array",
             "description": "规则断言，须在观察结果前冻结",
@@ -104,7 +109,12 @@
                     "kind": { "const": "mustMatch" },
                     "pattern": { "type": "string" },
                     "flags": { "type": "string" },
-                    "note": { "type": "string" }
+                    "note": { "type": "string" },
+                    "equivalentPatterns": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "契约语义允许的其他等价正则模式"
+                    }
                   },
                   "required": ["kind", "pattern"],
                   "additionalProperties": false
@@ -114,7 +124,12 @@
                     "kind": { "const": "mustNotMatch" },
                     "pattern": { "type": "string" },
                     "flags": { "type": "string" },
-                    "note": { "type": "string" }
+                    "note": { "type": "string" },
+                    "equivalentPatterns": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "同样禁止出现的等价正则模式"
+                    }
                   },
                   "required": ["kind", "pattern"],
                   "additionalProperties": false

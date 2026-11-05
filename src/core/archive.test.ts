@@ -726,3 +726,60 @@ test("ARCHIVE.md 记录增益门槛判定结果", () => {
 
   rmSync(root, { recursive: true, force: true });
 });
+
+test("archiveSkill 对 partial 跑批强制标记 provisional=true，并检测跨版本套件哈希漂移", () => {
+  const root = makeTmpDir("drift-partial");
+  const skillDir = makeSkill(root, "demo-skill", "1.0");
+  const runDir = makeRun(root, { passed: 2, total: 4 });
+  const archiveRoot = join(root, "archive");
+
+  const input1 = collectArchiveInput({
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    verdict: "effective",
+    verdictReason: "v1 通过",
+    suiteHash: "sha256:1111111111111111",
+    expensive: true,
+  });
+  const res1 = archiveSkill({
+    input: input1,
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    archiveRoot,
+    repoRoot: root,
+    version: "v1",
+  });
+  assert.equal(res1.expensive, true);
+  assert.equal(res1.suiteDrift, false);
+
+  // 修改 skill 内容并更换 suiteHash + runStatus="partial"
+  writeFileSync(join(skillDir, "SKILL.md"), "---\nversion: 1.1\n---\n# v2\n", "utf8");
+  const input2: ArchiveInput = {
+    ...collectArchiveInput({
+      runDir,
+      skillPath: join(skillDir, "SKILL.md"),
+      verdict: "effective",
+      verdictReason: "部分超时但显式放行",
+      suiteHash: "sha256:2222222222222222",
+    }),
+    runStatus: "partial",
+  };
+  const res2 = archiveSkill({
+    input: input2,
+    runDir,
+    skillPath: join(skillDir, "SKILL.md"),
+    archiveRoot,
+    repoRoot: root,
+    version: "v2",
+  });
+  assert.equal(res2.provisional, true);
+  assert.equal(res2.suiteDrift, true);
+
+  const latest = JSON.parse(readFileSync(join(res2.archiveRoot, "latest.json"), "utf8"));
+  assert.equal(latest.provisional, true);
+  assert.equal(latest.suiteDrift, true);
+  assert.equal(latest.suiteHash, "sha256:2222222222222222");
+
+  rmSync(root, { recursive: true, force: true });
+});
+

@@ -78,6 +78,14 @@ export interface ArchiveInput {
   suiteId: string;
   /** 套件版本。 */
   suiteVersion: string;
+  /** 套件判据哈希（用于检测跨版本归档是否修改过套件）。 */
+  suiteHash?: string | undefined;
+  /** 本次运行整体健康状态（success / partial / failed）。 */
+  runStatus?: string | undefined;
+  /** 是否属于「有效但昂贵」。 */
+  expensive?: boolean | undefined;
+  /** 与上一版归档相比套件哈希是否漂移。 */
+  suiteDrift?: boolean | undefined;
   /** skill 版本标识（来自 frontmatter 或套件）。 */
   skillVersion: string;
   /** 激活率。 */
@@ -119,10 +127,14 @@ export interface ArchiveResult {
   version: string;
   /** 是否因内容哈希相同而跳过。 */
   skipped: boolean;
-  /** 是否为 provisional（结论不足但被放行）。 */
+  /** 是否为 provisional（结论不足或含部分失败经显式放行）。 */
   provisional: boolean;
   /** 是否为低增益放行（增益未达标但被 --allow-low-gain 放行）。 */
   lowGain: boolean;
+  /** 是否属于「有效但昂贵」。 */
+  expensive?: boolean;
+  /** 与上一版归档相比是否发生套件哈希漂移。 */
+  suiteDrift?: boolean;
   /** 复制的文件数。 */
   fileCount: number;
   /** 跳过的噪声条目数。 */
@@ -343,7 +355,7 @@ export function renderArchiveCard(input: ArchiveInput, version: string): string 
   lines.push("");
   lines.push("| 项 | 值 |");
   lines.push("|---|---|");
-  lines.push(`| 结论 | **${input.verdict}** |`);
+  lines.push(`| 结论 | **${input.verdict}**${input.expensive ? "（有效但昂贵）" : ""}${input.runStatus === "partial" ? "（含部分运行失败 · provisional）" : ""} |`);
   lines.push(`| 结论说明 | ${input.verdictReason} |`);
   lines.push(`| 激活率 | ${pct(input.activationRate)} |`);
   lines.push(`| 胜率 | ${pct(input.winRate)} |`);
@@ -383,6 +395,9 @@ export function renderArchiveCard(input: ArchiveInput, version: string): string 
   lines.push("| 项 | 值 |");
   lines.push("|---|---|");
   lines.push(`| 套件 | \`${input.suiteId}\`（版本 ${input.suiteVersion}） |`);
+  if (input.suiteHash) {
+    lines.push(`| 套件哈希 | \`${input.suiteHash}\`${input.suiteDrift ? " ⚠️ 与上一归档版本套件不一致" : ""} |`);
+  }
   lines.push(`| 被评模型 | \`${input.model}\` |`);
   lines.push(`| 评委模型 | \`${input.judgeModel}\` |`);
   lines.push("");
@@ -417,8 +432,10 @@ export function collectArchiveInput(options: {
   skillPath: string;
   verdict: ArchiveVerdict;
   verdictReason: string;
+  expensive?: boolean | undefined;
   suiteId?: string | undefined;
   suiteVersion?: string | undefined;
+  suiteHash?: string | undefined;
   skillVersion?: string | undefined;
   now?: number | undefined;
 }): ArchiveInput {
@@ -433,11 +450,11 @@ export function collectArchiveInput(options: {
 
   const model = String(summary.model ?? "未标注");
   const judgeModel = String(summary.judgeModel ?? "未标注");
+  const runStatus = String(summary.status ?? "success");
 
-  // 断言统计有两种口径，必须都算清楚：
+  // 断言统计有两种口径，必须都算清楚（同时排除 status="failed" 的空输出运行）：
   // 1. 条目累计通过率 = 通过的断言条目数 / 断言条目总数（阴性对照实验用此口径）
   // 2. 整轮全过率 = 断言全过的运行次数 / 运行次数（variantSummaries 用此口径）
-  // 只报一个会让读者与另一处数据对不上。
   const results = (summary.results ?? []) as Array<Record<string, unknown>>;
   const sumAssertions = (variantId: string | null) => {
     const rows = variantId
@@ -448,6 +465,7 @@ export function collectArchiveInput(options: {
     let allPassedRuns = 0;
     let countedRuns = 0;
     for (const r of rows) {
+      if (r.status === "failed") continue;
       const a = r.assertions as { total?: number; passed?: number; allPassed?: boolean } | null | undefined;
       if (!a || !a.total) continue;
       total += a.total;
@@ -466,6 +484,11 @@ export function collectArchiveInput(options: {
   const skillSide = sumAssertions(null);
 
   const suiteMeta = (summary.suiteMeta ?? {}) as Record<string, unknown>;
+  const suiteHash =
+    options.suiteHash ??
+    (typeof suiteMeta.suiteHash === "string" ? suiteMeta.suiteHash : undefined);
+  const costEff = (variant?.costEfficiency ?? null) as { grade?: string } | null;
+  const expensive = options.expensive ?? costEff?.grade === "expensive";
 
   const reproduceCommand =
     `skill-eval eval --suite <套件.json> --skill ${redactHomePath(options.skillPath)} ` +
@@ -478,12 +501,15 @@ export function collectArchiveInput(options: {
     skillHash,
     verdict: options.verdict,
     verdictReason: options.verdictReason,
+    expensive,
+    runStatus,
     model,
     judgeModel,
     suiteId:
       options.suiteId ?? String(suiteMeta.suiteId ?? "未标注（归档时未提供 --suite）"),
     suiteVersion:
       options.suiteVersion ?? String(suiteMeta.suiteVersion ?? "未标注"),
+    suiteHash,
     skillVersion:
       options.skillVersion ?? String(suiteMeta.skillVersion ?? frontmatterVersion ?? "未标注"),
     activationRate: Number(variant?.activationRate ?? 0),
@@ -546,14 +572,33 @@ export function archiveSkill(
     }
   }
 
+  const isProvisional =
+    input.verdict === "inconclusive" || input.runStatus === "partial";
+
+  // 检查上一版 latest.json 是否存在套件哈希漂移。
+  let suiteDrift = Boolean(input.suiteDrift);
+  const latestPath = join(skillArchiveRoot, "latest.json");
+  if (!suiteDrift && input.suiteHash && existsSync(latestPath)) {
+    try {
+      const prev = JSON.parse(readFileSync(latestPath, "utf8")) as { suiteHash?: string };
+      if (prev.suiteHash && prev.suiteHash !== input.suiteHash) {
+        suiteDrift = true;
+      }
+    } catch {
+      // 忽略损坏的旧索引
+    }
+  }
+
   if (skipped) {
     return {
       archiveRoot: skillArchiveRoot,
       versionDir,
       version,
       skipped: true,
-      provisional: input.verdict === "inconclusive",
+      provisional: isProvisional,
       lowGain: !gainCheck.passed,
+      expensive: Boolean(input.expensive),
+      suiteDrift,
       fileCount: 0,
       skippedNoise: 0,
     };
@@ -570,18 +615,22 @@ export function archiveSkill(
     writeFileSync(join(versionDir, "REPORT.md"), renderArchivedReport(reportText), "utf8");
   }
 
-  writeFileSync(join(versionDir, "ARCHIVE.md"), renderArchiveCard(input, version), "utf8");
+  const cardInput: ArchiveInput = { ...input, suiteDrift };
+  writeFileSync(join(versionDir, "ARCHIVE.md"), renderArchiveCard(cardInput, version), "utf8");
 
   // 写 latest 索引（纯文本，避免符号链接的跨平台问题）。
   writeFileSync(
-    join(skillArchiveRoot, "latest.json"),
+    latestPath,
     JSON.stringify(
       {
         skill: skillName,
         version,
         skillHash: input.skillHash,
+        suiteHash: input.suiteHash ?? null,
+        suiteDrift,
         verdict: input.verdict,
-        provisional: input.verdict === "inconclusive",
+        expensive: Boolean(input.expensive),
+        provisional: isProvisional,
         lowGain: !gainCheck.passed,
         gainPp: gainCheck.gainPp,
         gainThresholdPp: gainCheck.thresholdPp,
@@ -600,8 +649,10 @@ export function archiveSkill(
     versionDir,
     version,
     skipped: false,
-    provisional: input.verdict === "inconclusive",
+    provisional: isProvisional,
     lowGain: !gainCheck.passed,
+    expensive: Boolean(input.expensive),
+    suiteDrift,
     fileCount,
     skippedNoise,
   };

@@ -291,3 +291,140 @@ test("重算时运行失败的用例沿用旧断言结果（不重算，避免�
   // 失败用例不该有重新评估出来的断言结论
   assert.equal(result.assertions, null);
 });
+
+test("重算时旧产物里失败用例残留的假通过断言也会被清零，且保留未评判的计分对分母", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { recomputeSummary } = await import("./runner.ts");
+
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-recompute-pair-"));
+  const baseDir = join(root, "cases", "baseline", "t1", "1");
+  const skillDir = join(root, "cases", "skill", "t1", "1");
+  mkdirSync(baseDir, { recursive: true });
+  mkdirSync(skillDir, { recursive: true });
+
+  writeFileSync(join(baseDir, "output.md"), "正常回答", "utf8");
+  writeFileSync(
+    join(baseDir, "result.json"),
+    JSON.stringify({
+      id: "baseline-t1-1",
+      variantId: "baseline",
+      taskId: "t1",
+      attempt: 1,
+      status: "success",
+      durationSec: 10,
+      totalTokens: 100,
+      totalCost: 0.01,
+      toolCalls: 0,
+      activation: { activated: false, status: "not_activated" },
+      assertions: { total: 1, passed: 0, failed: 1, allPassed: false, outcomes: [{ kind: "mustMatch", passed: false, detail: "miss" }] },
+    }),
+    "utf8",
+  );
+
+  // skill 侧超时失败，且旧 result.json 残留了 mustNotMatch 空转通过的脏数据
+  writeFileSync(join(skillDir, "output.md"), "", "utf8");
+  writeFileSync(
+    join(skillDir, "result.json"),
+    JSON.stringify({
+      id: "skill-t1-1",
+      variantId: "skill",
+      taskId: "t1",
+      attempt: 1,
+      status: "failed",
+      durationSec: 480,
+      totalTokens: 500,
+      totalCost: 0.05,
+      toolCalls: 2,
+      activation: { activated: true, status: "activated" },
+      assertions: { total: 1, passed: 1, failed: 0, allPassed: true, outcomes: [{ kind: "mustNotMatch", passed: true, detail: "空转通过" }] },
+      timedOut: true,
+    }),
+    "utf8",
+  );
+
+  const summary = await recomputeSummary(root, { variants, tasks });
+  const skillRow = summary.results.find((r) => r.variantId === "skill")!;
+  assert.equal(skillRow.assertions, null, "失败用例残留的脏断言必须清空");
+  assert.equal(skillRow.timedOut, true);
+
+  // 即使 pairwise/ 目录为空，未评判的 pair 也必须还原到 summary.pairwise 中计入分母！
+  assert.equal(summary.pairwise.length, 1);
+  assert.equal(summary.pairwise[0]!.verdict, "not_judged");
+
+  const skillSummary = summary.variantSummaries.find((v) => v.variantId === "skill")!;
+  assert.equal(skillSummary.notJudged, 1);
+  assert.equal(skillSummary.totalScoredPairs, 1);
+  assert.equal(skillSummary.pairCoverage, 0);
+  assert.equal(skillSummary.winRateLowerBound, 0);
+  assert.equal(skillSummary.timeoutRate, 1);
+});
+
+test("多条断言时按实际通过条数判断客观改善，不因双方都未全过就误报为「表现相当」", () => {
+  const multiTask: EvalTask[] = [
+    {
+      id: "t1",
+      prompt: "p",
+      assertions: [
+        { kind: "mustMatch", pattern: "a" },
+        { kind: "mustMatch", pattern: "b" },
+        { kind: "mustMatch", pattern: "c" },
+      ],
+    },
+  ];
+  const base = {
+    ...makeResult("baseline", 1),
+    assertions: { total: 3, passed: 0, failed: 3, allPassed: false, outcomes: [] },
+  };
+  const improved = {
+    ...makeResult("skill", 1, { activated: true }),
+    assertions: { total: 3, passed: 2, failed: 1, allPassed: false, outcomes: [] },
+  };
+  // skill 2/3 > baseline 0/3，客观改善，与评委 win 一致 -> 不应报分歧
+  const d1 = findDisagreements({ variants, tasks: multiTask } as never, [base, improved], [makePairwise("win")]);
+  assert.equal(d1.length, 0);
+
+  // skill 0/3 < baseline 1/3，客观倒退，但评委判 win -> 硬分歧且 ruleAdjustedWinRate 扣减
+  const baseOne = {
+    ...makeResult("baseline", 1),
+    assertions: { total: 3, passed: 1, failed: 2, allPassed: false, outcomes: [] },
+  };
+  const regressed = {
+    ...makeResult("skill", 1, { activated: true }),
+    assertions: { total: 3, passed: 0, failed: 3, allPassed: false, outcomes: [] },
+  };
+  const d2 = findDisagreements({ variants, tasks: multiTask } as never, [baseOne, regressed], [makePairwise("win")]);
+  assert.equal(d2.length, 1);
+  assert.equal(d2[0]!.objectiveVerdict, "loss");
+
+  const vSummary = summarizeVariants({ variants, tasks: multiTask } as never, [baseOne, regressed], [makePairwise("win")]);
+  const skillSum = vSummary.find((v) => v.variantId === "skill")!;
+  assert.equal(skillSum.winRate, 1);
+  assert.equal(skillSum.ruleAdjustedWinRate, 0, "客观违规倒退时规则纠偏后胜率应降为 0");
+});
+
+test("shouldActivate=false 分离召回率与误触发率，并识别零激活用例", () => {
+  const mixedTasks: EvalTask[] = [
+    { id: "pos-1", prompt: "应该触发", shouldActivate: true },
+    { id: "pos-zero", prompt: "应该触发但漏了", shouldActivate: true },
+    { id: "neg-1", prompt: "闲聊不应触发", shouldActivate: false, kind: "diagnostic" },
+  ];
+  const results: RunResult[] = [
+    { ...makeResult("baseline", 1), id: "baseline-pos-1-1", taskId: "pos-1" },
+    { ...makeResult("baseline", 1), id: "baseline-pos-zero-1", taskId: "pos-zero" },
+    { ...makeResult("baseline", 1), id: "baseline-neg-1-1", taskId: "neg-1" },
+    { ...makeResult("skill", 1, { activated: true }), id: "skill-pos-1-1", taskId: "pos-1" },
+    { ...makeResult("skill", 1, { activated: false }), id: "skill-pos-zero-1", taskId: "pos-zero" },
+    { ...makeResult("skill", 1, { activated: true }), id: "skill-neg-1-1", taskId: "neg-1" },
+  ];
+
+  const summaries = summarizeVariants({ variants, tasks: mixedTasks } as never, results, []);
+  const skill = summaries.find((s) => s.variantId === "skill")!;
+  // 召回率只统计正向用例：1/2 = 0.5
+  assert.equal(skill.activationRate, 0.5);
+  // 负向用例误触发率：1/1 = 1.0
+  assert.equal(skill.falseActivationRate, 1);
+  // 零激活正向用例告警列表
+  assert.deepEqual(skill.zeroActivationTasks, ["pos-zero"]);
+});

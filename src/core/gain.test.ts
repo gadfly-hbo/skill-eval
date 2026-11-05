@@ -161,3 +161,25 @@ test("指定 variantId 时不混入其他变体的条目", () => {
   assert.equal(computeAssertionItemRate(ROWS, "baseline"), 0.25);
   assert.equal(computeAssertionItemRate(ROWS, "skill"), 0.75);
 });
+
+test("失败或超时的运行不计入断言通过率（防止 mustNotMatch 在空输出上空转通过）", async () => {
+  const { computeAssertionItemCounts } = await import("./gain.ts");
+  const rows = [
+    {
+      variantId: "baseline",
+      status: "failed" as const,
+      // 旧产物可能带着空输出上 mustNotMatch 空转通过的记录
+      assertions: { total: 2, outcomes: [{ passed: true }, { passed: false }] },
+    },
+    {
+      variantId: "baseline",
+      status: "success" as const,
+      assertions: { total: 2, outcomes: [{ passed: false }, { passed: false }] },
+    },
+  ];
+  assert.equal(computeAssertionItemRate(rows, "baseline"), 0);
+  const counts = computeAssertionItemCounts(rows, "baseline");
+  assert.equal(counts.passed, 0);
+  assert.equal(counts.total, 2);
+  assert.equal(counts.skippedFailedRuns, 1);
+});

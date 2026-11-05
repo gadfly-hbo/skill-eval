@@ -2,12 +2,14 @@
   "skill": "deep-research",
   "version": "20261104-1515",
   "skillHash": "sha256:4d4847581b82fbb6",
-  "verdict": "effective",
-  "provisional": false,
+  "verdict": "inconclusive",
+  "provisional": true,
   "lowGain": false,
   "gainPp": 13.235294118,
   "gainThresholdPp": 10,
   "archivedAt": "2026-11-04T07:15:42.750Z",
+  "reauditedAt": "2026-11-05T08:00:00.000Z",
+  "reauditReason": "门禁升级回溯：skill 侧 7/20 运行超时（35% > 20%）、计分覆盖率仅 4/10（40% < 70%）、全样本胜率下界 30%（< 50%）、规则纠偏后胜率 50%（strip-disclaimer#2 规则倒退），且断言增益 95% CI [-0.9pp, +26.8pp] 跨越 0；降级为 provisional，需延长超时并以 repeat>=3 复测。",
   "runId": "run-20261104-042151-5aa9abab",
   "path": "deep-research/20261104-1515"
 }

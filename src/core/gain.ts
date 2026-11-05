@@ -8,15 +8,18 @@
  * - 结论不可靠：一个 `effective` 结论里可能混着大量「白送断言」
  *
  * 所以判定必须看**增益**（baseline → variant 的差值），不能看绝对值。
- * 本模块把增益门槛抽成单一真相来源，归档门控与阴性对照脚本共用同一套规则。
+ * 本模块把增益门槛抽成单一真相来源，判定逻辑、归档门控与阴性对照共用同一套规则。
  *
  * 阈值取 10pp：来自阴性对照实验的判定线——原版 skill 增益 +50.0pp，
  * 契约剥离后的破坏版 +8.6pp，10pp 恰好落在两者之间，能区分「真契约有效」
  * 与「模型自发守纪律」。
  */
 
+import { GAIN_THRESHOLD_PP } from "./thresholds.ts";
+import { newcombeDiffInterval, type DiffIntervalPp } from "./stats.ts";
+
 /** 默认增益门槛（百分点）。 */
-export const DEFAULT_GAIN_THRESHOLD_PP = 10;
+export const DEFAULT_GAIN_THRESHOLD_PP = GAIN_THRESHOLD_PP;
 
 /**
  * 浮点比较容差。
@@ -35,8 +38,18 @@ export interface GainVerdict {
   gainPp: number | null;
   /** 使用的门槛（百分点）。 */
   thresholdPp: number;
+  /** 95% Newcombe-Wilson 置信区间（有精确条目计数时填充）。 */
+  ciPp?: DiffIntervalPp | null;
   /** 判定说明。 */
   reason: string;
+}
+
+export interface AssertionItemCounts {
+  passed: number;
+  total: number;
+  rate: number | null;
+  /** 因 status="failed" 被排除的运行次数（避免空输出让负向断言空转通过）。 */
+  skippedFailedRuns: number;
 }
 
 /**
@@ -58,6 +71,7 @@ export function evaluateGain(
       passed: false,
       gainPp: null,
       thresholdPp,
+      ciPp: null,
       reason:
         "断言增益不可判定（缺少 baseline 或 skill 侧的断言通过率数据）。" +
         "证据不足时不能视为达标。",
@@ -71,6 +85,7 @@ export function evaluateGain(
     passed,
     gainPp,
     thresholdPp,
+    ciPp: null,
     reason: passed
       ? `断言增益 ${gainPp.toFixed(1)}pp，达到 ${thresholdPp}pp 门槛。`
       : `断言增益 ${gainPp.toFixed(1)}pp，未达到 ${thresholdPp}pp 门槛` +
@@ -99,33 +114,31 @@ export function computeGainPp(
 }
 
 /**
- * 断言条目累计通过率。
+ * 统计断言条目累计计数与通过率（排除运行失败的行）。
  *
- * 口径：把每一次运行的**每一条断言**当作一个条目，累计通过数 / 累计条目数。
- *
- * 为什么需要这个口径（实测 2026-11-04 deep-research 测评）：
- * `variantSummaries.assertionPassRate` 用的是「整轮全过率」——
- * 一次运行里所有断言都过才算这轮过，任一条不过整轮记 0。
- * 一条用例有 8 条断言时，全过率天然是「8 条全中」的乘积，
- * 两侧都很容易是 0.0%，于是报告首屏会显示「断言通过率 baseline 0.0% → skill 0.0%，
- * 无差异」，而归档门控（条目累计口径）实际算出 +13.2pp。
- * **同一份数据在报告里说「无差异」、在门控里说「达标」——这是自相矛盾的。**
- *
- * 因此报告首屏必须改用条目累计口径，与归档门控共用同一个计算函数。
+ * 失败或超时的运行（status === "failed"）没有有效模型输出；若仍跑负向断言
+ * （mustNotMatch / mustNotContain），空字符串会「成功避开」所有禁令，人为虚增通过率。
  */
-export function computeAssertionItemRate(
+export function computeAssertionItemCounts(
   results: Array<{
     variantId: string;
+    status?: "success" | "failed";
     assertions?: { total: number; outcomes: Array<{ passed: boolean }> } | null;
   }>,
   variantId: string | null,
-): number | null {
+): AssertionItemCounts {
   const rows = results.filter((row) =>
     variantId === null ? true : row.variantId === variantId,
   );
   let passed = 0;
   let total = 0;
+  let skippedFailedRuns = 0;
+
   for (const row of rows) {
+    if (row.status === "failed") {
+      skippedFailedRuns += 1;
+      continue;
+    }
     const assertions = row.assertions;
     if (!assertions || assertions.total === 0) continue;
     total += assertions.total;
@@ -133,5 +146,57 @@ export function computeAssertionItemRate(
       if (outcome.passed) passed += 1;
     }
   }
-  return total > 0 ? passed / total : null;
+
+  return {
+    passed,
+    total,
+    rate: total > 0 ? passed / total : null,
+    skippedFailedRuns,
+  };
+}
+
+/**
+ * 断言条目累计通过率。
+ *
+ * 口径：把每一次成功运行的**每一条断言**当作一个条目，累计通过数 / 累计条目数。
+ */
+export function computeAssertionItemRate(
+  results: Array<{
+    variantId: string;
+    status?: "success" | "failed";
+    assertions?: { total: number; outcomes: Array<{ passed: boolean }> } | null;
+  }>,
+  variantId: string | null,
+): number | null {
+  return computeAssertionItemCounts(results, variantId).rate;
+}
+
+/**
+ * 直接从运行结果计算断言增益及其 95% Newcombe-Wilson 置信区间。
+ */
+export function evaluateGainFromResults(
+  results: Array<{
+    variantId: string;
+    status?: "success" | "failed";
+    assertions?: { total: number; outcomes: Array<{ passed: boolean }> } | null;
+  }>,
+  variantId: string,
+  thresholdPp: number = DEFAULT_GAIN_THRESHOLD_PP,
+): GainVerdict & { baselineCounts: AssertionItemCounts; variantCounts: AssertionItemCounts } {
+  const baseCounts = computeAssertionItemCounts(results, "baseline");
+  const varCounts = computeAssertionItemCounts(results, variantId);
+  const baseVerdict = evaluateGain(baseCounts.rate, varCounts.rate, thresholdPp);
+  const ciPp = newcombeDiffInterval(
+    baseCounts.passed,
+    baseCounts.total,
+    varCounts.passed,
+    varCounts.total,
+  );
+
+  return {
+    ...baseVerdict,
+    ciPp,
+    baselineCounts: baseCounts,
+    variantCounts: varCounts,
+  };
 }
