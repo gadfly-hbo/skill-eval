@@ -31,10 +31,16 @@ fi
 
 for DST in "${TARGETS[@]}"; do
   mkdir -p "$DST/scripts" "$DST/references"
-  cp "$SRC/SKILL.md" "$DST/SKILL.md"
-  cp "$SRC/scripts/preflight.sh" "$DST/scripts/preflight.sh"
-  cp "$SRC/references/suite-design.md" "$DST/references/suite-design.md"
-  chmod +x "$DST/scripts/preflight.sh"
+  # 整目录同步，而不是逐个文件 cp——白名单式复制会漏掉后加的脚本
+  # （run-gate.sh 就是这么漏过一次）。用 rsync 保留目标端多余文件之外的一致性。
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$SRC/" "$DST/"
+  else
+    rm -rf "$DST/scripts" "$DST/references"
+    mkdir -p "$DST/scripts" "$DST/references"
+    cp -R "$SRC/." "$DST/"
+  fi
+  chmod +x "$DST/scripts/"*.sh 2>/dev/null || true
   echo "已安装到 $DST"
 done
 
