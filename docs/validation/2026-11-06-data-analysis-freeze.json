@@ -1,0 +1,551 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-06",
+  "status": "FROZEN_OFFLINE_EXECUTION_HOLD",
+  "evidenceLevel": "prepared-assets-independent-agent-review-and-offline-fixtures",
+  "privateBundle": ".local/retest-data-analysis-1.9.0-20261106/frozen",
+  "freezeManifestSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+  "frozenFiles": 67,
+  "repositoryHead": "cbf65655cd4efe9a5e804253e763e82a305a5bf6",
+  "policyVersion": "paired-task-v2",
+  "providerCalls": "NOT_RUN",
+  "executionReady": false,
+  "executionAuthorized": false,
+  "executionHold": [
+    "No authorization for real Provider calls in this request",
+    "Exact subject model MiniMax-M3.1-Flash absent from local model configuration/cache; do not replace silently",
+    "Remote model revision/availability, effective parameters, billing/quota and accepted budget not verified offline"
+  ],
+  "candidatePackageIdentities": {
+    "source": "sha256:8b19928e4df911a7844000a649b9af8b9dddad039c2e86f47855c90cf9bced54",
+    "original": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc",
+    "ablation": "sha256:1f3556ee5e91810982d547bef49040849d29b3920c0d9edb8eff1aed6bec6d86",
+    "positive": "sha256:6cfa4c90b816ce377fefbb20077cf64967f2855f621b5169d83a9c0c1f1ab8a5"
+  },
+  "suites": [
+    {
+      "role": "original",
+      "path": "suite-original.json",
+      "suiteHash": "sha256:71566fe88bfe6439",
+      "fullFileSha256": "9fffaa748ba2b65f7371850df82606ae1c33da3ca949d3d903a1441e69cee5b8",
+      "taskCount": 64,
+      "scoredCount": 60,
+      "diagnosticCount": 4
+    },
+    {
+      "role": "ablation",
+      "path": "suite-ablation.json",
+      "suiteHash": "sha256:71566fe88bfe6439",
+      "fullFileSha256": "c8091a90d8cec825bf447f630d73891556e492ec3f7e58103c9c802c084b2081",
+      "taskCount": 64,
+      "scoredCount": 60,
+      "diagnosticCount": 4
+    },
+    {
+      "role": "positive",
+      "path": "suite-positive.json",
+      "suiteHash": "sha256:ca5b80a7bd839627",
+      "fullFileSha256": "cb440b45849835530b56d345b612c84d08cc4e7a33c62c3fd568bfb32cb32f4f",
+      "taskCount": 2,
+      "scoredCount": 2,
+      "diagnosticCount": 0
+    }
+  ],
+  "design": {
+    "independentScoredTasks": 60,
+    "diagnosticTasks": 4,
+    "positiveTasks": 2,
+    "mainAssertions": 163,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "plannedSubjectSessions": 260,
+    "plannedJudgeSessions": 260,
+    "plannedPiSessions": 520,
+    "entrypoint": "core-api-runEvaluation-with-frozen-manifest",
+    "ordinaryEvalCliCompatible": false,
+    "randomSeedSource": "Explicit planned runId, frozen before any output",
+    "modelErrorIndependence": "Assumption conditional on separately authored datasets and isolated sessions; not established empirically"
+  },
+  "familyCounts": {
+    "analysis": 7,
+    "decomposition": 8,
+    "kpi": 8,
+    "outlier": 7,
+    "period": 8,
+    "quality": 7,
+    "trend": 7,
+    "weighted": 8
+  },
+  "validation": {
+    "offlineChecks": 1348,
+    "authorOracles": 60,
+    "scoredFixtureTasks": 62,
+    "actualAccessProfiles": 4,
+    "localScriptChecks": 4,
+    "repositoryTypecheck": "PASS",
+    "repositoryTests": {
+      "pass": 359,
+      "fail": 0,
+      "skip": 0
+    },
+    "failedPreparationAttemptsPreserved": 3,
+    "actualPositiveModelRun": "NOT_RUN",
+    "actualNegativeControlRun": "NOT_RUN",
+    "empiricalAssertionSensitivity": "NOT_RUN"
+  },
+  "independentReview": {
+    "method": "different-author agent cross-review with independent formulas; not human review",
+    "tasks": 60,
+    "authorGroups": 3,
+    "crossAuthorReviewGroups": 3,
+    "groupSourceHashes": [
+      {
+        "group": "a",
+        "sourceSha256": "0592698388d3d18c6fb8336b86dddb2ee2ed49491f4364b4d80ee4d366b4b95b",
+        "reportSha256": "648ac1da13360730da99e1b6dd2e01be655c7621cd4c3eefb66c4013ce372858",
+        "tasks": 20
+      },
+      {
+        "group": "b",
+        "sourceSha256": "3fcd94b1ad56bd527ee14022431aeb42a7f96bfddc66d96229e6ac4954f0741f",
+        "reportSha256": "c1828934c35ee2ba2073551c0ad00d6b540179570d764a8d9f4ee00bdc79b9cf",
+        "tasks": 20
+      },
+      {
+        "group": "c",
+        "sourceSha256": "6698036deb52127db3c8e6ea43674d4f5e4b61473d08808d93cd8643e864eec5",
+        "reportSha256": "3e0d8c0461b78ceaa1f44c2e2779eccf5d141016e308aca46dff4e88fb8ff876",
+        "tasks": 20
+      }
+    ],
+    "assemblyReviewed": true,
+    "postSealIndependentReview": {
+      "status": "PASS_WITH_EXECUTION_HOLD",
+      "report": ".local/retest-data-analysis-1.9.0-20261106/reviews/review-freeze-by-b.json",
+      "reportSha256": "fe9061f8567a976a131d971c604f32e46704ab2a88779f1d19b9696c151d13ed",
+      "checkGroups": 13,
+      "providerCalls": "NOT_RUN"
+    }
+  },
+  "preservation": {
+    "status": "PASS",
+    "protectedFiles": 664,
+    "unchangedFiles": 664,
+    "changes": [],
+    "originalsOverwritten": false
+  },
+  "localRuntime": {
+    "node": "v24.21.0",
+    "pi": "1.4.0",
+    "piPackage": "@earendil-works/pi-coding-agent",
+    "piTreeSha256": "a45f9642deb0ee91adb2225126fabb84fbee3766e754ddf32154e166dd46e8e3",
+    "piTreeFiles": 15138,
+    "python": "3.9.6",
+    "subjectModel": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "subjectFoundInLocalConfiguration": false,
+    "judgeFoundInLocalConfiguration": true,
+    "remoteAvailability": "NOT_RUN",
+    "billing": "UNKNOWN"
+  },
+  "warnings": [
+    "original: 套件 repeat=1 小于推荐最小值 3，小样本下单次随机波动即可翻转胜负",
+    "original: 套件全部为正向断言，缺少负向红线断言（mustNotMatch / mustNotContain），难以拦截幻觉与套话",
+    "ablation: 套件 repeat=1 小于推荐最小值 3，小样本下单次随机波动即可翻转胜负",
+    "ablation: 套件全部为正向断言，缺少负向红线断言（mustNotMatch / mustNotContain），难以拦截幻觉与套话",
+    "positive: 套件 repeat=1 小于推荐最小值 3，小样本下单次随机波动即可翻转胜负",
+    "positive: 套件全部为正向断言，缺少负向红线断言（mustNotMatch / mustNotContain），难以拦截幻觉与套话",
+    "positive: 套件未包含负向误触发测试（shouldActivate: false），无法检测 description 过泛导致的乱触发"
+  ],
+  "limitations": [
+    "All business inputs are synthetic, not representative real-world random sampling",
+    "One repeat per task; within-task stochastic stability unmeasured",
+    "JSON business-field assertions do not fully inspect contradictory natural-language prose; future blinded judge remains required",
+    "Trigger-preserving ablation retains behavioral words in description",
+    "Positive calibration tests planted behavior only and is excluded from candidate inference",
+    "Main CLI regenerates runId/seed; exact frozen execution requires the specified core API configuration",
+    "SDK defaults and remote model aliases are not a remotely immutable model-version guarantee"
+  ],
+  "originalRecordsChanged": [],
+  "actualMetrics": {
+    "activationRate": null,
+    "winRate": null,
+    "gainPp": null,
+    "negativeControlStatus": null,
+    "candidateVerdict": null
+  },
+  "privateMaterialPublished": false,
+  "privateArtifactAccess": "Actual file/symlink/write probes for baseline, original, ablation and positive; same file policy as production plus deny network for offline children. Reprobe required before real execution.",
+  "taskCatalog": [
+    {
+      "id": "da-analysis-01",
+      "family": "analysis",
+      "clusterId": "da-analysis-01",
+      "datasetId": "da-analysis-01-data"
+    },
+    {
+      "id": "da-analysis-02",
+      "family": "analysis",
+      "clusterId": "da-analysis-02",
+      "datasetId": "da-analysis-02-data"
+    },
+    {
+      "id": "da-analysis-03",
+      "family": "analysis",
+      "clusterId": "da-analysis-03",
+      "datasetId": "da-analysis-03-data"
+    },
+    {
+      "id": "da-analysis-04",
+      "family": "analysis",
+      "clusterId": "da-analysis-04",
+      "datasetId": "da-analysis-04-data"
+    },
+    {
+      "id": "da-analysis-05",
+      "family": "analysis",
+      "clusterId": "da-analysis-05",
+      "datasetId": "da-analysis-05-data"
+    },
+    {
+      "id": "da-analysis-06",
+      "family": "analysis",
+      "clusterId": "da-analysis-06",
+      "datasetId": "da-analysis-06-data"
+    },
+    {
+      "id": "da-analysis-07",
+      "family": "analysis",
+      "clusterId": "da-analysis-07",
+      "datasetId": "da-analysis-07-data"
+    },
+    {
+      "id": "da-decomposition-01",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-01",
+      "datasetId": "da-decomposition-01-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-02",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-02",
+      "datasetId": "da-decomposition-02-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-03",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-03",
+      "datasetId": "da-decomposition-03-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-04",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-04",
+      "datasetId": "da-decomposition-04-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-05",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-05",
+      "datasetId": "da-decomposition-05-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-06",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-06",
+      "datasetId": "da-decomposition-06-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-07",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-07",
+      "datasetId": "da-decomposition-07-synthetic-v1"
+    },
+    {
+      "id": "da-decomposition-08",
+      "family": "decomposition",
+      "clusterId": "da-decomposition-08",
+      "datasetId": "da-decomposition-08-synthetic-v1"
+    },
+    {
+      "id": "da-kpi-01",
+      "family": "kpi",
+      "clusterId": "da-kpi-01",
+      "datasetId": "da-kpi-01-source-v1"
+    },
+    {
+      "id": "da-kpi-02",
+      "family": "kpi",
+      "clusterId": "da-kpi-02",
+      "datasetId": "da-kpi-02-source-v1"
+    },
+    {
+      "id": "da-kpi-03",
+      "family": "kpi",
+      "clusterId": "da-kpi-03",
+      "datasetId": "da-kpi-03-source-v1"
+    },
+    {
+      "id": "da-kpi-04",
+      "family": "kpi",
+      "clusterId": "da-kpi-04",
+      "datasetId": "da-kpi-04-source-v1"
+    },
+    {
+      "id": "da-kpi-05",
+      "family": "kpi",
+      "clusterId": "da-kpi-05",
+      "datasetId": "da-kpi-05-source-v1"
+    },
+    {
+      "id": "da-kpi-06",
+      "family": "kpi",
+      "clusterId": "da-kpi-06",
+      "datasetId": "da-kpi-06-source-v1"
+    },
+    {
+      "id": "da-kpi-07",
+      "family": "kpi",
+      "clusterId": "da-kpi-07",
+      "datasetId": "da-kpi-07-source-v1"
+    },
+    {
+      "id": "da-kpi-08",
+      "family": "kpi",
+      "clusterId": "da-kpi-08",
+      "datasetId": "da-kpi-08-source-v1"
+    },
+    {
+      "id": "da-outlier-01",
+      "family": "outlier",
+      "clusterId": "da-outlier-01",
+      "datasetId": "da-outlier-01-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-02",
+      "family": "outlier",
+      "clusterId": "da-outlier-02",
+      "datasetId": "da-outlier-02-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-03",
+      "family": "outlier",
+      "clusterId": "da-outlier-03",
+      "datasetId": "da-outlier-03-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-04",
+      "family": "outlier",
+      "clusterId": "da-outlier-04",
+      "datasetId": "da-outlier-04-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-05",
+      "family": "outlier",
+      "clusterId": "da-outlier-05",
+      "datasetId": "da-outlier-05-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-06",
+      "family": "outlier",
+      "clusterId": "da-outlier-06",
+      "datasetId": "da-outlier-06-synthetic-v1"
+    },
+    {
+      "id": "da-outlier-07",
+      "family": "outlier",
+      "clusterId": "da-outlier-07",
+      "datasetId": "da-outlier-07-synthetic-v1"
+    },
+    {
+      "id": "da-period-01",
+      "family": "period",
+      "clusterId": "da-period-01",
+      "datasetId": "da-period-01-source-v1"
+    },
+    {
+      "id": "da-period-02",
+      "family": "period",
+      "clusterId": "da-period-02",
+      "datasetId": "da-period-02-source-v1"
+    },
+    {
+      "id": "da-period-03",
+      "family": "period",
+      "clusterId": "da-period-03",
+      "datasetId": "da-period-03-source-v1"
+    },
+    {
+      "id": "da-period-04",
+      "family": "period",
+      "clusterId": "da-period-04",
+      "datasetId": "da-period-04-source-v1"
+    },
+    {
+      "id": "da-period-05",
+      "family": "period",
+      "clusterId": "da-period-05",
+      "datasetId": "da-period-05-source-v1"
+    },
+    {
+      "id": "da-period-06",
+      "family": "period",
+      "clusterId": "da-period-06",
+      "datasetId": "da-period-06-source-v1"
+    },
+    {
+      "id": "da-period-07",
+      "family": "period",
+      "clusterId": "da-period-07",
+      "datasetId": "da-period-07-source-v1"
+    },
+    {
+      "id": "da-period-08",
+      "family": "period",
+      "clusterId": "da-period-08",
+      "datasetId": "da-period-08-source-v1"
+    },
+    {
+      "id": "da-quality-01",
+      "family": "quality",
+      "clusterId": "da-quality-01",
+      "datasetId": "da-quality-01-data"
+    },
+    {
+      "id": "da-quality-02",
+      "family": "quality",
+      "clusterId": "da-quality-02",
+      "datasetId": "da-quality-02-data"
+    },
+    {
+      "id": "da-quality-03",
+      "family": "quality",
+      "clusterId": "da-quality-03",
+      "datasetId": "da-quality-03-data"
+    },
+    {
+      "id": "da-quality-04",
+      "family": "quality",
+      "clusterId": "da-quality-04",
+      "datasetId": "da-quality-04-data"
+    },
+    {
+      "id": "da-quality-05",
+      "family": "quality",
+      "clusterId": "da-quality-05",
+      "datasetId": "da-quality-05-data"
+    },
+    {
+      "id": "da-quality-06",
+      "family": "quality",
+      "clusterId": "da-quality-06",
+      "datasetId": "da-quality-06-data"
+    },
+    {
+      "id": "da-quality-07",
+      "family": "quality",
+      "clusterId": "da-quality-07",
+      "datasetId": "da-quality-07-data"
+    },
+    {
+      "id": "da-trend-01",
+      "family": "trend",
+      "clusterId": "da-trend-01",
+      "datasetId": "da-trend-01-synthetic-v1"
+    },
+    {
+      "id": "da-trend-02",
+      "family": "trend",
+      "clusterId": "da-trend-02",
+      "datasetId": "da-trend-02-data"
+    },
+    {
+      "id": "da-trend-03",
+      "family": "trend",
+      "clusterId": "da-trend-03",
+      "datasetId": "da-trend-03-data"
+    },
+    {
+      "id": "da-trend-04",
+      "family": "trend",
+      "clusterId": "da-trend-04",
+      "datasetId": "da-trend-04-data"
+    },
+    {
+      "id": "da-trend-05",
+      "family": "trend",
+      "clusterId": "da-trend-05",
+      "datasetId": "da-trend-05-data"
+    },
+    {
+      "id": "da-trend-06",
+      "family": "trend",
+      "clusterId": "da-trend-06",
+      "datasetId": "da-trend-06-data"
+    },
+    {
+      "id": "da-trend-07",
+      "family": "trend",
+      "clusterId": "da-trend-07",
+      "datasetId": "da-trend-07-data"
+    },
+    {
+      "id": "da-weighted-01",
+      "family": "weighted",
+      "clusterId": "da-weighted-01",
+      "datasetId": "da-weighted-01-source-v1"
+    },
+    {
+      "id": "da-weighted-02",
+      "family": "weighted",
+      "clusterId": "da-weighted-02",
+      "datasetId": "da-weighted-02-source-v1"
+    },
+    {
+      "id": "da-weighted-03",
+      "family": "weighted",
+      "clusterId": "da-weighted-03",
+      "datasetId": "da-weighted-03-source-v1"
+    },
+    {
+      "id": "da-weighted-04",
+      "family": "weighted",
+      "clusterId": "da-weighted-04",
+      "datasetId": "da-weighted-04-source-v1"
+    },
+    {
+      "id": "da-weighted-05",
+      "family": "weighted",
+      "clusterId": "da-weighted-05",
+      "datasetId": "da-weighted-05-synthetic-v1"
+    },
+    {
+      "id": "da-weighted-06",
+      "family": "weighted",
+      "clusterId": "da-weighted-06",
+      "datasetId": "da-weighted-06-synthetic-v1"
+    },
+    {
+      "id": "da-weighted-07",
+      "family": "weighted",
+      "clusterId": "da-weighted-07",
+      "datasetId": "da-weighted-07-synthetic-v1"
+    },
+    {
+      "id": "da-weighted-08",
+      "family": "weighted",
+      "clusterId": "da-weighted-08",
+      "datasetId": "da-weighted-08-synthetic-v1"
+    }
+  ],
+  "plannedSessionCounting": "260 subject + 260 judge = 520 pi sessions. Sessions can contain multiple model requests.",
+  "preparationFailures": {
+    "retained": 3,
+    "explanation": [
+      "Nested sandbox_apply rejected before oracle execution; replaced with one combined boundary per child",
+      "Strict audit caught imprecise Wilson gold inside .01 scoring tolerance; corrected gold and judge points without changing tolerance"
+    ],
+    "notModelReruns": true
+  },
+  "commitOrPush": "NOT_RUN"
+}

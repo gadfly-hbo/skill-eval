@@ -1,0 +1,402 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-06",
+  "status": "PLAN_ONLY",
+  "providerCalls": "NOT_RUN",
+  "candidateScripts": "NOT_RUN",
+  "realRunsAuthorized": false,
+  "repositoryHeadAtPlanning": "cbf65655cd4efe9a5e804253e763e82a305a5bf6",
+  "policyVersion": "paired-task-v2",
+  "candidate": {
+    "sourcePath": "archive/data-analysis/1.9.0/SKILL.md",
+    "versionLabel": "1.9.0",
+    "versionSource": "archive directory and ARCHIVE card; SKILL frontmatter version absent; old REPORT/summary label 1.8.0 retained",
+    "sourceIdentity": {
+      "schemaVersion": 1,
+      "entry": "SKILL.md",
+      "hash": "sha256:8b19928e4df911a7844000a649b9af8b9dddad039c2e86f47855c90cf9bced54",
+      "files": [
+        {
+          "path": "ARCHIVE.md",
+          "sha256": "f6eefccc7e96d6caba238a89f5275e3318cd5b5ffcb9864f9a390604f8069926",
+          "executable": false
+        },
+        {
+          "path": "references/examples.md",
+          "sha256": "d56b488564a0ad76156de924c1f58b3745b2b441c197e4695ddabeaea164cd2b",
+          "executable": false
+        },
+        {
+          "path": "references/method.md",
+          "sha256": "a0d7db0fb3511cb550a0043289edcbd65f68eda9b349cb2a92208eb318b80159",
+          "executable": false
+        },
+        {
+          "path": "references/sample-data.md",
+          "sha256": "79ea6322e8bd32fd97ce7d819fb9f4fc9a5d35b1011d4d8c325e8c242ee542bf",
+          "executable": false
+        },
+        {
+          "path": "REPORT.md",
+          "sha256": "c17cfe76e42ef5a3250d50e484bed260020a04d8e7932479a19674f22659bafc",
+          "executable": false
+        },
+        {
+          "path": "scripts/calc.py",
+          "sha256": "1b6de4ad8eac298ee2c014387d62eea8ac7570596a6eb78c8b6fe7a19488d1b1",
+          "executable": false
+        },
+        {
+          "path": "scripts/quality_check.py",
+          "sha256": "895ecb31b7d618a42c4b39e35b2eebf7f82336df43e84f92ee5ba0659ae2e8c2",
+          "executable": false
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "63adebbaf67fdfde0aa6e23369a4385c823c35ff320222257cd6533a62ee877e",
+          "executable": false
+        }
+      ]
+    },
+    "proposedRuntimeProjection": {
+      "entry": "SKILL.md",
+      "hash": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc",
+      "files": [
+        {
+          "path": "references/examples.md",
+          "sha256": "d56b488564a0ad76156de924c1f58b3745b2b441c197e4695ddabeaea164cd2b",
+          "executable": false
+        },
+        {
+          "path": "references/method.md",
+          "sha256": "a0d7db0fb3511cb550a0043289edcbd65f68eda9b349cb2a92208eb318b80159",
+          "executable": false
+        },
+        {
+          "path": "references/sample-data.md",
+          "sha256": "79ea6322e8bd32fd97ce7d819fb9f4fc9a5d35b1011d4d8c325e8c242ee542bf",
+          "executable": false
+        },
+        {
+          "path": "scripts/calc.py",
+          "sha256": "1b6de4ad8eac298ee2c014387d62eea8ac7570596a6eb78c8b6fe7a19488d1b1",
+          "executable": false
+        },
+        {
+          "path": "scripts/quality_check.py",
+          "sha256": "895ecb31b7d618a42c4b39e35b2eebf7f82336df43e84f92ee5ba0659ae2e8c2",
+          "executable": false
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "63adebbaf67fdfde0aa6e23369a4385c823c35ff320222257cd6533a62ee877e",
+          "executable": false
+        }
+      ],
+      "excludedEvaluatorFiles": [
+        "REPORT.md",
+        "ARCHIVE.md"
+      ],
+      "physicalSnapshotCreated": false
+    },
+    "historicalRunIdentityProven": false
+  },
+  "design": {
+    "independentScoredTasks": 60,
+    "unrelatedDiagnosticTasks": 4,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "positiveCalibrationTasks": 2,
+    "scoredIndependenceUnit": "One independently reviewed task cluster per taskId; no shared-data derivatives or template renumbering counted independently",
+    "suiteIdProposed": "data-analysis-1.9.0-holdout-v1",
+    "suiteHash": null,
+    "tasksWritten": false,
+    "subjectModelProposed": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModelProposed": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "modelAvailabilityVerified": false,
+    "timeoutMs": 480000,
+    "judgeTimeoutMs": 300000,
+    "keywordSignal": false,
+    "controls": [
+      "baseline with no skills versus six-file runtime projection",
+      "fresh baseline with no skills versus separate frontmatter-preserving behavior ablation",
+      "separate synthetic two-task positive observability calibration; excluded from candidate inference"
+    ],
+    "quota": [
+      [
+        "kpi-and-definition",
+        8
+      ],
+      [
+        "comparable-periods",
+        8
+      ],
+      [
+        "weighted-structure",
+        8
+      ],
+      [
+        "decomposition",
+        8
+      ],
+      [
+        "outliers",
+        7
+      ],
+      [
+        "trend-correlation",
+        7
+      ],
+      [
+        "data-quality",
+        7
+      ],
+      [
+        "analysis-and-evidence-boundaries",
+        7
+      ]
+    ],
+    "familyCountIsNotIndependentN": true,
+    "assertionsFinalized": false,
+    "finalFreezeComplete": false,
+    "optionalStopping": false,
+    "historyReusedAsConfirmatorySamples": false,
+    "repeatThreeAlternative": {
+      "mainSessions": 1536,
+      "positiveSessions": 8,
+      "totalSessions": 1544,
+      "independentScoredTasks": 60
+    },
+    "sessions": {
+      "mainSubject": 256,
+      "mainJudge": 256,
+      "positiveSubject": 4,
+      "positiveJudge": 4,
+      "totalSubject": 260,
+      "totalJudge": 260,
+      "total": 520
+    },
+    "sampleSize": {
+      "formula": "n > 2*ln(40)/observedDeltaFraction^2; strictly positive lower bound",
+      "confidenceLevel": 0.95,
+      "designedForPower": null,
+      "chosenRadiusPp": 35.06603,
+      "minimumNByObservedDeltaPp": [
+        {
+          "observedDeltaPp": 60,
+          "minN": 21
+        },
+        {
+          "observedDeltaPp": 50,
+          "minN": 30
+        },
+        {
+          "observedDeltaPp": 40,
+          "minN": 47
+        },
+        {
+          "observedDeltaPp": 37.19697,
+          "minN": 54
+        },
+        {
+          "observedDeltaPp": 30,
+          "minN": 82
+        },
+        {
+          "observedDeltaPp": 10,
+          "minN": 738
+        }
+      ],
+      "radiusByN": [
+        {
+          "n": 8,
+          "radiusPp": 96.032279
+        },
+        {
+          "n": 40,
+          "radiusPp": 42.946941
+        },
+        {
+          "n": 48,
+          "radiusPp": 39.205014
+        },
+        {
+          "n": 54,
+          "radiusPp": 36.962841
+        },
+        {
+          "n": 60,
+          "radiusPp": 35.06603
+        },
+        {
+          "n": 82,
+          "radiusPp": 29.995445
+        },
+        {
+          "n": 738,
+          "radiusPp": 9.998482
+        }
+      ]
+    },
+    "inputDelivery": "Public CSV bytes embedded identically in task prompts; both arms instructed to materialize identical 020_clean paths. Current CLI does not prepopulate attachments.",
+    "judgePreprocessing": "Existing frozen source-identifier anonymization and head/tail window; preserve originals and actual judge-visible text."
+  },
+  "gates": {
+    "gainThresholdPp": 10,
+    "gainLowerCiStrictlyAbove": 0,
+    "activationMin": 0.6,
+    "falseActivationMax": 0.2,
+    "falseActivationAllowedCountAtFour": 0,
+    "pairCoverageMin": 0.7,
+    "minJudgedPairs": 4,
+    "winGate": 0.6,
+    "objectiveStrong": {
+      "gainMinPp": 20,
+      "lowerCiAbove": 0,
+      "winGate": 0.5
+    },
+    "fullPlanWinFractionMin": 0.5,
+    "cleanSubjectFailuresAllowed": 0,
+    "negativeGainStrictlyBelowPp": 10,
+    "negativeActivationMin": 0.6,
+    "negativeFalsePositiveAssertionCount": 0,
+    "ruleJudgeConflicts": "Rules take precedence; preserve all conflicts",
+    "partialArchiveRequested": false,
+    "automaticArchive": false
+  },
+  "history": {
+    "parentRun": "run-20261105-142602-e4d3863f",
+    "relation": "new-independent-retest",
+    "originalsOverwritten": false,
+    "oldSuiteOnlyDiagnostic": true,
+    "newSuiteIsNotOldVersionRegression": true
+  },
+  "costHistoricalInputs": {
+    "baseline": {
+      "sessions": 15,
+      "failed": 1,
+      "avgTotalTokens": 11623.733333333334,
+      "avgSdkCostUsd": 0.0020069691266666667,
+      "rawUsage": {
+        "sessions": 15,
+        "assistantUsageMessages": 42,
+        "input": 41116,
+        "output": 37715,
+        "cacheRead": 95525,
+        "cacheWrite": 0,
+        "totalTokens": 174356,
+        "costRecorded": 0.0301045369
+      }
+    },
+    "target": {
+      "sessions": 15,
+      "failed": 0,
+      "avgTotalTokens": 282737.6666666667,
+      "avgSdkCostUsd": 0.014656785106666665,
+      "rawUsage": {
+        "sessions": 15,
+        "assistantUsageMessages": 217,
+        "input": 340300,
+        "output": 190303,
+        "cacheRead": 3710462,
+        "cacheWrite": 0,
+        "totalTokens": 4241065,
+        "costRecorded": 0.21985177659999977
+      }
+    },
+    "brokenProxy": {
+      "sessions": 10,
+      "avgTotalTokens": 65941.7,
+      "avgSdkCostUsd": 0.005503523339999999,
+      "rawUsage": null,
+      "reason": "Summary only; no raw events available for cache/input/output split."
+    },
+    "judge": {
+      "sessions": 28,
+      "assistantUsageMessages": 29,
+      "input": 183711,
+      "output": 37595,
+      "cacheRead": 31040,
+      "cacheWrite": 0,
+      "totalTokens": 252346,
+      "costRecorded": 0
+    },
+    "sourceFiles": [
+      {
+        "path": "runs/run-20261105-142602-e4d3863f/summary.json",
+        "sha256": "8543a6d2939add564f9b814a240db045dec6ea9bd02b12f0bbb98864457257f0"
+      },
+      {
+        "path": "experiments/negative-control-2026-11-01/run-broken/summary.json",
+        "sha256": "6eaab0083466542561f5105ea4b8e92e52a2ff3f282652e6f1857267c10e030c"
+      },
+      {
+        "path": "docs/validation/2026-11-06-historical-recheck.json",
+        "sha256": "8439100043667197e38fa934dc092bc41d06c6b3825c8326bb0d2a6a60d30482"
+      }
+    ]
+  },
+  "cost": {
+    "units": "USD; SDK historical proxy and public PAYGO equivalents, not confirmed account charges",
+    "sourceSubjectProxyIncludingPositive": 1.5804792972666666,
+    "judgePublicPaygoEquivalentIncludingPositive": 0.33737834,
+    "warmCombinedScenario": 1.9178576372666667,
+    "uncachedFixedTokenScenario": {
+      "knownSubjectIncludingPositive": 3.5496541399999995,
+      "brokenSubjectInputOutputBounds": [
+        0.63304032,
+        2.53216128
+      ],
+      "judge": 0.3769233,
+      "combinedBounds": [
+        4.559617759999999,
+        6.4587387199999995
+      ],
+      "assumptions": "Every historical cacheRead is re-priced as uncached input; old broken tokens split unknown, bounded from all input to all output. Future token counts are NOT bounded."
+    },
+    "planningReserveUsd": 20,
+    "planningReserveBasis": "Round up three times the high uncached fixed-token scenario; estimate only, not an enforced cap.",
+    "actualTokenPlanBill": null,
+    "actualSubjectAccountRate": null,
+    "hardCostCapEnforced": false,
+    "ratesPerMillionUsd": {
+      "subject": {
+        "input": 0.15,
+        "output": 0.6,
+        "cacheRead": 0.015
+      },
+      "judge": {
+        "input": 0.14,
+        "output": 0.28,
+        "cacheRead": 0.0028
+      }
+    },
+    "rateSources": [
+      {
+        "url": "https://www.minimax.io/blog/minimax-m31f",
+        "published": "2026-10-19"
+      },
+      {
+        "url": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+        "updated": "2026-10-21"
+      }
+    ],
+    "rateCheckedDate": "2026-11-06",
+    "judgeZeroCostFieldsMeanFree": false,
+    "plannedPrimaryTokens": 24392040.133333337,
+    "plannedJudgeTokens": 2343212.8571428573,
+    "subjectSdkPricesAreNotInvoices": true,
+    "brokenLoadIsHistoricalDifferentPackage": true,
+    "positiveSubjectLoadIsPlaceholder": true
+  },
+  "notReady": [
+    "New independent tasks and data",
+    "Private independent ground truth and frozen assertions",
+    "Independent task/answer/leakage review",
+    "Physical V/C/P snapshots and final hashes",
+    "Final suiteHash and run configuration",
+    "Actual isolation probes",
+    "Actual account rates, quotas, budget and real-call authorization"
+  ],
+  "scope": "Only this plan and calculations are written. Candidate, evaluator source, historical runs, archives and pointers are preserved; no commit or push."
+}
