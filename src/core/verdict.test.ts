@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { decideVerdict } from "./verdict.ts";
-import type { EvaluationSummary, RunResult } from "./runner.ts";
+import type { EvaluationSummary, RunResult, VariantSummary } from "./runner.ts";
 
 function makeAssertionResult(
   variantId: string,
@@ -337,10 +337,12 @@ test("deep-research 画像：高超时率 + 评判覆盖率仅 40% + 全样本�
   assert.ok(decision.blockers.some((b) => b.includes("置信区间") || b.includes("纠偏")));
 });
 
-test("规则优先于评委：评委给 75% 胜率但规则纠偏后低于 60% → 降级为 inconclusive", () => {
+test("规则优先于评委：增益未过硬（+16.7pp）时评委 75% 胜率但规则纠偏后 50% < 严格 60% 门槛 → inconclusive", () => {
+  // baseline 5/30 (16.7%) → skill 10/30 (33.3%)：+16.7pp 落在 10–20pp 压线区间，
+  // 未过硬 → 走严格 60% 胜率门槛（断言驱动降级仅适用于 ≥ 20pp 且 CI 下界 > 0）。
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 5, 30),
-    makeAssertionResult("skill", "t1", 1, 20, 30),
+    makeAssertionResult("skill", "t1", 1, 10, 30),
   ];
 
   const summary: EvaluationSummary = {
@@ -643,4 +645,147 @@ test("阴性对照破坏版画像：100% 激活、充足样本下胜率 22.2% �
 
   const decision = decideVerdict(summary);
   assert.equal(decision.verdict, "ineffective");
+});
+
+/**
+ * 构造带完整胜率/覆盖率字段的 summary，服务于断言驱动双档胜率门槛用例。
+ * effectiveWinRate 与 ruleAdjustedWinRate 默认等于 winRate（无超时惩罚、无规则纠偏覆盖）。
+ */
+function makeWinGateSummary(opts: {
+  runId: string;
+  results: RunResult[];
+  win: number;
+  tie: number;
+  loss: number;
+  notJudged?: number;
+}): EvaluationSummary {
+  const notJudged = opts.notJudged ?? 0;
+  const decided = opts.win + opts.tie + opts.loss;
+  const expected = decided + notJudged;
+  const winRate = decided > 0 ? opts.win / decided : null;
+  const lowerBound = expected > 0 ? opts.win / expected : null;
+  const baseline: VariantSummary = {
+    variantId: "baseline",
+    variantLabel: "Baseline",
+    total: 15,
+    success: 15,
+    failed: 0,
+    activationRate: 0,
+    weakActivationRate: 0,
+    assertionPassRate: 0.16,
+    winRate: null,
+    win: 0,
+    tie: 0,
+    loss: 0,
+    notJudged: 0,
+    avgTokens: 12000,
+    avgCost: 0.03,
+    avgDurationSec: 30,
+    avgToolCalls: 2,
+  };
+  const skill: VariantSummary = {
+    variantId: "skill",
+    variantLabel: "Skill",
+    total: expected,
+    success: expected - notJudged,
+    failed: 0,
+    timedOut: 0,
+    timeoutRate: 0,
+    activationRate: 1.0,
+    weakActivationRate: 0,
+    falseActivationRate: null,
+    zeroActivationTasks: [],
+    assertionPassRate: 0.6,
+    winRate,
+    winRateLowerBound: lowerBound,
+    effectiveWinRate: winRate,
+    ruleAdjustedWinRate: winRate,
+    totalScoredPairs: expected,
+    scoredJudged: decided,
+    pairCoverage: expected > 0 ? decided / expected : null,
+    win: opts.win,
+    tie: opts.tie,
+    loss: opts.loss,
+    notJudged,
+    avgTokens: 12000,
+    avgCost: 0.03,
+    avgDurationSec: 28,
+    avgToolCalls: 4,
+    costEfficiency: {
+      grade: "lean",
+      baselineAvgTokens: 12000,
+      variantAvgTokens: 12000,
+      deltaTokens: 0,
+      tokenRatio: 1,
+      baselineAvgDurationSec: 30,
+      variantAvgDurationSec: 28,
+      deltaDurationSec: -2,
+      durationRatio: 0.93,
+      tokensPerGainPp: 0,
+      reason: "未增加 token 或耗时开销（紧凑高效）",
+    },
+  };
+  return {
+    runId: opts.runId,
+    model: "m1",
+    judgeModel: "m2",
+    repeat: 3,
+    judgeRepeat: 2,
+    startedAt: 0,
+    endedAt: 1000,
+    durationSec: 60,
+    status: "success",
+    results: opts.results,
+    pairwise: [],
+    variantSummaries: [baseline, skill],
+    taskSummaries: [],
+    disagreements: [],
+    totalCost: 0.5,
+    totalTokens: 360000,
+  };
+}
+
+test("断言驱动双档门槛：增益 +62.3pp 过硬而胜率仅 53.3%（run1 画像）→ effective 并提示按守门线判定", () => {
+  // 2026-11-05 data-analysis run1 实测画像：增益 +62.9pp（稳定），胜率 8/15 = 53.3%（噪声）。
+  const results: RunResult[] = [
+    makeAssertionResult("baseline", "t1", 1, 17, 106),
+    makeAssertionResult("skill", "t1", 1, 83, 106),
+  ];
+  const summary = makeWinGateSummary({ runId: "drive-gate-run", results, win: 8, tie: 4, loss: 3 });
+  const decision = decideVerdict(summary);
+  assert.equal(decision.verdict, "effective");
+  assert.equal(decision.blockers.length, 0, `不应有阻断项：${decision.blockers.join("；")}`);
+  assert.ok(
+    decision.warnings.some((w) => w.includes("断言驱动")),
+    `应有断言驱动提示：${decision.warnings.join("；")}`,
+  );
+  assert.match(decision.reason, /断言驱动守门线/);
+});
+
+test("断言驱动双档门槛边界：增益 +15pp 未过硬（10–20pp 压线）+ 胜率 53.3% → 仍走严格 60% 门槛判 inconclusive", () => {
+  const results: RunResult[] = [
+    makeAssertionResult("baseline", "t1", 1, 50, 100),
+    makeAssertionResult("skill", "t1", 1, 65, 100),
+  ];
+  const summary = makeWinGateSummary({ runId: "marginal-gain-run", results, win: 8, tie: 4, loss: 3 });
+  const decision = decideVerdict(summary);
+  assert.equal(decision.verdict, "inconclusive");
+  assert.ok(
+    decision.blockers.some((b) => b.includes("胜率") && b.includes("60%")),
+    `应有严格 60% 胜率阻断项：${decision.blockers.join("；")}`,
+  );
+});
+
+test("断言驱动双档门槛下界：增益 +62.3pp 过硬但胜率 46.7% 低于 50% 守门线 → inconclusive", () => {
+  const results: RunResult[] = [
+    makeAssertionResult("baseline", "t1", 1, 17, 106),
+    makeAssertionResult("skill", "t1", 1, 83, 106),
+  ];
+  const summary = makeWinGateSummary({ runId: "weak-judge-run", results, win: 7, tie: 5, loss: 3 });
+  const decision = decideVerdict(summary);
+  assert.equal(decision.verdict, "inconclusive");
+  assert.ok(
+    decision.blockers.some((b) => b.includes("断言驱动守门线")),
+    `应有 50% 守门线阻断项：${decision.blockers.join("；")}`,
+  );
 });

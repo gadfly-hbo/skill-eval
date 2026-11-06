@@ -4,12 +4,19 @@
  * 将原本耦合在 CLI 入口中的 `decideVerdict` 下沉为核心纯函数模块，并补齐：
  * 1. 样本覆盖率（pairCoverage >= 70%）与最低有效判定对数（scoredJudged >= 4）门禁
  * 2. skill 侧超时率门禁（timeoutRate <= 20%）与全样本胜率下界（winRateLowerBound >= 50%）
- * 3. 不对称超时惩罚后的有效胜率（effectiveWinRate >= 60%）
- * 4. 规则优先于评委（ruleAdjustedWinRate >= 60%，防止评委乐观分覆盖客观断言倒退）
+ * 3. 不对称超时惩罚后的有效胜率（effectiveWinRate >= 胜率门槛）
+ * 4. 规则优先于评委（ruleAdjustedWinRate >= 胜率门槛，防止评委乐观分覆盖客观断言倒退）
  * 5. 客观断言增益（gainPp >= 10pp）及其 95% Newcombe-Wilson 置信下界 > 0（小样本显著性）
  * 6. 0 断言套件的小样本保护（纯评委 Wilson 95% 置信下界须 > 50%）
  * 7. 负向用例误触发率门禁（falseActivationRate <= 20%）
  * 8. 成本效率分级：expensive 标记「有效但昂贵」，runaway 降级为 inconclusive
+ *
+ * 断言驱动的双档胜率门槛（判定稳定性，2026-11-06）：
+ * 胜率是噪声指标（同 skill 两轮复评 53.3% ↔ 78.6%，n≈15 时 Wilson CI 宽约 40pp），
+ * 断言增益是稳定指标（两轮 +62.9pp ↔ +60.7pp）。当增益过硬（≥ 20pp 且 CI 下界 > 0）时，
+ * 三个胜率门禁（原始 / 超时惩罚 / 规则纠偏）从 60% 降为 50% 守门线（WIN_RATE_RELAXED_THRESHOLD），
+ * 全样本下界仍为 50%；增益未过硬时维持 60% 严格门槛。两条路径都不放松激活、覆盖率、
+ * 样本量、超时率、误触发与增益本身的门禁。
  */
 
 import {
@@ -23,6 +30,7 @@ import {
   MIN_PAIR_COVERAGE,
   MIN_WIN_RATE_LOWER_BOUND,
   WIN_RATE_MARGINAL_THRESHOLD,
+  WIN_RATE_RELAXED_THRESHOLD,
   WIN_RATE_STRONG_THRESHOLD,
   WIN_RATE_THRESHOLD,
 } from "./thresholds.ts";
@@ -198,6 +206,17 @@ export function decideVerdict(
     gainThresholdOk = fallbackGain.passed;
   }
 
+  // 断言驱动的双档胜率门槛：客观增益过硬（≥ 20pp 且 CI 下界 > 0）时，
+  // 胜率从「明显优于」60% 降为「不劣于 baseline」50% 守门——胜率是噪声指标，
+  // 增益是稳定指标（见 thresholds.ts WIN_RATE_RELAXED_THRESHOLD 的两轮复评依据）。
+  const objectiveStrong =
+    hasAssertions &&
+    gainThresholdOk &&
+    gainPp !== null &&
+    gainPp >= GAIN_STRONG_THRESHOLD_PP - EPS &&
+    (gainCiPp === null || gainCiPp.lowPp > 0);
+  const winGate = objectiveStrong ? WIN_RATE_RELAXED_THRESHOLD : WIN_RATE_THRESHOLD;
+
   const costEfficiency =
     variant.costEfficiency !== undefined
       ? variant.costEfficiency
@@ -297,26 +316,37 @@ export function decideVerdict(
     );
   }
 
-  const rawWinOk = winRate !== null && winRate >= WIN_RATE_THRESHOLD - EPS;
+  const gateLabel = `${(winGate * 100).toFixed(0)}%`;
+  const rawWinOk = winRate !== null && winRate >= winGate - EPS;
   if (!rawWinOk) {
-    blockers.push(`成对评委胜率 ${pct(winRate)} 未达 ${(WIN_RATE_THRESHOLD * 100).toFixed(0)}% 门槛`);
+    blockers.push(
+      objectiveStrong
+        ? `成对评委胜率 ${pct(winRate)} 未达断言驱动守门线 ${gateLabel}（客观增益虽过硬，但评委并不认为其不劣于 baseline）`
+        : `成对评委胜率 ${pct(winRate)} 未达 ${gateLabel} 门槛`,
+    );
   } else if (winRate !== null && winRate < WIN_RATE_STRONG_THRESHOLD - EPS) {
-    warnings.push(`评委胜率 ${pct(winRate)} 处于压线达标区间（60%–70%）`);
+    if (objectiveStrong && winRate < WIN_RATE_THRESHOLD - EPS) {
+      warnings.push(
+        `客观增益过硬（≥${GAIN_STRONG_THRESHOLD_PP}pp 且 95% CI 下界 > 0），评委胜率 ${pct(winRate)} 未达 60% 强线——按断言驱动守门线 ${gateLabel} 判定`,
+      );
+    } else {
+      warnings.push(`评委胜率 ${pct(winRate)} 处于压线达标区间（60%–70%）`);
+    }
   }
 
   const effectiveWinOk =
-    effectiveWinRate !== null && effectiveWinRate >= WIN_RATE_THRESHOLD - EPS;
+    effectiveWinRate !== null && effectiveWinRate >= winGate - EPS;
   if (rawWinOk && !effectiveWinOk) {
     blockers.push(
-      `计入不对称超时惩罚后的有效胜率仅 ${pct(effectiveWinRate)}，未达 ${(WIN_RATE_THRESHOLD * 100).toFixed(0)}% 门槛`,
+      `计入不对称超时惩罚后的有效胜率仅 ${pct(effectiveWinRate)}，未达 ${gateLabel} 门槛`,
     );
   }
 
   const ruleWinOk =
-    ruleAdjustedWinRate !== null && ruleAdjustedWinRate >= WIN_RATE_THRESHOLD - EPS;
+    ruleAdjustedWinRate !== null && ruleAdjustedWinRate >= winGate - EPS;
   if (rawWinOk && !ruleWinOk) {
     blockers.push(
-      `规则断言纠偏后胜率降至 ${pct(ruleAdjustedWinRate)}（部分评委判赢的样本在客观规则断言上零改善或倒退）`,
+      `规则断言纠偏后胜率降至 ${pct(ruleAdjustedWinRate)}，未达 ${gateLabel} 门槛（部分评委判赢的样本在客观规则断言上零改善或倒退）`,
     );
   }
 
@@ -380,13 +410,17 @@ export function decideVerdict(
   ) {
     const gainNote =
       hasAssertions && gainPp !== null ? `、断言增益 +${gainPp.toFixed(1)}pp` : "";
+    const driveNote =
+      objectiveStrong && winRate !== null && winRate < WIN_RATE_THRESHOLD - EPS
+        ? `（断言增益过硬，胜率按断言驱动守门线 ${gateLabel} 判定而非 60%）`
+        : "";
     const costNote =
       expensive && costEfficiency ? `（注意：${costEfficiency.reason}，属于「有效但昂贵」）` : "";
     return {
       verdict: "effective",
       costGrade,
       expensive,
-      reason: `激活率 ${pct(activationRate)}，胜率 ${pct(winRate)}${gainNote}，各项统计与覆盖率门禁均达标。该 skill 在当前用例集下有效${costNote}。`,
+      reason: `激活率 ${pct(activationRate)}，胜率 ${pct(winRate)}${gainNote}，各项统计与覆盖率门禁均达标${driveNote}。该 skill 在当前用例集下有效${costNote}。`,
       blockers: [],
       warnings,
       metrics,

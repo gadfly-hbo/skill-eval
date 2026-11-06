@@ -91,11 +91,13 @@ import {
   DEFAULT_JUDGE_REPEAT,
   DEFAULT_REPEAT,
   GAIN_THRESHOLD_PP,
+  GAIN_STRONG_THRESHOLD_PP,
   MAX_FALSE_ACTIVATION_RATE,
   MAX_VARIANT_TIMEOUT_RATE,
   MIN_JUDGED_PAIRS,
   MIN_PAIR_COVERAGE,
   MIN_WIN_RATE_LOWER_BOUND,
+  WIN_RATE_RELAXED_THRESHOLD,
   WIN_RATE_THRESHOLD,
 } from "../core/thresholds.ts";
 
@@ -1280,7 +1282,7 @@ function commandThreshold(args: CliArgs): number {
         `  默认评委轮数（judgeRepeat）：${DEFAULT_JUDGE_REPEAT}\n` +
         `  正向激活率门槛：${(ACTIVATION_THRESHOLD * 100).toFixed(0)}%\n` +
         `  负向最大误触发率：${(MAX_FALSE_ACTIVATION_RATE * 100).toFixed(0)}%\n` +
-        `  成对评委胜率门槛（含超时惩罚与规则纠偏后）：${(WIN_RATE_THRESHOLD * 100).toFixed(0)}%\n` +
+        `  成对评委胜率门槛（含超时惩罚与规则纠偏后）：${(WIN_RATE_THRESHOLD * 100).toFixed(0)}%（断言增益过硬 ≥ +${GAIN_STRONG_THRESHOLD_PP}pp 且 CI 下界 > 0 时降为 ${(WIN_RATE_RELAXED_THRESHOLD * 100).toFixed(0)}% 守门线）\n` +
         `  全样本胜率下界门槛：${(MIN_WIN_RATE_LOWER_BOUND * 100).toFixed(0)}%\n` +
         `  有效评判覆盖率门槛：${(MIN_PAIR_COVERAGE * 100).toFixed(0)}%（且计分对 ≥ ${MIN_JUDGED_PAIRS}）\n` +
         `  skill 侧最大超时率：${(MAX_VARIANT_TIMEOUT_RATE * 100).toFixed(0)}%\n` +

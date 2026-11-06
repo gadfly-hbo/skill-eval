@@ -45,6 +45,18 @@ export const WIN_RATE_STRONG_THRESHOLD = 0.7;
 export const WIN_RATE_MARGINAL_THRESHOLD = 0.45;
 
 /**
+ * 断言驱动降级后的评委胜率守门线：50%（「不劣于 baseline」，而非 60% 的「明显优于」）。
+ *
+ * 依据（2026-11-05 data-analysis 两轮复评：同 skill、同套件 7e7ff00a、同模型，仅换工具版本）：
+ * 断言条目增益 +62.9pp / +60.7pp（差 2.2pp，95% CI 收紧），而单套评委胜率 53.3% / 78.6%
+ * （n=14–15，Wilson 95% CI 宽约 40pp）——**胜率是噪声指标，断言增益是稳定指标**。
+ * 当客观增益过硬（≥ GAIN_STRONG_THRESHOLD_PP 且 95% CI 下界 > 0）时，客观证据已足以支撑结论，
+ * 评委胜率只保留「不劣于 baseline」守门（防整体质量倒退）；60% 仍为严格模式门槛与「有实质提升」展示线。
+ * 增益未过硬（无断言 / <10pp / 10–20pp 压线 / CI 跨零）时维持 60% 严格门槛不变。
+ */
+export const WIN_RATE_RELAXED_THRESHOLD = 0.5;
+
+/**
  * 全样本胜率下界门槛：50%。
  * 把所有未判定（not_judged / 超时 / 崩溃）计分对全部算进分母后，win 占比仍须 ≥ 50%，
  * 防止大量超时把不利样本剔除出分母后靠幸存样本拿到高胜率（实测 deep-research 4/10 评判 3 win = 75%，全样本仅 30%）。

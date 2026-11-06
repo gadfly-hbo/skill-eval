@@ -462,6 +462,7 @@ archive/<skill名>/
 | 激活率 0% 但回答质量好 | skill 的 description 没写清触发条件 | 建议用户改 description，写「什么时候该用」 |
 | 胜率波动大 | repeat 或 judgeRepeat 太小 | 建议提到 repeat 3 / judgeRepeat 2 |
 | verdict = 结论不足 | 激活率与胜率只达标其一 | 看报告第 4 节对照表定位是哪个不够 |
+| 同一 skill 两轮 verdict 翻转（inconclusive ↔ effective）但断言增益稳定 | 胜率是噪声指标（n≈15 时 Wilson CI 宽约 40pp），单轮评委噪声穿越了门槛；增益才是稳定指标 | 先看两轮增益是否一致（一致则结论稳健）；工具已改为增益过硬（≥20pp 且 CI 下界 > 0）时胜率门槛降为 50% 守门线（2026-11-06），翻转主要由此消除 |
 | 重量级 skill 的运行被判 failed | 触发了超时（默认 480s），不是 skill 无效 | 用 `--timeout` 调大重跑；报告中必须标注「超时」而非「无效」 |
 | 断言通过率很高但增益很低 | 断言写的是模型本来就会做的事，无区分度 | 用阴性对照定位哪些断言 baseline 也能过，见下节 |
 | 归档报「拒绝归档：评估结论为无效」 | 该 skill 被证伪，不应进归档区 | 正常行为，不重试。改 description 后重新评估 |
