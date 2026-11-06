@@ -10,7 +10,7 @@
   "scripts": {
     "check": "npm run typecheck && npm run test",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/core/*.test.ts",
+    "test": "node --experimental-strip-types --test src/core/*.test.ts src/cli/*.test.ts",
     "eval": "node --experimental-strip-types src/cli/main.ts"
   },
   "engines": {

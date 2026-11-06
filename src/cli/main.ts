@@ -939,6 +939,25 @@ function printArchiveResult(
   process.stdout.write(`  索引：${join(result.archiveRoot, "latest.json")}\n`);
 }
 
+/**
+ * 为 recomputeSummary 重建 variants。
+ *
+ * 关键不变量：**非 baseline 变体必须带非空 skillPaths**——runner 的
+ * `isBaseline = skillPaths.length === 0 || id === "baseline"`，若把 skill 侧
+ * 也填成 `[]`，重算会把它当 baseline，pairCoverage / winRateLowerBound 被置
+ * null，decideVerdict 误拦为 inconclusive（2026-11-06 归档 run2 时实测踩中）。
+ */
+export function rebuildVariantsForRecompute(
+  stored: EvaluationSummary,
+  skillPath: string,
+): Variant[] {
+  return (stored.variantSummaries ?? []).map((item): Variant => ({
+    id: item.variantId,
+    label: item.variantLabel,
+    skillPaths: item.variantId === "baseline" ? [] : [skillPath],
+  }));
+}
+
 async function commandArchive(args: CliArgs): Promise<number> {
   const runDir = flagString(args.flags, "run");
   if (!runDir) {
@@ -954,26 +973,13 @@ async function commandArchive(args: CliArgs): Promise<number> {
   }
 
   const storedSummary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
-  const pairwiseDir = join(absoluteRun, "pairwise");
-  const summary = existsSync(pairwiseDir)
-    ? await recomputeSummary(absoluteRun, {
-        variants: (storedSummary.variantSummaries ?? []).map(
-          (item): Variant => ({ id: item.variantId, label: item.variantLabel, skillPaths: [] }),
-        ),
-        tasks: (storedSummary.taskSummaries ?? []).map(
-          (task): EvalTask => ({
-            id: task.taskId,
-            prompt: "",
-            kind: task.kind,
-            ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
-          }),
-        ),
-      })
-    : storedSummary;
 
+  // 先解析 skill 路径，再重算：重建 variants 时非 baseline 必须带非空 skillPaths，
+  // 否则 runner 的 isBaseline（skillPaths.length === 0）把 skill 侧误判为 baseline，
+  // pairCoverage / winRateLowerBound 被置 null → decideVerdict 误拦为 inconclusive。
   const skillFlag = flagString(args.flags, "skill");
   const inferred =
-    summary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0] ??
+    storedSummary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0] ??
     storedSummary.suiteMeta?.skillPath;
   const skillPath = skillFlag ? resolve(expandTilde(skillFlag)) : inferred ? resolve(expandTilde(inferred)) : undefined;
 
@@ -985,6 +991,21 @@ async function commandArchive(args: CliArgs): Promise<number> {
     process.stderr.write(`被测 skill 不存在：${skillPath}\n`);
     return 1;
   }
+
+  const pairwiseDir = join(absoluteRun, "pairwise");
+  const summary = existsSync(pairwiseDir)
+    ? await recomputeSummary(absoluteRun, {
+        variants: rebuildVariantsForRecompute(storedSummary, skillPath),
+        tasks: (storedSummary.taskSummaries ?? []).map(
+          (task): EvalTask => ({
+            id: task.taskId,
+            prompt: "",
+            kind: task.kind,
+            ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
+          }),
+        ),
+      })
+    : storedSummary;
 
   const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
   const decision = decideVerdict(summary, {
