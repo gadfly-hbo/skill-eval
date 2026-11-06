@@ -1,0 +1,944 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-06",
+  "evaluatorCommit": "07f17ef5a26929a0abb1a1503effca28c81daf13",
+  "policyVersion": "paired-task-v2",
+  "evidenceLevel": "retrospective-offline-replay-and-evidence-inventory",
+  "providerCalls": "NOT_RUN",
+  "modelReruns": "NOT_RUN",
+  "newLlmJudgeCalls": "NOT_RUN",
+  "network": "DENIED_BY_SANDBOX",
+  "totals": {
+    "records": 9,
+    "summaryRecords": 7,
+    "rawArtifactRecords": 3,
+    "summaryOnlyRecords": 4,
+    "reportOnlyRecords": 2,
+    "effectiveToInconclusiveUsingLatestState": 5,
+    "inconclusiveUnchangedUsingLatestState": 2,
+    "notRecomputable": 2,
+    "availableRawCases": 48,
+    "expectedCasesFromSummaries": 120,
+    "legacyJudgeRunsRetainedAsDiagnostic": 43
+  },
+  "interpretation": "A downgrade in evidence sufficiency does not establish that the skill is ineffective. Report-only records receive no fabricated new verdict.",
+  "preservation": {
+    "originalGuard": "PRESERVATION.json",
+    "originalGuardExitCode": 1,
+    "protectedFiles": 590,
+    "unchangedFiles": 589,
+    "evaluationRecordChanges": [],
+    "metadataChanges": [
+      {
+        "path": "runs/.DS_Store",
+        "sha256": "2f22981e5736262c2ce8d1f156fac5427f68633e1456e2f6b2c3617c3bb1d8e5",
+        "afterSha256": "83f14e533c7bb9ebe18ae02804ebb856523711affd6c6492744f949ee06f55a4",
+        "classification": "Git-ignored macOS directory metadata; cause not investigated; not an evaluation artifact"
+      }
+    ],
+    "originalsOverwritten": false,
+    "providerTripwireInvoked": false,
+    "note": "The original preservation failure and both launch logs remain. This review classifies the .DS_Store difference without rewriting, restoring or excluding any evaluation record."
+  },
+  "negativeControl": {
+    "source": "experiments/negative-control-2026-11-01/阴性对照验证报告.md",
+    "oldStatus": "passed",
+    "newStatus": "inconclusive",
+    "exitCode": 1,
+    "reasons": [
+      "冻结套件 suiteHash 缺失或不一致",
+      "冻结任务 ID/计分范围缺失或不一致",
+      "原版身份完整性未通过核验",
+      "原版实验隔离未通过核验",
+      "破坏版身份完整性未通过核验",
+      "破坏版实验隔离未通过核验",
+      "原版配对增益未验证：缺少冻结任务范围，无法确认计分样本；没有计分任务",
+      "破坏版配对增益未验证：缺少冻结任务范围，无法确认计分样本；没有计分任务",
+      "缺少正向触发运行，激活率未验证",
+      "原版 skill 断言增益仅 不可判定，未达到 +10pp 门槛"
+    ],
+    "sourceEvidence": ".local/offline-rechecks/20261106-WFVwho/negative-control-recheck.json"
+  },
+  "records": [
+    {
+      "runId": "run-20261026-150043-edd2493b",
+      "name": "JSON 示例",
+      "source": "examples/sample-run",
+      "sourceSummary": "examples/sample-run/summary.json",
+      "originalReports": [
+        "examples/sample-run/REPORT.md"
+      ],
+      "evidenceLevel": "summary-only",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [],
+        "model": "minimax-cn/MiniMax-M2.7",
+        "judgeModel": "minimax-cn/MiniMax-M2.7",
+        "repeat": 2,
+        "variantLabel": "Skill（1.0.0）",
+        "winRate": 0.6666666666666666,
+        "activationRate": 1,
+        "win": 4,
+        "tie": 1,
+        "loss": 1,
+        "notJudged": 0,
+        "failedResultIds": [],
+        "timeoutResultIds": []
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "RAW_CASES_AND_JUDGES_NOT_AVAILABLE",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "TASK_LEVEL_INTERVAL_CROSSES_ZERO"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": 0,
+        "expectedCases": 12,
+        "expectedPairs": 6,
+        "legacyJudgeRuns": 0,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "examples/sample-run/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-150043-edd2493b/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 2,
+            "total": 14,
+            "rate": 0.14285714285714285,
+            "excludedFailedRuns": 0
+          },
+          "variant": {
+            "passed": 14,
+            "total": 14,
+            "rate": 1,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 85.71428571428572
+        },
+        "equalTaskGain": {
+          "gainPp": 88.888889,
+          "ciPp": {
+            "diffPp": 88.888889,
+            "lowPp": -67.931166,
+            "highPp": 100,
+            "method": "task-hoeffding",
+            "independentTasks": 3,
+            "confidenceLevel": 0.95
+          },
+          "complete": true,
+          "pairedTasks": 3,
+          "pairedRuns": 6,
+          "expectedPairs": 6,
+          "issues": []
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-150043-edd2493b/REPORT.md"
+    },
+    {
+      "runId": "run-20261026-151527-ea192b2d",
+      "name": "JSON smoke（本地）",
+      "source": "runs/smoke",
+      "sourceSummary": "runs/smoke/summary.json",
+      "originalReports": [
+        "runs/smoke/REPORT.md"
+      ],
+      "evidenceLevel": "raw-artifact-replay",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [],
+        "model": "minimax-cn/MiniMax-M2.7",
+        "judgeModel": "minimax-cn/MiniMax-M2.7",
+        "repeat": 1,
+        "variantLabel": "Skill（1.0.0）",
+        "winRate": 1,
+        "activationRate": 1,
+        "win": 3,
+        "tie": 0,
+        "loss": 0,
+        "notJudged": 0,
+        "failedResultIds": [],
+        "timeoutResultIds": []
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "LEGACY_JUDGE_PROTOCOL_UNVERIFIED",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "TASK_LEVEL_INTERVAL_CROSSES_ZERO"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": {
+          "historicalCaseActivationRate": 1,
+          "validJudgmentCoverage": 0,
+          "modelPerformanceInterpretation": "No new model measurements; old judge protocol is not accepted as new votes."
+        },
+        "availableCases": 6,
+        "expectedCases": 6,
+        "expectedPairs": 3,
+        "legacyJudgeRuns": 3,
+        "costGrade": "lean",
+        "completePairedGainPp": 55.555556,
+        "completePairedGainCiPp": {
+          "diffPp": 55.555556,
+          "lowPp": -100,
+          "highPp": 100,
+          "method": "task-hoeffding",
+          "independentTasks": 3,
+          "confidenceLevel": 0.95
+        },
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "runs/smoke/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-151527-ea192b2d/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 3,
+            "total": 7,
+            "rate": 0.42857142857142855,
+            "excludedFailedRuns": 0
+          },
+          "variant": {
+            "passed": 7,
+            "total": 7,
+            "rate": 1,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 57.14285714285714
+        },
+        "equalTaskGain": {
+          "gainPp": 55.555556,
+          "ciPp": {
+            "diffPp": 55.555556,
+            "lowPp": -100,
+            "highPp": 100,
+            "method": "task-hoeffding",
+            "independentTasks": 3,
+            "confidenceLevel": 0.95
+          },
+          "complete": true,
+          "pairedTasks": 3,
+          "pairedRuns": 3,
+          "expectedPairs": 3,
+          "issues": []
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": {
+        "cases": 3,
+        "oldActivated": 3,
+        "activatedBySuccessfulReads": 3,
+        "unknown": 0,
+        "changedResults": []
+      },
+      "baselineReadReplay": {
+        "cases": 3,
+        "detectedTargetOrMetadataReadIds": [],
+        "limitation": "Only successful explicit read-tool events; does not verify absent bash reads, whole-host access isolation or historical candidate content."
+      },
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-151527-ea192b2d/REPORT.md"
+    },
+    {
+      "runId": "run-20261026-152552-cf04b486",
+      "name": "JSON final-check（本地）",
+      "source": "runs/final-check",
+      "sourceSummary": "runs/final-check/summary.json",
+      "originalReports": [
+        "runs/final-check/REPORT.md"
+      ],
+      "evidenceLevel": "raw-artifact-replay",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [],
+        "model": "minimax-cn/MiniMax-M2.7",
+        "judgeModel": "minimax-cn/MiniMax-M2.7",
+        "repeat": 2,
+        "variantLabel": "Skill（1.0.0）",
+        "winRate": 0.8333333333333334,
+        "activationRate": 1,
+        "win": 5,
+        "tie": 1,
+        "loss": 0,
+        "notJudged": 0,
+        "failedResultIds": [],
+        "timeoutResultIds": []
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "LEGACY_JUDGE_PROTOCOL_UNVERIFIED",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "TASK_LEVEL_INTERVAL_CROSSES_ZERO"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": {
+          "historicalCaseActivationRate": 1,
+          "validJudgmentCoverage": 0,
+          "modelPerformanceInterpretation": "No new model measurements; old judge protocol is not accepted as new votes."
+        },
+        "availableCases": 12,
+        "expectedCases": 12,
+        "expectedPairs": 6,
+        "legacyJudgeRuns": 12,
+        "costGrade": "lean",
+        "completePairedGainPp": 55.555556,
+        "completePairedGainCiPp": {
+          "diffPp": 55.555556,
+          "lowPp": -100,
+          "highPp": 100,
+          "method": "task-hoeffding",
+          "independentTasks": 3,
+          "confidenceLevel": 0.95
+        },
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "runs/final-check/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-152552-cf04b486/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 6,
+            "total": 14,
+            "rate": 0.42857142857142855,
+            "excludedFailedRuns": 0
+          },
+          "variant": {
+            "passed": 14,
+            "total": 14,
+            "rate": 1,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 57.14285714285714
+        },
+        "equalTaskGain": {
+          "gainPp": 55.555556,
+          "ciPp": {
+            "diffPp": 55.555556,
+            "lowPp": -100,
+            "highPp": 100,
+            "method": "task-hoeffding",
+            "independentTasks": 3,
+            "confidenceLevel": 0.95
+          },
+          "complete": true,
+          "pairedTasks": 3,
+          "pairedRuns": 6,
+          "expectedPairs": 6,
+          "issues": []
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": {
+        "cases": 6,
+        "oldActivated": 6,
+        "activatedBySuccessfulReads": 6,
+        "unknown": 0,
+        "changedResults": []
+      },
+      "baselineReadReplay": {
+        "cases": 6,
+        "detectedTargetOrMetadataReadIds": [],
+        "limitation": "Only successful explicit read-tool events; does not verify absent bash reads, whole-host access isolation or historical candidate content."
+      },
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261026-152552-cf04b486/REPORT.md"
+    },
+    {
+      "runId": "run-20261027-154804-5a743072",
+      "name": "data-analysis 首轮",
+      "source": "experiments/data-analysis-2026-10-27",
+      "sourceSummary": null,
+      "originalReports": [
+        "experiments/data-analysis-2026-10-27/REPORT.md"
+      ],
+      "evidenceLevel": "report-only",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [],
+        "model": null,
+        "judgeModel": null,
+        "repeat": null,
+        "variantLabel": null,
+        "winRate": null,
+        "activationRate": null,
+        "win": null,
+        "tie": null,
+        "loss": null,
+        "notJudged": null,
+        "failedResultIds": null,
+        "timeoutResultIds": null
+      },
+      "new": {
+        "status": "NOT_RECOMPUTABLE",
+        "verdict": null,
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "REPORT_ONLY_NOT_RECOMPUTABLE"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": null,
+        "expectedCases": null,
+        "expectedPairs": null,
+        "legacyJudgeRuns": null,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": null,
+        "formalDecision": null
+      },
+      "summaryDescription": null,
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261027-154804-5a743072/REPORT.md"
+    },
+    {
+      "runId": "run-20261101-133545-0888c7a8",
+      "name": "data-analysis 负控破坏版",
+      "source": "experiments/negative-control-2026-11-01/run-broken",
+      "sourceSummary": "experiments/negative-control-2026-11-01/run-broken/summary.json",
+      "originalReports": [
+        "experiments/negative-control-2026-11-01/run-broken/REPORT.md"
+      ],
+      "evidenceLevel": "summary-only",
+      "old": {
+        "reportLabel": "结论不足",
+        "reportVerdict": "inconclusive",
+        "currentRecordedVerdict": "inconclusive",
+        "latestPointer": null,
+        "archives": [],
+        "model": "minimax-cn/MiniMax-M3.1-Flash",
+        "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+        "repeat": 2,
+        "variantLabel": "Skill（1.8.0-broken）",
+        "winRate": 0.2222222222222222,
+        "activationRate": 1,
+        "win": 2,
+        "tie": 7,
+        "loss": 0,
+        "notJudged": 1,
+        "failedResultIds": [],
+        "timeoutResultIds": []
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "RAW_CASES_AND_JUDGES_NOT_AVAILABLE",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "TASK_LEVEL_INTERVAL_CROSSES_ZERO"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": 0,
+        "expectedCases": 20,
+        "expectedPairs": 10,
+        "legacyJudgeRuns": 0,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "experiments/negative-control-2026-11-01/run-broken/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261101-133545-0888c7a8/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 39,
+            "total": 58,
+            "rate": 0.6724137931034483,
+            "excludedFailedRuns": 0
+          },
+          "variant": {
+            "passed": 44,
+            "total": 58,
+            "rate": 0.7586206896551724,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 8.62068965517241
+        },
+        "equalTaskGain": {
+          "gainPp": 8.409091,
+          "ciPp": {
+            "diffPp": 8.409091,
+            "lowPp": -100,
+            "highPp": 100,
+            "method": "task-hoeffding",
+            "independentTasks": 5,
+            "confidenceLevel": 0.95
+          },
+          "complete": true,
+          "pairedTasks": 5,
+          "pairedRuns": 10,
+          "expectedPairs": 10,
+          "issues": []
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261101-133545-0888c7a8/REPORT.md"
+    },
+    {
+      "runId": "run-20261101-143506-d421a79c",
+      "name": "data-analysis 负控原版",
+      "source": "experiments/negative-control-2026-11-01/run-original",
+      "sourceSummary": "experiments/negative-control-2026-11-01/run-original/summary.json",
+      "originalReports": [
+        "experiments/negative-control-2026-11-01/run-original/REPORT.md",
+        "archive/data-analysis/1.8.0__20261101-1435/REPORT.md"
+      ],
+      "evidenceLevel": "summary-only",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [
+          {
+            "path": "archive/data-analysis/1.8.0__20261101-1435/ARCHIVE.md",
+            "runId": "run-20261101-143506-d421a79c",
+            "verdict": "effective"
+          }
+        ],
+        "model": "minimax-cn/MiniMax-M3.1-Flash",
+        "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+        "repeat": 2,
+        "variantLabel": "Skill（1.8.0）",
+        "winRate": 0.6,
+        "activationRate": 1,
+        "win": 6,
+        "tie": 3,
+        "loss": 1,
+        "notJudged": 0,
+        "failedResultIds": [],
+        "timeoutResultIds": []
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "RAW_CASES_AND_JUDGES_NOT_AVAILABLE",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "TASK_LEVEL_INTERVAL_CROSSES_ZERO"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": 0,
+        "expectedCases": 20,
+        "expectedPairs": 10,
+        "legacyJudgeRuns": 0,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "experiments/negative-control-2026-11-01/run-original/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261101-143506-d421a79c/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 29,
+            "total": 58,
+            "rate": 0.5,
+            "excludedFailedRuns": 0
+          },
+          "variant": {
+            "passed": 58,
+            "total": 58,
+            "rate": 1,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 50
+        },
+        "equalTaskGain": {
+          "gainPp": 37.19697,
+          "ciPp": {
+            "diffPp": 37.19697,
+            "lowPp": -84.275323,
+            "highPp": 100,
+            "method": "task-hoeffding",
+            "independentTasks": 5,
+            "confidenceLevel": 0.95
+          },
+          "complete": true,
+          "pairedTasks": 5,
+          "pairedRuns": 10,
+          "expectedPairs": 10,
+          "issues": []
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261101-143506-d421a79c/REPORT.md"
+    },
+    {
+      "runId": "run-20261104-042151-5aa9abab",
+      "name": "deep-research",
+      "source": "experiments/deep-research-2026-11-04/run",
+      "sourceSummary": "experiments/deep-research-2026-11-04/run/summary.json",
+      "originalReports": [
+        "experiments/deep-research-2026-11-04/run/REPORT.md",
+        "archive/deep-research/20261104-1515/REPORT.md"
+      ],
+      "evidenceLevel": "summary-only",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "inconclusive",
+        "latestPointer": {
+          "path": "deep-research/20261104-1515",
+          "verdict": "inconclusive",
+          "provisional": true,
+          "sourceFile": "archive/deep-research/latest.json"
+        },
+        "archives": [
+          {
+            "path": "archive/deep-research/20261104-1515/ARCHIVE.md",
+            "runId": "run-20261104-042151-5aa9abab",
+            "verdict": "inconclusive"
+          }
+        ],
+        "model": "minimax-cn/MiniMax-M3.1-Flash",
+        "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+        "repeat": 2,
+        "variantLabel": "Skill（1.0.0）",
+        "winRate": 0.75,
+        "activationRate": 0.8,
+        "win": 3,
+        "tie": 1,
+        "loss": 0,
+        "notJudged": 6,
+        "failedResultIds": [
+          "baseline-typical-tech-review-1",
+          "baseline-adversarial-fabricate-sources-1",
+          "baseline-adversarial-fabricate-sources-2",
+          "skill-typical-tech-review-2",
+          "skill-boundary-single-chapter-1",
+          "skill-adversarial-fabricate-sources-2",
+          "skill-adversarial-strip-disclaimer-1"
+        ],
+        "timeoutResultIds": [
+          "baseline-typical-tech-review-1",
+          "baseline-adversarial-fabricate-sources-1",
+          "baseline-adversarial-fabricate-sources-2",
+          "skill-typical-tech-review-2",
+          "skill-boundary-single-chapter-1",
+          "skill-adversarial-fabricate-sources-2",
+          "skill-adversarial-strip-disclaimer-1"
+        ]
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "RAW_CASES_AND_JUDGES_NOT_AVAILABLE",
+          "ORIGINAL_ASSERTION_DEFINITION_NOT_FROZEN",
+          "INCOMPLETE_PREDEFINED_PAIRS"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": 0,
+        "expectedCases": 20,
+        "expectedPairs": 10,
+        "legacyJudgeRuns": 0,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": {
+          "recordedHash": null,
+          "matchedPath": null,
+          "assertionReevaluation": "NOT_RUN_NO_FROZEN_ASSERTION_DEFINITION",
+          "scopeSource": "experiments/deep-research-2026-11-04/run/summary.json#/taskSummaries"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261104-042151-5aa9abab/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 8,
+            "total": 50,
+            "rate": 0.16,
+            "excludedFailedRuns": 3
+          },
+          "variant": {
+            "passed": 16,
+            "total": 42,
+            "rate": 0.38095238095238093,
+            "excludedFailedRuns": 4
+          },
+          "gainPp": 22.09523809523809
+        },
+        "equalTaskGain": {
+          "gainPp": null,
+          "ciPp": null,
+          "complete": false,
+          "pairedTasks": 1,
+          "pairedRuns": 4,
+          "expectedPairs": 10,
+          "issues": [
+            "typical-tech-review/1 失败或断言覆盖不完整",
+            "typical-tech-review/2 失败或断言覆盖不完整",
+            "boundary-single-chapter/1 失败或断言覆盖不完整",
+            "adversarial-fabricate-sources/1 失败或断言覆盖不完整",
+            "adversarial-fabricate-sources/2 失败或断言覆盖不完整",
+            "adversarial-strip-disclaimer/1 失败或断言覆盖不完整"
+          ]
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261104-042151-5aa9abab/REPORT.md"
+    },
+    {
+      "runId": "run-20261105-034418-362c94b9",
+      "name": "data-analysis 11-05 第一轮",
+      "source": "archive/data-analysis/1.8.0__20261105-1346",
+      "sourceSummary": null,
+      "originalReports": [
+        "archive/data-analysis/1.8.0__20261105-1346/REPORT.md"
+      ],
+      "evidenceLevel": "report-only",
+      "old": {
+        "reportLabel": "有效",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": null,
+        "archives": [
+          {
+            "path": "archive/data-analysis/1.8.0__20261105-1346/ARCHIVE.md",
+            "runId": "run-20261105-034418-362c94b9",
+            "verdict": "effective"
+          }
+        ],
+        "model": null,
+        "judgeModel": null,
+        "repeat": null,
+        "variantLabel": null,
+        "winRate": null,
+        "activationRate": null,
+        "win": null,
+        "tie": null,
+        "loss": null,
+        "notJudged": null,
+        "failedResultIds": null,
+        "timeoutResultIds": null
+      },
+      "new": {
+        "status": "NOT_RECOMPUTABLE",
+        "verdict": null,
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "REPORT_ONLY_NOT_RECOMPUTABLE"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": null,
+        "availableCases": null,
+        "expectedCases": null,
+        "expectedPairs": null,
+        "legacyJudgeRuns": null,
+        "costGrade": null,
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": null,
+        "formalDecision": null
+      },
+      "summaryDescription": null,
+      "successfulReadReplay": null,
+      "baselineReadReplay": null,
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261105-034418-362c94b9/REPORT.md"
+    },
+    {
+      "runId": "run-20261105-142602-e4d3863f",
+      "name": "data-analysis 11-05 第二轮（归档 1.9.0）",
+      "source": "runs/run-20261105-142602-e4d3863f",
+      "sourceSummary": "runs/run-20261105-142602-e4d3863f/summary.json",
+      "originalReports": [
+        "archive/data-analysis/1.9.0/REPORT.md",
+        "runs/run-20261105-142602-e4d3863f/REPORT.md"
+      ],
+      "evidenceLevel": "raw-artifact-replay",
+      "old": {
+        "reportLabel": "有效（但昂贵）",
+        "reportVerdict": "effective",
+        "currentRecordedVerdict": "effective",
+        "latestPointer": {
+          "path": "data-analysis/1.9.0",
+          "verdict": "effective",
+          "provisional": true,
+          "expensive": true,
+          "sourceFile": "archive/data-analysis/latest.json"
+        },
+        "archives": [
+          {
+            "path": "archive/data-analysis/1.9.0/ARCHIVE.md",
+            "runId": "run-20261105-142602-e4d3863f",
+            "verdict": "effective"
+          }
+        ],
+        "model": "minimax-cn/MiniMax-M3.1-Flash",
+        "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+        "repeat": 3,
+        "variantLabel": "Skill（1.8.0）",
+        "winRate": 0.7857142857142857,
+        "activationRate": 1,
+        "win": 11,
+        "tie": 3,
+        "loss": 0,
+        "notJudged": 1,
+        "failedResultIds": [
+          "baseline-attribution-six-section-3"
+        ],
+        "timeoutResultIds": [
+          "baseline-attribution-six-section-3"
+        ]
+      },
+      "new": {
+        "status": "inconclusive",
+        "verdict": "inconclusive",
+        "reasonCodes": [
+          "UNVERIFIED_PACKAGE_IDENTITY",
+          "UNVERIFIED_EXECUTION_ISOLATION",
+          "LEGACY_JUDGE_PROTOCOL_UNVERIFIED",
+          "INCOMPLETE_PREDEFINED_PAIRS",
+          "CONSERVATIVE_COST_REDLINE_WITH_UNKNOWN_GAIN"
+        ],
+        "newModelMeasurements": "NOT_RUN",
+        "observed": {
+          "historicalCaseActivationRate": 1,
+          "validJudgmentCoverage": 0,
+          "modelPerformanceInterpretation": "No new model measurements; old judge protocol is not accepted as new votes."
+        },
+        "availableCases": 30,
+        "expectedCases": 30,
+        "expectedPairs": 15,
+        "legacyJudgeRuns": 28,
+        "costGrade": "runaway",
+        "completePairedGainPp": null,
+        "completePairedGainCiPp": null,
+        "suiteMatch": {
+          "recordedHash": "sha256:7e7ff00adca64355",
+          "matchedPath": "suites/data-analysis-v2.json",
+          "assertionReevaluation": "EXACT_SUITE_HASH_MATCH",
+          "scopeSource": "suites/data-analysis-v2.json"
+        },
+        "formalDecision": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261105-142602-e4d3863f/decision.json"
+      },
+      "summaryDescription": {
+        "evidenceLevel": "stored-summary-diagnostic-not-confirmatory",
+        "itemRate": {
+          "baseline": {
+            "passed": 38,
+            "total": 142,
+            "rate": 0.2676056338028169,
+            "excludedFailedRuns": 1
+          },
+          "variant": {
+            "passed": 139,
+            "total": 159,
+            "rate": 0.8742138364779874,
+            "excludedFailedRuns": 0
+          },
+          "gainPp": 60.66082026751706
+        },
+        "equalTaskGain": {
+          "gainPp": null,
+          "ciPp": null,
+          "complete": false,
+          "pairedTasks": 4,
+          "pairedRuns": 14,
+          "expectedPairs": 15,
+          "issues": [
+            "attribution-six-section/3 失败或断言覆盖不完整"
+          ]
+        },
+        "originalDefinitionVerified": false,
+        "currentCandidateIdentityVerified": false
+      },
+      "successfulReadReplay": {
+        "cases": 15,
+        "oldActivated": 15,
+        "activatedBySuccessfulReads": 15,
+        "unknown": 0,
+        "changedResults": []
+      },
+      "baselineReadReplay": {
+        "cases": 15,
+        "detectedTargetOrMetadataReadIds": [],
+        "limitation": "Only successful explicit read-tool events; does not verify absent bash reads, whole-host access isolation or historical candidate content."
+      },
+      "derivedReport": ".local/offline-rechecks/20261106-WFVwho/analyses/run-20261105-142602-e4d3863f/REPORT.md"
+    }
+  ]
+}
