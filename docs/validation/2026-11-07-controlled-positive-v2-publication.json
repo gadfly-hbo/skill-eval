@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-v2-delivery-and-authorization-20261107-v1",
+  "phase": "PRE_COMMIT_DELIVERY_VERIFIED_REAL_EXECUTION_AUTHORIZED_NOT_YET_STARTED",
+  "date": "2026-11-07",
+  "recordedAtUtc": "2026-11-06T23:14:46.011659+00:00",
+  "remote": "https://github.com/gadfly-hbo/skill-eval",
+  "branch": "main",
+  "parentCommit": "d66cad89f8191806e504fa6a4faefd968b7fb63b",
+  "priorSnapshotsPreserved": true,
+  "priorStatusScope": "The NOT_RUN/unauthorized/workspace-only fields in preparation reports describe earlier stages. This append-only receipt records the later publication request and the one explicit v2 execution authorization. Actual outcomes will be recorded separately.",
+  "authorization": {
+    "publishV2AndPriorRedactedFailureReports": true,
+    "completeV2Runs": 1,
+    "runId": "da190-20261107-controlled-v2-positive",
+    "useNewDirectory": true,
+    "maxSessions": 8,
+    "maxNanoUsdEquivalent": 1000000000,
+    "model": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "stopOnAnomaly": true,
+    "mixPriorResults": false,
+    "continueOldP": false,
+    "startMainRetest": false,
+    "modifyFrozenPackage": false,
+    "publishPrivateMaterials": false
+  },
+  "validation": {
+    "command": "npm run check",
+    "tests": 465,
+    "passed": 465,
+    "failed": 0,
+    "skipped": 0,
+    "typecheck": "PASS",
+    "log": ".local/controlled-positive-v2-20261107/delivery-and-real-20261107/precommit-check.log",
+    "logSha256": "95fed458d58379588b1edc99974779513a24fea5232de3f3916a75ec304aae4a"
+  },
+  "preparationReceipt": {
+    "path": "docs/validation/2026-11-07-controlled-positive-v2.json",
+    "sha256": "6ddb5257c72606b757c14cf848d6d8fa4d4457932fea9c63b9b2283ae2aa38e5"
+  },
+  "oldFailureReport": {
+    "path": "docs/validation/2026-11-06-controlled-positive-real-run.json",
+    "sha256": "9da43f8b70d8f37d9e03961b569b2a414bd35aacafceb4e87385284e68827ae9"
+  },
+  "originalFreezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+  "privateMaterials": {
+    "locations": [
+      ".local/",
+      "runs/da190-20261106-frozen-v1-positive/",
+      "runs/da190-20261107-controlled-v2-positive/"
+    ],
+    "upload": false
+  },
+  "publicationEvidence": "The containing Git commit and remote main ref establish actual publication; this receipt precedes the one authorized live invocation."
+}

@@ -83,7 +83,18 @@ node --experimental-strip-types src/cli/positive-probe.ts
 node --experimental-strip-types src/cli/positive-probe.ts --verify-runtime
 ```
 
-独立入口固定两题、4 个被评会话及 4 个评委会话，最多 8 会话、US$1 保守等价预算。每个 HTTP 请求先预留最坏费用，再从原始 usage 结算；异常即停。模型与原生工具进程禁止联网，真实凭证仅由父进程持有。入口和限额配置位于原冻结包外，当前仍未授权真实执行；细节及离线证据见 [受控入口验证记录](docs/阳性校验受控入口-2026-11-06.md)。
+独立入口固定两题、4 个被评会话及 4 个评委会话，最多 8 会话、US$1 保守等价预算。每个 HTTP 请求先预留最坏费用，再从原始 usage 结算；异常即停。模型与原生工具进程禁止联网，真实凭证仅由父进程持有。入口和限额配置位于原冻结包外；初次离线准备见 [受控入口验证记录](docs/阳性校验受控入口-2026-11-06.md)。
+
+v1 的一次真实运行已因 baseline 工具越界失败而停止；结果见 [真实执行报告](docs/阳性校验真实执行-data-analysis-1.9.0-2026-11-06.md)。冻结包外的 v2 使用新运行计划，给 B/P 追加完全相同的资源边界说明，并记录首次失败及后续清理中止：
+
+```bash
+# 只读描述 v2 新计划及其关联的旧失败记录
+node --experimental-strip-types src/cli/positive-probe-v2.ts
+# 只读核验原冻结包、旧失败、Node/SDK 及精确模型目录
+node --experimental-strip-types src/cli/positive-probe-v2.ts --verify-runtime
+```
+
+v2 不续跑旧目录，仍需新的真实执行授权。其任务、模型、8 会话／US$1 等价限额、隔离及异常即停规则均沿用原计划；离线准备见 [v2 验证记录](docs/阳性校验受控入口-v2-2026-11-07.md)。
 
 ### pi 配置隔离
 

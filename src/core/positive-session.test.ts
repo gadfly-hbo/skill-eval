@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PositiveBudget } from "./positive-budget.ts";
 import { resolvePiRuntime } from "./isolation.ts";
 import { dispatchPositiveRequest, parsePositiveUsage, simulateControlledSession } from "./positive-session.ts";
+import { POSITIVE_ENVIRONMENT_V2 } from "./positive-environment.ts";
 
 const subject = "minimax-cn/MiniMax-M3.1-Flash";
 const judge = "xiaomi-token-plan-cn/mimo-v2.6-flash";
@@ -110,6 +111,21 @@ test("MiMo thinking uses the shared completion cap without an Anthropic budget_t
 });
 
 const nativeAvailable = (() => { try { return process.platform === "darwin" && existsSync(join(resolvePiRuntime().readOnlyRoots[0]!, "dist", "index.js")); } catch { return false; } })();
+test("evidence persistence failures have a stable first cause and never overwrite a prior evidence record", async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-evidence-existing-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const evidence = join(root, "failure-evidence.json"); writeFileSync(evidence, "IMMUTABLE_PRIOR_EVIDENCE");
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-persistence-existing", prompt: "fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 1000 }, async () => { calls++; throw new Error("MUST_NOT_DISPATCH"); });
+    assert.equal(calls, 0);
+    assert.equal(result.stderr, "FAILURE_EVIDENCE_WRITE_FAILED");
+    assert.equal(result.failureEvidence.firstCause?.code, "FAILURE_EVIDENCE_WRITE_FAILED");
+    assert.equal(result.failureEvidence.firstCause?.incidentType, "persistence_error");
+    assert.equal(readFileSync(evidence, "utf8"), "IMMUTABLE_PRIOR_EVIDENCE");
+    assert.equal(budget.snapshot().state, "stopped");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 test("catalog drift stops before dispatch, so baseline and P cannot silently use different settings", async () => {
   const root = mkdtempSync(join(tmpdir(), "positive-catalog-drift-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
@@ -122,6 +138,7 @@ test("catalog drift stops before dispatch, so baseline and P cannot silently use
     assert.equal(run.stderr, "CATALOG_DRIFT");
     assert.equal(budget.snapshot().chargedNanoUsd, 0);
     assert.equal(budget.snapshot().state, "stopped");
+    assert.equal(run.failureEvidence.firstCause?.code, "CATALOG_DRIFT");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test("native controlled parent aborts on timeout and retains any dispatched reservation", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
@@ -139,6 +156,9 @@ test("native controlled parent aborts on timeout and retains any dispatched rese
     assert.ok(calls <= 1);
     if (calls) assert.equal(budget.snapshot().chargedNanoUsd, 152457600);
     assert.throws(() => budget.beginSession("after", "subject", subject));
+    assert.equal(result.failureEvidence.firstCause?.code, "SESSION_TIMEOUT");
+    assert.equal(result.failureEvidence.firstCause?.incidentType, "timeout");
+    assert.equal(JSON.parse(readFileSync(join(root, "failure-evidence.json"), "utf8")).firstCause.code, "SESSION_TIMEOUT");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -151,6 +171,119 @@ test("native parent stops and cleans the worker even when ledger persistence fai
       onLedger: () => { if (++persists >= 3) throw new Error("OFFLINE_DISK_FAILURE"); },
     }, async () => { calls++; return new Response(anthropic, { headers: { "content-type": "text/event-stream" } }); }));
     assert.equal(calls, 1);
+    assert.equal(budget.snapshot().state, "stopped");
+    assert.equal(JSON.parse(readFileSync(join(root, "failure-evidence.json"), "utf8")).firstCause.code, "LEDGER_PERSISTENCE_FAILED");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+function nativeResponse(content: string, tool?: { id: string; name: string; input: unknown }): string {
+  const blocks = tool ? [
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: tool.id, name: tool.name, input: {} } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(tool.input) } },
+  ] : [
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: content } },
+  ];
+  return [
+    { type: "message_start", message: { id: "offline-fixture", type: "message", role: "assistant", model: "MiniMax-M3.1-Flash", content: [], usage: { input_tokens: 100, output_tokens: 0 } } },
+    ...blocks, { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: tool ? "tool_use" : "end_turn" }, usage: { output_tokens: 20 } },
+    { type: "message_stop" },
+  ].map(data => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+}
+
+test("parent forwards the fixed v2 environment into native wire and missing-definition output is a normal execution", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-parent-v2-environment-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-v2-environment", prompt: "Underspecified offline fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000, environmentInstruction: POSITIVE_ENVIRONMENT_V2 }, async (_url, init) => {
+      calls++;
+      const payload = JSON.parse(String(init?.body));
+      assert.ok(payload.system.some((block: { text?: string }) => block.text?.includes(POSITIVE_ENVIRONMENT_V2)));
+      return new Response(nativeResponse("缺少流程定义，无法确定交付规则。"), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.metrics.output, "缺少流程定义，无法确定交付规则。");
+    assert.equal(result.failureEvidence.firstCause, null);
+    assert.equal(budget.snapshot().sessions[0]?.state, "completed");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("exit-zero compound shell denial remains observational and does not change the strict native error gate", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-parent-compound-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-compound", prompt: "Offline compound status fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
+      calls++;
+      const body = calls === 1 ? nativeResponse("", { id: "compound", name: "bash", input: { command: `ls '${root}'; printf '{}\\n'` } }) : nativeResponse("fixture finished");
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(calls, 2);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.failureEvidence.firstCause, null);
+    assert.equal(result.failureEvidence.observations.length, 1);
+    assert.equal(result.failureEvidence.observations[0]?.authoritativeFailure, false);
+    assert.equal(result.failureEvidence.observations[0]?.exitCode, 0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native tools cannot overwrite first-cause evidence and a real tool failure still prevents all followup HTTP", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-parent-failure-tamper-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-failure-tamper", prompt: "Offline evidence boundary fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
+      calls++;
+      return new Response(nativeResponse("", { id: "evidence-tamper", name: "write", input: { path: join(root, "failure-evidence.json"), content: "OVERWRITE_PRIVATE_EVIDENCE" } }), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(calls, 1);
+    assert.notEqual(result.exitCode, 0);
+    const captured = JSON.parse(readFileSync(join(root, "failure-evidence.json"), "utf8"));
+    assert.equal(captured.firstCause.code, "TOOL_EXECUTION_FAILED");
+    assert.equal(captured.firstCause.toolCallId, "evidence-tamper");
+    assert.equal(result.events[captured.firstCause.eventIndex]?.type, "tool_execution_end");
+    assert.ok(!JSON.stringify(captured).includes("OVERWRITE_PRIVATE_EVIDENCE"));
+    assert.throws(() => budget.beginSession("later", "subject", subject));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("native broker failure records the HTTP cause before generic worker termination and retains the full charge", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-parent-http-cause-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-http-cause", prompt: "Offline auth error fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
+      calls++;
+      return new Response("PRIVATE_RESPONSE_BODY", { status: 401 });
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.failureEvidence.firstCause?.code, "PROVIDER_HTTP_401");
+    assert.equal(result.failureEvidence.firstCause?.incidentType, "request_error");
+    assert.equal(result.failureEvidence.firstCause?.eventIndex, null);
+    assert.equal(budget.snapshot().chargedNanoUsd, 152457600);
+    assert.equal(result.failureEvidence.secondary.some(row => row.code === "REQUEST_ABORTED"), true);
+    assert.ok(!JSON.stringify(result.failureEvidence).includes("PRIVATE_RESPONSE_BODY"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an event evidence write failure stops with a persistence cause instead of being mislabeled invalid JSON", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "positive-parent-event-persistence-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new PositiveBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-event-persistence", prompt: "Offline event persistence fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
+      calls++;
+      writeFileSync(join(root, ".failure-evidence.tmp"), "PRESERVED_CONFLICT", { flag: "wx" });
+      return new Response(nativeResponse("", { id: "observation", name: "bash", input: { command: "printf 'Permission denied\\n'" } }), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.failureEvidence.firstCause?.code, "FAILURE_EVIDENCE_WRITE_FAILED");
+    assert.equal(result.failureEvidence.firstCause?.incidentType, "persistence_error");
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(readFileSync(join(root, ".failure-evidence.tmp"), "utf8"), "PRESERVED_CONFLICT");
     assert.equal(budget.snapshot().state, "stopped");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -175,5 +308,12 @@ test("native tools cannot overwrite the controller's original wire accounting ev
     assert.ok(result.events.some(event => event.type === "tool_execution_end" && event.isError === true));
     assert.equal(JSON.parse(readFileSync(evidence, "utf8")).response.body, payload);
     assert.equal(existsSync(join(workspace, "events.partial.json")), false);
+    const failure = JSON.parse(readFileSync(join(root, "failure-evidence.json"), "utf8"));
+    assert.equal(failure.firstCause.code, "TOOL_EXECUTION_FAILED");
+    assert.equal(failure.firstCause.toolCallId, "tamper");
+    assert.equal(failure.firstCause.toolName, "write");
+    assert.equal(result.events[failure.firstCause.eventIndex]?.type, "tool_execution_end");
+    assert.equal(result.failureEvidence.firstCause?.toolCallId, "tamper");
+    assert.equal(existsSync(join(workspace, "failure-evidence.json")), false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

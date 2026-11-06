@@ -13,6 +13,8 @@ import { preflightModels } from './model-preflight.ts';
 import { PositiveBudget, POSITIVE_BUDGET_POLICY } from './positive-budget.ts';
 import { extractText, type PiEvent, type PiRunResult } from './pi.ts';
 import { resolvePiRuntime } from './isolation.ts';
+import { applyPositiveV2Revision, type PositiveExecutionRevision } from './positive-revision.ts';
+import { POSITIVE_ENVIRONMENT_V2, POSITIVE_ENVIRONMENT_V2_SHA256 } from './positive-environment.ts';
 
 const FREEZE_SHA256 = '0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7';
 const BUNDLE = '.local/retest-data-analysis-1.9.0-20261106/frozen';
@@ -34,11 +36,13 @@ interface Plan {
 export interface PositiveProbeDescriptor {
   plan: Plan; manifest: RunManifest; sourcePackage: string; frozenRoot: string;
   freezeSha256: string; runtime?: { node: { path: string; version: string; sha256: string }; pi: { root: string; treeFiles: number; entrySha256: string } };
+  revision?: PositiveExecutionRevision;
 }
 export interface PositiveSessionOptions {
   workspaceRoot: string; sessionId: string; prompt: string; model: string; skillPaths: string[];
   home: string; role: 'subject' | 'judge'; budget: PositiveBudget; timeoutMs: number; onLedger?: () => void;
   catalogHashes?: Record<string, string | null>;
+  environmentInstruction?: string;
 }
 export type PositiveSessionAdapter = (options: PositiveSessionOptions) => Promise<PiRunResult>;
 export interface PositiveProbeOutcome {
@@ -49,7 +53,8 @@ export interface PositiveProbeOutcome {
 }
 
 /** No auth reads, directories, SDK sessions, or network requests. */
-export function describePositiveProbe(repoRoot = process.cwd()): PositiveProbeDescriptor {
+export function describePositiveProbe(repoRoot = process.cwd(), revision: 'v1' | 'v2' = 'v1'): PositiveProbeDescriptor {
+  assert(['v1', 'v2'].includes(revision), 'Unknown positive execution revision');
   const root = realpathSync(resolve(repoRoot));
   const frozenRoot = join(root, BUNDLE);
   assert.equal(hash(join(frozenRoot, 'FREEZE.json')), FREEZE_SHA256, 'Frozen receipt identity changed');
@@ -96,14 +101,19 @@ export function describePositiveProbe(repoRoot = process.cwd()): PositiveProbeDe
     candidate: { identity, snapshotDir: '.frozen/skill', originalSkillPath: join(plan.sourcePackage, 'SKILL.md') },
     suiteMeta: { suiteId: suite.id, suiteVersion: suite.version ?? '', suiteHash: plan.suiteHash, skillVersion: suite.skill?.version ?? '', skillPath: join(plan.sourcePackage, 'SKILL.md') },
   };
-  return { plan, manifest, sourcePackage: plan.sourcePackage, frozenRoot, freezeSha256: FREEZE_SHA256, runtime: freeze.environment };
+  const descriptor = { plan, manifest, sourcePackage: plan.sourcePackage, frozenRoot, freezeSha256: FREEZE_SHA256, runtime: freeze.environment };
+  return revision === 'v2' ? applyPositiveV2Revision(descriptor, root) : descriptor;
 }
 
 export function positiveProbePublicDescription(descriptor: PositiveProbeDescriptor) {
-  return { entrypoint: 'controlled-positive-v1', frozenReceiptSha256: descriptor.freezeSha256,
+  return { entrypoint: descriptor.revision?.id ?? 'controlled-positive-v1', frozenReceiptSha256: descriptor.freezeSha256,
     runId: descriptor.plan.runId, model: descriptor.plan.model, judgeModel: descriptor.plan.judgeModel,
     tasks: 2, subjectSessions: 4, judgeSessions: 4, policy: POSITIVE_BUDGET_POLICY,
     executionAuthorized: false, providerCalls: 'NOT_RUN', runRootMustBeFresh: !existsSync(descriptor.plan.runRoot),
+    ...(descriptor.revision ? { executionRevision: descriptor.revision,
+      plannedRunRoot: `runs/${descriptor.plan.runId}`, suiteHash: descriptor.plan.suiteHash,
+      judgeSeed: descriptor.plan.judgeSeed, judgePlans: descriptor.plan.judgePlans,
+      executionReady: false, realExecutionHold: ['New explicit authorization for the v2 complete two-arm run is required', 'Model behavior under the shared environment remains unverified', 'Judge authentication, model permission and quota remain unverified'] } : {}),
     executionDifferences: ['Native Pi SDK with original tools instead of print CLI', 'Network-denied model/tool worker; parent authenticates and brokers requests', 'Subject max output 4096; judge max output 1024', 'Automatic retry, compaction and cache warming disabled', 'Every HTTP request reserves worst-case USD equivalent before dispatch', 'Script evidence accepts only /usr/bin/python3 with exact frozen script/mode and plain file input or quoted here-document; shell composition is unverified', 'All sessions set xcrun_db=<workspace>/.xcrun_db to keep system Python cache inside the sandbox'],
     accountAuth: 'UNKNOWN', accountModelPermission: 'UNKNOWN', quota: 'UNKNOWN', actualBilling: 'UNKNOWN',
     budgetScope: 'Conservative USD equivalent at pinned public rates; not an account-wide invoice cap',
@@ -137,13 +147,14 @@ export function verifyPositiveProbeRuntime(descriptor: PositiveProbeDescriptor):
 }
 
 /** Real entry has no injection seam or parameter overrides. Only future explicit approval may call it. */
-export async function executePositiveProbe(options: { repoRoot?: string; executionAuthorized: boolean }): Promise<PositiveProbeOutcome> {
+export async function executePositiveProbe(options: { repoRoot?: string; executionAuthorized: boolean; revision?: 'v2' }): Promise<PositiveProbeOutcome> {
   if (options.executionAuthorized !== true) throw new Error('Explicit real Provider authorization is required');
-  const descriptor = describePositiveProbe(options.repoRoot);
+  const descriptor = describePositiveProbe(options.repoRoot, options.revision ?? 'v1');
   assert(!existsSync(descriptor.plan.runRoot), 'Run directory already exists; no overwrite or resume');
   const catalogHashes = captureCatalogHashes(descriptor.plan.home);
   await verifyPositiveProbeReadiness(descriptor);
   assert.deepEqual(captureCatalogHashes(descriptor.plan.home), catalogHashes, 'Model catalog changed during readiness');
+  if (options.revision) describePositiveProbe(options.repoRoot, options.revision); // Recheck the retained failure before any new call.
   const { runControlledSession } = await import('./positive-session.ts');
   return executeDescriptor(descriptor, runControlledSession, 'real-provider', catalogHashes);
 }
@@ -219,6 +230,11 @@ function validRawJudge(text: string): boolean {
 
 async function executeDescriptor(descriptor: PositiveProbeDescriptor, adapter: PositiveSessionAdapter, evidenceLevel: 'real-provider' | 'simulated', catalogHashes?: Record<string, string | null>): Promise<PositiveProbeOutcome> {
   const { plan, manifest } = descriptor;
+  if (descriptor.revision) {
+    assert.equal(descriptor.revision.id, 'controlled-positive-v2');
+    assert.equal(descriptor.revision.environmentInstruction, POSITIVE_ENVIRONMENT_V2, 'Shared environment text drift');
+    assert.equal(descriptor.revision.environmentSha256, POSITIVE_ENVIRONMENT_V2_SHA256, 'Shared environment hash drift');
+  }
   assert(!existsSync(plan.runRoot), 'Run directory already exists; no overwrite or resume');
   const root = plan.runRoot;
   mkdirSync(dirname(root), { recursive: true, mode: 0o700 });
@@ -244,6 +260,7 @@ async function executeDescriptor(descriptor: PositiveProbeDescriptor, adapter: P
     try { fsyncSync(directory); } finally { closeSync(directory); }
   };
   if (catalogHashes) writeFileSync(join(root, 'model-catalog-lock.json'), JSON.stringify({ schemaVersion: 1, files: catalogHashes, lockedAt: new Date().toISOString(), scope: 'Same source catalog bytes for every controlled subject and judge session' }, null, 2), { flag: 'wx', mode: 0o600 });
+  if (descriptor.revision) writeFileSync(join(root, 'execution-revision.json'), JSON.stringify(descriptor.revision, null, 2), { flag: 'wx', mode: 0o600 });
   writeFileSync(join(root, 'controlled-execution.json'), JSON.stringify({ ...positiveProbePublicDescription(descriptor), evidenceLevel, catalogLockFile: catalogHashes ? 'model-catalog-lock.json' : null, executionAuthorized: evidenceLevel === 'real-provider', createdAt: new Date().toISOString() }, null, 2), { flag: 'wx', mode: 0o600 });
   persist();
   const invoke = async (id: string, prompt: string, skillPaths: string[], role: 'subject' | 'judge') => {
@@ -254,7 +271,8 @@ async function executeDescriptor(descriptor: PositiveProbeDescriptor, adapter: P
     try {
       run = await adapter({ workspaceRoot: workspace, sessionId: id, prompt, skillPaths,
         model: role === 'subject' ? plan.model : plan.judgeModel, role, home: plan.home, budget,
-        timeoutMs: role === 'subject' ? plan.settings.timeoutMs : plan.settings.judgeTimeoutMs, onLedger: persist, catalogHashes });
+        timeoutMs: role === 'subject' ? plan.settings.timeoutMs : plan.settings.judgeTimeoutMs, onLedger: persist, catalogHashes,
+        environmentInstruction: role === 'subject' ? descriptor.revision?.environmentInstruction : undefined });
     } catch (error) {
       record.status = 'FAILED';
       writeFileSync(join(record.evidenceDir, 'result.json'), JSON.stringify({ status: 'failed', assertions: null, activation: null, evidenceLevel, error: 'ADAPTER_ABORTED' }, null, 2), { flag: 'wx', mode: 0o600 });

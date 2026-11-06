@@ -1,0 +1,190 @@
+{
+  "entrypoint": "controlled-positive-v2",
+  "frozenReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+  "runId": "da190-20261107-controlled-v2-positive",
+  "model": "minimax-cn/MiniMax-M3.1-Flash",
+  "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+  "tasks": 2,
+  "subjectSessions": 4,
+  "judgeSessions": 4,
+  "policy": {
+    "version": "da190-positive-budget-v1",
+    "pricingVerifiedAt": "2026-11-06",
+    "pricingBasis": "Conservative public PAYGO USD equivalent; all input/cache tokens charged at uncached input rate; Token Plan cash billing remains unknown",
+    "pricingSources": [
+      "https://www.minimax.io/blog/minimax-m31f",
+      "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "https://mimo.mi.com/docs/en-US/price/token-plan"
+    ],
+    "maxSessions": 8,
+    "maxNanoUsd": 1000000000,
+    "models": {
+      "subject": {
+        "model": "minimax-cn/MiniMax-M3.1-Flash",
+        "contextWindow": 1000000,
+        "maxOutputTokens": 4096,
+        "inputNanoUsdPerToken": 150,
+        "outputNanoUsdPerToken": 600
+      },
+      "judge": {
+        "model": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+        "contextWindow": 1048576,
+        "maxOutputTokens": 1024,
+        "inputNanoUsdPerToken": 140,
+        "outputNanoUsdPerToken": 280
+      }
+    }
+  },
+  "executionAuthorized": false,
+  "providerCalls": "NOT_RUN",
+  "runRootMustBeFresh": true,
+  "executionRevision": {
+    "id": "controlled-positive-v2",
+    "environmentInstruction": "仅使用当前消息和本会话系统明确提供的任务资源。当前工作区中的启动代码和模型配置（包括 .positive-worker.mts、.pi-home）是运行设施，不提供任务规则。不要搜索工作区祖先目录、仓库、宿主 HOME 或 SDK 来补充未提供的流程定义。系统显式列出的 skill 包及其包内依赖仍可按既有只读权限访问。若现有材料不足以确定所请求的流程，请在最终回答中如实说明缺失信息并结束工具探索，不猜测未提供的规则。",
+    "environmentSha256": "c0a36bffc30d4934ddc77a15d574db78226c852b7eff4dfcd0a0fe3447be23e0",
+    "environmentVersion": "positive-environment-v2",
+    "appliesTo": [
+      "baseline",
+      "skill"
+    ],
+    "previousFailure": {
+      "runId": "da190-20261106-frozen-v1-positive",
+      "relativeRoot": "runs/da190-20261106-frozen-v1-positive",
+      "sourceCommit": "d66cad89f8191806e504fa6a4faefd968b7fb63b",
+      "controlStatusSha256": "38f00aced07f5cbb3953b8cb6b0ba2a0edf04fc4c0a24e561ad266f43b5ffaea",
+      "artifactIndex": ".local/controlled-positive-real-20261106/run-artifact-index.json",
+      "artifactIndexSha256": "852cb0f2661d5fc6408c76ff53f1adb7cff8777104e7782e50fc071592928922",
+      "artifactsVerified": 23
+    }
+  },
+  "plannedRunRoot": "runs/da190-20261107-controlled-v2-positive",
+  "suiteHash": "sha256:ca5b80a7bd839627",
+  "judgeSeed": "da190-20261106-frozen-v1-positive",
+  "judgePlans": [
+    {
+      "taskId": "da-positive-json",
+      "taskKey": "skill-da-positive-json-1",
+      "protocolVersion": "b-relative-a-v2",
+      "rounds": [
+        {
+          "roundIndex": 0,
+          "swapped": true,
+          "dirName": "round-001"
+        },
+        {
+          "roundIndex": 1,
+          "swapped": false,
+          "dirName": "round-002"
+        }
+      ]
+    },
+    {
+      "taskId": "da-positive-digest",
+      "taskKey": "skill-da-positive-digest-1",
+      "protocolVersion": "b-relative-a-v2",
+      "rounds": [
+        {
+          "roundIndex": 0,
+          "swapped": true,
+          "dirName": "round-001"
+        },
+        {
+          "roundIndex": 1,
+          "swapped": false,
+          "dirName": "round-002"
+        }
+      ]
+    }
+  ],
+  "executionReady": false,
+  "realExecutionHold": [
+    "New explicit authorization for the v2 complete two-arm run is required",
+    "Model behavior under the shared environment remains unverified",
+    "Judge authentication, model permission and quota remain unverified"
+  ],
+  "executionDifferences": [
+    "Native Pi SDK with original tools instead of print CLI",
+    "Network-denied model/tool worker; parent authenticates and brokers requests",
+    "Subject max output 4096; judge max output 1024",
+    "Automatic retry, compaction and cache warming disabled",
+    "Every HTTP request reserves worst-case USD equivalent before dispatch",
+    "Script evidence accepts only /usr/bin/python3 with exact frozen script/mode and plain file input or quoted here-document; shell composition is unverified",
+    "All sessions set xcrun_db=<workspace>/.xcrun_db to keep system Python cache inside the sandbox",
+    "Identical fixed environment addendum for baseline and P only; original judge prompt unchanged"
+  ],
+  "accountAuth": "UNKNOWN",
+  "accountModelPermission": "UNKNOWN",
+  "quota": "UNKNOWN",
+  "actualBilling": "UNKNOWN",
+  "budgetScope": "Conservative USD equivalent at pinned public rates; not an account-wide invoice cap",
+  "mainExperiment": "NOT_RUN",
+  "candidateEffectiveness": "NOT_EVALUATED",
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "status": "PLANNED_OFFLINE_NOT_EXECUTED",
+  "sourceCommitBeforeChanges": "d66cad89f8191806e504fa6a4faefd968b7fb63b",
+  "budgetScopeNote": "US$1 equivalent is the ceiling for this complete new v2 run; the old failed run and its US$0.002385750 equivalent expense remain separate and unchanged.",
+  "sessionPlan": [
+    {
+      "id": "baseline-da-positive-json-1",
+      "role": "subject",
+      "variant": "baseline",
+      "taskId": "da-positive-json",
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "baseline-da-positive-digest-1",
+      "role": "subject",
+      "variant": "baseline",
+      "taskId": "da-positive-digest",
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "skill-da-positive-json-1",
+      "role": "subject",
+      "variant": "skill",
+      "taskId": "da-positive-json",
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "skill-da-positive-digest-1",
+      "role": "subject",
+      "variant": "skill",
+      "taskId": "da-positive-digest",
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-001",
+      "role": "judge",
+      "taskId": "da-positive-json",
+      "swapped": true,
+      "roundIndex": 0,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-002",
+      "role": "judge",
+      "taskId": "da-positive-json",
+      "swapped": false,
+      "roundIndex": 1,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-001",
+      "role": "judge",
+      "taskId": "da-positive-digest",
+      "swapped": true,
+      "roundIndex": 0,
+      "status": "NOT_RUN"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-002",
+      "role": "judge",
+      "taskId": "da-positive-digest",
+      "swapped": false,
+      "roundIndex": 1,
+      "status": "NOT_RUN"
+    }
+  ],
+  "implementationNote": "Generated from pinned source constants. This public plan is descriptive; the entry does not accept model/task/path overrides from it."
+}

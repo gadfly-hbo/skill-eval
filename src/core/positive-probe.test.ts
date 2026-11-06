@@ -27,6 +27,7 @@ import { buildJudgeSchedule } from './judge.ts';
 import { simulatePositiveProbe, type PositiveProbeDescriptor, type PositiveSessionAdapter } from './positive-probe.ts';
 import { PositiveBudget } from './positive-budget.ts';
 import type { PiRunResult } from './pi.ts';
+import { POSITIVE_ENVIRONMENT_V2, POSITIVE_ENVIRONMENT_V2_SHA256, POSITIVE_ENVIRONMENT_V2_VERSION } from './positive-environment.ts';
 
 function fixture() {
   const repo = mkdtempSync(join(tmpdir(), 'positive-fixture-'));
@@ -48,6 +49,15 @@ function fixture() {
     sourcePackage, frozenRoot: sourcePackage, freezeSha256: 'OFFLINE_FIXTURE',
   };
   return { repo, descriptor, cleanup: () => rmSync(repo, { recursive: true, force: true }) };
+}
+
+function addV2(descriptor: PositiveProbeDescriptor): void {
+  descriptor.revision = {
+    id: 'controlled-positive-v2', environmentInstruction: POSITIVE_ENVIRONMENT_V2,
+    environmentSha256: POSITIVE_ENVIRONMENT_V2_SHA256, environmentVersion: POSITIVE_ENVIRONMENT_V2_VERSION,
+    appliesTo: ['baseline', 'skill'],
+    previousFailure: { runId: 'previous-offline-fixture', relativeRoot: 'runs/previous-offline-fixture', sourceCommit: 'fixture', controlStatusSha256: 'fixture', artifactIndex: 'fixture', artifactIndexSha256: 'fixture', artifactsVerified: 23 },
+  };
 }
 
 function fakeAdapter(descriptor: PositiveProbeDescriptor, override?: (id: string, result: PiRunResult) => void): { adapter: PositiveSessionAdapter; calls: string[] } {
@@ -97,6 +107,71 @@ test('offline positive probe runs exactly four subjects then four anonymous orde
     assert(!prompt.includes(f.descriptor.sourcePackage));
     await assert.rejects(simulatePositiveProbe(f.descriptor, adapter), /already exists/);
     assert.equal(calls.length, 8, 'No resume or replacement calls');
+  } finally { f.cleanup(); }
+});
+
+test('v2 passes identical environment bytes to all four subject sessions and preserves the original judge input', async () => {
+  const f = fixture();
+  try {
+    addV2(f.descriptor);
+    const seen: Array<{ role: string; environment: string | undefined }> = [];
+    const base = fakeAdapter(f.descriptor).adapter;
+    const result = await simulatePositiveProbe(f.descriptor, async options => {
+      seen.push({ role: options.role, environment: options.environmentInstruction });
+      return base(options);
+    });
+    assert.equal(result.status, 'PASS', result.reason ?? '');
+    assert.equal(seen.length, 8);
+    assert.deepEqual(seen.filter(s => s.role === 'subject').map(s => s.environment), Array(4).fill(POSITIVE_ENVIRONMENT_V2));
+    assert.ok(seen.filter(s => s.role === 'judge').every(s => s.environment === undefined));
+    const revision = JSON.parse(readFileSync(join(f.descriptor.plan.runRoot, 'execution-revision.json'), 'utf8'));
+    assert.equal(revision.environmentSha256, POSITIVE_ENVIRONMENT_V2_SHA256);
+    assert.equal(revision.previousFailure.runId, 'previous-offline-fixture');
+  } finally { f.cleanup(); }
+});
+
+test('v1 still supplies no environment instruction and does not inherit the v2 change', async () => {
+  const f = fixture();
+  try {
+    const base = fakeAdapter(f.descriptor).adapter;
+    const result = await simulatePositiveProbe(f.descriptor, options => {
+      assert.equal(options.environmentInstruction, undefined);
+      return base(options);
+    });
+    assert.equal(result.status, 'PASS', result.reason ?? '');
+    assert.equal(existsSync(join(f.descriptor.plan.runRoot, 'execution-revision.json')), false);
+  } finally { f.cleanup(); }
+});
+
+test('v2 rejects a drifted shared instruction before creating a run or invoking any session', async () => {
+  const f = fixture();
+  try {
+    addV2(f.descriptor); f.descriptor.revision!.environmentInstruction += '\nextra';
+    let calls = 0;
+    await assert.rejects(simulatePositiveProbe(f.descriptor, async () => { calls++; throw new Error('must not run'); }), /text drift/);
+    assert.equal(calls, 0); assert.equal(existsSync(f.descriptor.plan.runRoot), false);
+  } finally { f.cleanup(); }
+});
+
+test('v2 normal missing-definition output is scored as a baseline answer and is not a tool exception', async () => {
+  const f = fixture();
+  try {
+    addV2(f.descriptor);
+    const { adapter } = fakeAdapter(f.descriptor, (id, run) => { if (id.startsWith('baseline-')) run.metrics.output = 'The workflow definition was not supplied.'; });
+    const outcome = await simulatePositiveProbe(f.descriptor, adapter);
+    assert.equal(outcome.status, 'PASS', outcome.reason ?? '');
+    const result = JSON.parse(readFileSync(join(outcome.sessions[0]!.evidenceDir, 'result.json'), 'utf8'));
+    assert.equal(result.assertions.allPassed, false);
+    assert.equal(outcome.sessions[0]!.status, 'PASS');
+    assert.equal(outcome.actualProviderCalls, 'NOT_RUN');
+  } finally { f.cleanup(); }
+});
+
+test('v2 authorization is independent and is rejected before any asset or credential access', async () => {
+  const f = fixture();
+  try {
+    await assert.rejects(executePositiveProbe({ executionAuthorized: false, revision: 'v2', repoRoot: f.repo }), /authorization/);
+    assert.equal(existsSync(f.descriptor.plan.runRoot), false);
   } finally { f.cleanup(); }
 });
 

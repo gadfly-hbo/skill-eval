@@ -1,13 +1,14 @@
 /** Restricted native Pi session. Only this parent process owns credentials/network. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { PositiveBudget, BudgetStopError } from "./positive-budget.ts";
 import { buildSandboxCommand, resolvePiRuntime, verifySandboxCommand } from "./isolation.ts";
 import { collectMetrics, emptyMetrics, type PiEvent, type PiRunResult } from "./pi.ts";
+import { PositiveFailureEvidence, type PositiveFailureSnapshot, type PositiveIncidentType } from "./positive-failure.ts";
 
 const SUBJECT = "minimax-cn/MiniMax-M3.1-Flash";
 const JUDGE = "xiaomi-token-plan-cn/mimo-v2.6-flash";
@@ -154,7 +155,10 @@ export interface ControlledSessionOptions {
   workspaceRoot: string; sessionId: string; prompt: string; model: string; skillPaths: string[]; home: string;
   role: "subject" | "judge"; budget: PositiveBudget; timeoutMs: number; onLedger?: () => void;
   catalogHashes?: Record<string, string | null>;
+  environmentInstruction?: string;
 }
+
+export type ControlledSessionResult = PiRunResult & { failureEvidence: PositiveFailureSnapshot };
 
 function safeCatalog(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(safeCatalog);
@@ -166,24 +170,54 @@ function safeCatalog(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).filter(([key]) => !/^(?:api[_-]?key|authorization|auth|headers?|secret|credentials?|access[_-]?token|refresh[_-]?token)$/i.test(key)).map(([key, item]) => [key, safeCatalog(item)]));
 }
 
-export async function runControlledSession(options: ControlledSessionOptions): Promise<PiRunResult> {
+export async function runControlledSession(options: ControlledSessionOptions): Promise<ControlledSessionResult> {
   return runSession(options);
 }
 
 /** Explicit offline seam: never loads a real key and requires a supplied in-memory HTTP adapter. */
-export async function simulateControlledSession(options: ControlledSessionOptions, fetcher: typeof fetch): Promise<PiRunResult> {
+export async function simulateControlledSession(options: ControlledSessionOptions, fetcher: typeof fetch): Promise<ControlledSessionResult> {
   if (typeof fetcher !== "function") throw new PositiveRequestError("OFFLINE_FETCH_REQUIRED");
   return runSession(options, fetcher);
 }
 
-async function runSession(options: ControlledSessionOptions, offlineFetch?: typeof fetch): Promise<PiRunResult> {
+async function runSession(options: ControlledSessionOptions, offlineFetch?: typeof fetch): Promise<ControlledSessionResult> {
   const events: PiEvent[] = [], metrics = emptyMetrics();
   // The sandbox grants only workspace access; raw accounting evidence stays in its parent.
   const evidenceRoot = dirname(options.workspaceRoot);
+  const failures = new PositiveFailureEvidence(options.sessionId);
+  const failureEvidence = failures.snapshot();
+  let evidenceClaimed = false;
+  const persistFailureEvidence = () => {
+    try {
+      Object.assign(failureEvidence, failures.snapshot());
+      const path = join(evidenceRoot, "failure-evidence.json"), temporary = join(evidenceRoot, ".failure-evidence.tmp");
+      const target = evidenceClaimed ? temporary : path;
+      const file = openSync(target, "wx", 0o600);
+      try { writeFileSync(file, JSON.stringify(failureEvidence, null, 2)); fsyncSync(file); }
+      finally { closeSync(file); }
+      if (evidenceClaimed) renameSync(temporary, path);
+      evidenceClaimed = true;
+      const directory = openSync(evidenceRoot, "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    } catch { throw new PositiveRequestError("FAILURE_EVIDENCE_WRITE_FAILED"); }
+  };
+  const recordFailure = (code: string, kind: PositiveIncidentType) => {
+    failures.record(code, kind);
+    try { persistFailureEvidence(); }
+    catch { failures.record("FAILURE_EVIDENCE_WRITE_FAILED", "persistence_error"); Object.assign(failureEvidence, failures.snapshot()); }
+  };
+  const syncLedger = () => {
+    try { options.onLedger?.(); }
+    catch {
+      recordFailure("LEDGER_PERSISTENCE_FAILED", "persistence_error");
+      throw new PositiveRequestError("LEDGER_PERSISTENCE_FAILED");
+    }
+  };
   let isolation = { verified: false, issues: ["CONTROLLED_SANDBOX_NOT_VERIFIED"] as string[], backend: "macos-sandbox-exec-network-denied" };
   let stderr = "", timedOut = false, started = false;
   try {
-    options.budget.beginSession(options.sessionId, options.role, options.model); started = true; options.onLedger?.();
+    persistFailureEvidence();
+    options.budget.beginSession(options.sessionId, options.role, options.model); started = true; syncLedger();
     if (!offlineFetch && !options.catalogHashes) throw new PositiveRequestError("CATALOG_LOCK_REQUIRED");
     const home = join(options.workspaceRoot, ".pi-home"), config = join(home, ".pi", "agent");
     mkdirSync(config, { recursive: true, mode: 0o700 });
@@ -217,7 +251,8 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
       let done = false, killing: NodeJS.Timeout | undefined;
       const stop = (code: string) => {
         options.budget.stop(code); stderr ||= code; abort.abort();
-        try { options.onLedger?.(); } catch { stderr = "LEDGER_PERSISTENCE_FAILED"; }
+        recordFailure(code, code === "SESSION_TIMEOUT" ? "timeout" : code.includes("PERSISTENCE") ? "persistence_error" : "worker_error");
+        try { syncLedger(); } catch { stderr = "LEDGER_PERSISTENCE_FAILED"; }
         finally {
           if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ } }
           killing ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 1000);
@@ -227,20 +262,29 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
       child.on("message", (value) => {
         const msg = value as { type?: string } & PositiveRequest;
         if (msg.type !== "request") { stop("INVALID_WORKER_IPC"); return; }
-        void dispatchPositiveRequest(msg, { model: options.model, budget: options.budget, apiKey: credential.key, signal: abort.signal, fetcher: offlineFetch, onLedger: options.onLedger,
+        void dispatchPositiveRequest(msg, { model: options.model, budget: options.budget, apiKey: credential.key, signal: abort.signal, fetcher: offlineFetch, onLedger: syncLedger,
           onWire: (request, response) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.json`), JSON.stringify({ request: { url: request.url, body: request.body }, response }), { flag: "wx", mode: 0o600 }),
           onChunk: (request, chunk) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.partial.sse`), chunk, { flag: "a", mode: 0o600 }),
-        }).then((response) => { if (child.connected) child.send({ type: "response", requestId: msg.requestId, ...response }, (error) => { if (error && !done) stop("WORKER_IPC_FAILURE"); }); }).catch(() => stop("REQUEST_ABORTED"));
+        }).then((response) => { if (child.connected) child.send({ type: "response", requestId: msg.requestId, ...response }, (error) => { if (error && !done) stop("WORKER_IPC_FAILURE"); }); }).catch((error) => {
+          recordFailure(error instanceof PositiveRequestError ? error.message : "BROKER_REQUEST_FAILED", "request_error");
+          stop("REQUEST_ABORTED");
+        });
       });
       const lines = createInterface({ input: child.stdout! });
       lines.on("line", (line) => {
         try {
           const event = JSON.parse(line) as PiEvent; events.push(event); collectMetrics(metrics, event, options.workspaceRoot);
+          if (failures.observe(event, events.length - 1)) persistFailureEvidence();
           // Persist incrementally, including failed or partial tool output.
           writeFileSync(join(evidenceRoot, "events.partial.json"), JSON.stringify(events), { mode: 0o600 });
           const message = event.message as { role?: string; stopReason?: string } | undefined;
           if (event.type === "tool_execution_end" && event.isError === true || event.type === "message_end" && message?.role === "assistant" && ["error", "aborted", "length"].includes(message.stopReason ?? "") || event.type === "controlled_error") stop("SESSION_EVENT_FAILURE");
-        } catch { stop("INVALID_WORKER_EVENT"); }
+        } catch (error) {
+          if (error instanceof PositiveRequestError && error.message === "FAILURE_EVIDENCE_WRITE_FAILED") {
+            recordFailure(error.message, "persistence_error");
+            stop(error.message);
+          } else stop("INVALID_WORKER_EVENT");
+        }
       });
       // Raw SDK stderr can contain headers or credential hints; retain a safe code only.
       child.stderr?.on("data", () => { stderr ||= "WORKER_STDERR"; });
@@ -248,16 +292,21 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
       child.on("error", () => { stop("WORKER_START_FAILURE"); finish(null); });
       child.stdin!.on("error", () => { if (!done) stop("WORKER_STDIN_FAILURE"); });
       child.on("close", finish);
-      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.role === "subject" ? 4096 : 1024 }));
+      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.role === "subject" ? 4096 : 1024, environmentInstruction: options.environmentInstruction }));
     });
-    if (result !== 0 || stderr || !metrics.output.trim()) options.budget.stop(stderr || "SESSION_FAILED_OR_EMPTY");
-    return { exitCode: stderr ? 1 : result, events, metrics, stderr, timedOut, isolation };
+    if (result !== 0 || stderr || !metrics.output.trim()) {
+      options.budget.stop(stderr || "SESSION_FAILED_OR_EMPTY");
+      if (!failures.snapshot().firstCause) recordFailure(stderr || "SESSION_FAILED_OR_EMPTY", "worker_error");
+    }
+    return { exitCode: stderr ? 1 : result, events, metrics, stderr, timedOut, isolation, failureEvidence };
   } catch (error) {
     const code = error instanceof PositiveRequestError ? error.message : "CONTROLLED_SESSION_BLOCKED";
     options.budget.stop(code);
-    return { exitCode: null, events, metrics, stderr: code, timedOut, isolation };
+    recordFailure(code, ["FAILURE_EVIDENCE_WRITE_FAILED", "LEDGER_PERSISTENCE_FAILED"].includes(code) ? "persistence_error" : "startup_error");
+    return { exitCode: null, events, metrics, stderr: code, timedOut, isolation, failureEvidence };
   } finally {
     if (started) { try { options.budget.endSession(); } catch { /* incomplete HTTP retains reservation */ } }
-    options.onLedger?.();
+    Object.assign(failureEvidence, failures.snapshot());
+    syncLedger();
   }
 }

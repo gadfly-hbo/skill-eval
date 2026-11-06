@@ -2,6 +2,7 @@
  * Real credentials and HTTP dispatch belong exclusively to the parent broker.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -14,6 +15,7 @@ interface WorkerConfig {
   model: string;
   skillPaths: string[];
   maxOutputTokens: number;
+  environmentInstruction?: string;
 }
 
 interface BrokerResponse {
@@ -120,6 +122,12 @@ async function main(): Promise<void> {
       typeof config.sessionId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(config.sessionId)) {
     throw new Error("WORKER_CONFIG_INVALID");
   }
+  // This standalone .mts cannot import the repository. Pin the one approved
+  // external addendum by bytes, rather than accepting arbitrary system text.
+  if (config.environmentInstruction !== undefined && (typeof config.environmentInstruction !== "string" ||
+      createHash("sha256").update(config.environmentInstruction).digest("hex") !== "c0a36bffc30d4934ddc77a15d574db78226c852b7eff4dfcd0a0fe3447be23e0")) {
+    throw new Error("WORKER_ENVIRONMENT_INVALID");
+  }
   requestPrefix = config.sessionId;
   const allowed = config.model === "minimax-cn/MiniMax-M3.1-Flash"
     ? { api: "anthropic-messages", baseUrl: "https://api.minimaxi.com/anthropic", contextWindow: 1_000_000, cap: 4096 }
@@ -168,6 +176,7 @@ async function main(): Promise<void> {
     cwd: config.workspaceRoot, agentDir, settingsManager: settings,
     noSkills: true, additionalSkillPaths: config.skillPaths,
     noContextFiles: true, noExtensions: true, noPromptTemplates: true, noThemes: true,
+    appendSystemPrompt: config.environmentInstruction === undefined ? [] : [config.environmentInstruction],
   });
   await loader.reload();
   const result = await sdk.createAgentSession({

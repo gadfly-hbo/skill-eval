@@ -1,0 +1,279 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-positive-real-execution-20261106-v1",
+  "date": "2026-11-06",
+  "sourceCommit": "d66cad89f8191806e504fa6a4faefd968b7fb63b",
+  "runId": "da190-20261106-frozen-v1-positive",
+  "evidenceLevel": "real-provider-native-sdk-and-tools",
+  "executionAuthorized": true,
+  "invocations": 1,
+  "processExitCode": 1,
+  "status": "STOPPED",
+  "positiveCalibrationVerdict": "NOT_COMPLETED",
+  "candidateEffectiveness": "NOT_EVALUATED",
+  "mainRetest": "NOT_RUN",
+  "selectiveReruns": "NONE",
+  "modelsUnchanged": true,
+  "startedAt": "2026-11-06T15:51:07.227Z",
+  "completionEvidenceFileMtimeUtc": "2026-11-06T15:51:15.433270+00:00",
+  "limits": {
+    "maxSessions": 8,
+    "maxUsdEquivalent": 1,
+    "subjectMaxOutputTokens": 4096,
+    "judgeMaxOutputTokens": 1024,
+    "automaticRetries": false,
+    "automaticCompaction": false,
+    "cacheWarming": false
+  },
+  "progress": {
+    "sessionsPlanned": 8,
+    "sessionsStarted": 1,
+    "sessionsCompletedSuccessfully": 0,
+    "sessionsFailed": 1,
+    "sessionsNotRun": 7,
+    "subjectRequests": 4,
+    "judgeRequests": "NOT_RUN",
+    "httpResponses200": 4,
+    "settledRequests": 4,
+    "pendingRequests": 0
+  },
+  "modelAccess": [
+    {
+      "role": "subject",
+      "model": "minimax-cn/MiniMax-M3.1-Flash",
+      "authentication": "CONFIRMED_FOR_THESE_FOUR_REQUESTS",
+      "modelPermission": "CONFIRMED_FOR_THESE_FOUR_REQUESTS",
+      "evidence": "Four HTTP 200 responses with exact request and response model identity and valid raw SSE usage",
+      "remoteWeightsRevision": "UNKNOWN",
+      "remainingBalanceOrQuota": "UNKNOWN"
+    },
+    {
+      "role": "judge",
+      "model": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+      "execution": "NOT_RUN",
+      "authentication": "UNKNOWN",
+      "modelPermission": "UNKNOWN",
+      "remainingTokenPlanCredits": "UNKNOWN"
+    }
+  ],
+  "failure": {
+    "stage": "baseline-da-positive-json-1",
+    "controllerCode": "SESSION_EVENT_FAILURE",
+    "category": "TOOL_FILESYSTEM_ISOLATION_DENIAL",
+    "tool": "bash",
+    "operation": "ls repository root or case parent outside the permitted workspace",
+    "error": "Operation not permitted",
+    "firstStructuredFailureExitCode": 1,
+    "subsequentParallelTool": "ABORTED_DURING_CLEANUP",
+    "providerAuthenticationFailure": false,
+    "providerQuotaFailureObserved": false,
+    "remainingQuotaStillUnknown": true,
+    "details": "An earlier compound command also emitted a denied ls but returned exit 0 after a successful cat, so its native tool event had isError=false. The controller stopped on the first structured isError=true event; there was no fifth HTTP dispatch."
+  },
+  "usage": {
+    "input": 5024,
+    "output": 527,
+    "cacheRead": 8773,
+    "cacheWrite": 0,
+    "totalInputIncludingCache": 13797,
+    "totalTokens": 14324,
+    "source": "Four settled ledger entries independently checked against original wire SSE",
+    "unrunMetrics": "NOT_RUN"
+  },
+  "cost": {
+    "budgetChargedNanoUsd": 2385750,
+    "budgetUsdEquivalent": "0.00238575",
+    "remainingNanoUsd": 997614250,
+    "remainingUsdEquivalent": "0.99761425",
+    "outstandingReservedNanoUsd": 0,
+    "failedRequestReservationChargesNanoUsd": 0,
+    "sdkReportedEstimateUsd": "0.0011962385",
+    "actualAccountChargeUsd": "UNKNOWN",
+    "budgetBasis": "Pinned public PAYGO USD equivalent; all cached and uncached input is conservatively charged at the uncached input rate",
+    "sdkEstimateScope": "Different local catalog prices and cache discount; descriptive only, not the budget or account bill",
+    "maximumPerRequestReservationUsd": "0.152457600"
+  },
+  "sessions": [
+    {
+      "id": "baseline-da-positive-json-1",
+      "role": "subject",
+      "status": "FAILED",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-json/1"
+    },
+    {
+      "id": "baseline-da-positive-digest-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-digest/1"
+    },
+    {
+      "id": "skill-da-positive-json-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/cases/skill/da-positive-json/1"
+    },
+    {
+      "id": "skill-da-positive-digest-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/cases/skill/da-positive-digest/1"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-001",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/judges/skill-da-positive-json-1/round-001"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-002",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/judges/skill-da-positive-json-1/round-002"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-001",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/judges/skill-da-positive-digest-1/round-001"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-002",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261106-frozen-v1-positive/judges/skill-da-positive-digest-1/round-002"
+    }
+  ],
+  "requests": [
+    {
+      "id": "baseline-da-positive-json-1-r1",
+      "state": "settled",
+      "usage": {
+        "input": 1667,
+        "output": 82,
+        "cacheRead": 128,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 318450
+    },
+    {
+      "id": "baseline-da-positive-json-1-r2",
+      "state": "settled",
+      "usage": {
+        "input": 239,
+        "output": 30,
+        "cacheRead": 1795,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 323100
+    },
+    {
+      "id": "baseline-da-positive-json-1-r3",
+      "state": "settled",
+      "usage": {
+        "input": 2782,
+        "output": 193,
+        "cacheRead": 2034,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 838200
+    },
+    {
+      "id": "baseline-da-positive-json-1-r4",
+      "state": "settled",
+      "usage": {
+        "input": 336,
+        "output": 222,
+        "cacheRead": 4816,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 906000
+    }
+  ],
+  "scoring": {
+    "failedBaselineAssertions": null,
+    "positivePActivationRate": "NOT_RUN",
+    "positivePAssertions": "NOT_RUN",
+    "positivePScriptExecution": "NOT_RUN",
+    "judgeRounds": "NOT_RUN",
+    "pairwiseWinRate": "NOT_RUN",
+    "mainSkillEffectiveness": "NOT_EVALUATED",
+    "ruleJudgeDisagreements": "NOT_RUN"
+  },
+  "evidence": {
+    "controlStatus": {
+      "path": "runs/da190-20261106-frozen-v1-positive/control-status.json",
+      "sha256": "38f00aced07f5cbb3953b8cb6b0ba2a0edf04fc4c0a24e561ad266f43b5ffaea"
+    },
+    "manifest": {
+      "path": "runs/da190-20261106-frozen-v1-positive/run-manifest.json",
+      "sha256": "96aec6c61db8e4be3a6358cab264cea9427186616b87562f8a9f161179622553"
+    },
+    "catalogLock": {
+      "path": "runs/da190-20261106-frozen-v1-positive/model-catalog-lock.json",
+      "sha256": "ead0ea81b325d3de2dd83f6ac4c7a1c0564884ab403e42e6b2fea549678f1944"
+    },
+    "rawWire": [
+      {
+        "path": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r1.json",
+        "sha256": "d81d64166508701a16641eef67f07abb377d3e461140b098935852503932534c",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r2.json",
+        "sha256": "9e71db043b953495e275ed5dff13c36669da17d77e5ec7a67b6090c34baff9e3",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r3.json",
+        "sha256": "c9d7a198084d591c86366ee33eb3746dc741207adf7040e654c1acdd596b81ad",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261106-frozen-v1-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r4.json",
+        "sha256": "716aa783d661ae8e40fc8b3a5995c43f75ad33d7838f9c878285c8bfa2aca999",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "maxOutputTokens": 4096
+      }
+    ],
+    "privateArtifactIndex": ".local/controlled-positive-real-20261106/run-artifact-index.json",
+    "privateLogs": ".local/controlled-positive-real-20261106"
+  },
+  "independentReview": {
+    "status": "READ_ONLY_EVIDENCE_RECONCILED",
+    "providerCallsByReviewer": "NONE",
+    "checks": [
+      "Four exact-model HTTP 200 raw responses and usage",
+      "Single failed baseline session; seven NOT_RUN rows",
+      "First structured sandbox denial and subsequent abort",
+      "No fifth HTTP or second session",
+      "Budget ledger fully settled and below limit",
+      "Original freeze intact and main roots absent"
+    ]
+  },
+  "preservation": {
+    "protectedFilesChecked": 1398,
+    "protectedFilesUnchanged": 1398,
+    "originalFreezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloadFilesUnchanged": 67,
+    "mainRunRootsAbsent": true,
+    "trackedSourceChanges": false,
+    "runDirectoryIgnored": true,
+    "privateMaterialsPublished": false
+  },
+  "limitations": [
+    "The run stopped before any P variant or judge; it cannot establish positive-control sensitivity or data-analysis effectiveness.",
+    "Four accepted calls prove only momentary endpoint and model access, not remaining account balance, future entitlement or remote weights revision.",
+    "Actual provider invoice and MiMo Token Plan state were not queried.",
+    "A trailing SDK assistant event with aborted stopReason and zero usage is synthetic and is not a fifth Provider request.",
+    "Legacy metrics.toolCalls=14 double-counts declarations and tool starts; there are seven actual tool_execution_start events.",
+    "controlled-execution.json inherits providerCalls=NOT_RUN from a pre-call description; runtime wire evidence and this report establish the four actual calls.",
+    "Compound shell commands can return exit 0 despite an earlier subcommand denial; stopping is based on the committed structured tool error gate."
+  ]
+}

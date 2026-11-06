@@ -1,0 +1,202 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-controlled-positive-v2-20261107-v1",
+  "date": "2026-11-07",
+  "status": "IMPLEMENTED_OFFLINE_VERIFIED_V2_NOT_EXECUTED",
+  "sourceCommitBeforeChanges": "d66cad89f8191806e504fa6a4faefd968b7fb63b",
+  "delivery": "workspace-only-not-committed-or-pushed",
+  "executionAuthorized": false,
+  "actualProviderCalls": "NOT_RUN",
+  "actualPositiveVerdict": "NOT_RUN",
+  "mainRetest": "NOT_RUN",
+  "actualTaskReruns": "NONE",
+  "oldFailureRecordRewritten": false,
+  "plan": {
+    "path": "docs/plans/2026-11-07-data-analysis-1.9.0-positive-v2-plan.json",
+    "sha256": "eaf5b63eee7c1fd6b853e4f12298f0a293958dd6299133b1d1490527332afe2c",
+    "runId": "da190-20261107-controlled-v2-positive",
+    "runRootCreated": false,
+    "judgeSeed": "da190-20261106-frozen-v1-positive",
+    "oldJudgeSchedulePreserved": true,
+    "maxSessions": 8,
+    "maxNanoUsdEquivalent": 1000000000,
+    "models": [
+      "minimax-cn/MiniMax-M3.1-Flash",
+      "xiaomi-token-plan-cn/mimo-v2.6-flash"
+    ]
+  },
+  "environment": {
+    "version": "positive-environment-v2",
+    "sha256": "c0a36bffc30d4934ddc77a15d574db78226c852b7eff4dfcd0a0fe3447be23e0",
+    "appliesTo": [
+      "baseline",
+      "skill"
+    ],
+    "identicalBytesAcrossFourSubjects": true,
+    "judgePrompt": "UNCHANGED",
+    "v1Default": "UNCHANGED_NO_ADDENDUM",
+    "nativeInterface": "DefaultResourceLoader.appendSystemPrompt",
+    "privateAnswersIncluded": false
+  },
+  "failureEvidence": {
+    "file": "<case-control-directory>/failure-evidence.json",
+    "modelCanReadOrWrite": false,
+    "firstCauseFields": [
+      "code",
+      "incidentType",
+      "eventIndex",
+      "toolCallId",
+      "toolName",
+      "exitCode"
+    ],
+    "secondaryCleanupDoesNotReplaceFirstCause": true,
+    "successfulCompoundDenial": "NON_AUTHORITATIVE_OBSERVATION_ONLY",
+    "stopDecision": "ORIGINAL_STRUCTURED_ERROR_RULE_UNCHANGED"
+  },
+  "oldFailureAnalysis": {
+    "mode": "OFFLINE_EXISTING_EVENT_ANALYSIS_ONLY",
+    "taskExecuted": false,
+    "providerCalls": "NOT_RUN",
+    "sourceEventSha256": "ca6e4a51e077d0f5f356482036c24c5566749ffd2ce1678f9b7b028a0e19339f",
+    "firstCause": {
+      "code": "TOOL_EXECUTION_FAILED",
+      "incidentType": "tool_error",
+      "eventIndex": 359,
+      "toolCallId": "call_01a1b18e97b276bab85a05a7",
+      "toolName": "bash",
+      "exitCode": 1
+    },
+    "observationEventIndices": [
+      220
+    ],
+    "secondaryEventIndices": [
+      360,
+      362,
+      370
+    ],
+    "oldArtifactsVerified": 23,
+    "oldArtifactIndexSha256": "852cb0f2661d5fc6408c76ff53f1adb7cff8777104e7782e50fc071592928922"
+  },
+  "validation": {
+    "command": "npm run check",
+    "typecheck": "PASS",
+    "tests": 465,
+    "passed": 465,
+    "failed": 0,
+    "skipped": 0,
+    "baselineTests": 437,
+    "addedTests": 28,
+    "log": ".local/controlled-positive-v2-20261107/check-final.log",
+    "logSha256": "c75068665252e9abeeea8b3df8a4fe39f594999e995625f92784f60f072913c9",
+    "readOnlyReadiness": {
+      "status": "LOCAL_RUNTIME_AND_MODELS_CONFIRMED",
+      "sdkInventoryEntries": 15138,
+      "exactModels": 2,
+      "providerCalls": "NOT_RUN"
+    },
+    "nativeTests": "Network-denied SDK with in-memory SSE and generic temporary tasks; no real credentials",
+    "checks": [
+      "v2 authorization guard and no overrides",
+      "v1 remains without v2 instruction",
+      "identical B/P instruction survives parent to final wire",
+      "explicit P package remains readable",
+      "private outside paths remain denied",
+      "normal missing-definition final answer does not become a tool exception",
+      "native errors stop future requests and cases",
+      "first structured tool failure preserved across worker cascade and cleanup",
+      "compound final exit 0 denial remains an observation",
+      "failure evidence cannot be overwritten by model tools",
+      "evidence persistence conflict stops before further requests",
+      "new run path with old task identities and judge seed",
+      "prior 23 artifacts match fixed hashes and modes"
+    ]
+  },
+  "independentReview": {
+    "status": "READ_ONLY_REVIEW_NO_MATERIAL_BLOCKERS",
+    "providerCalls": "NONE"
+  },
+  "preservation": {
+    "protectedFilesChecked": 1332,
+    "protectedFilesUnchanged": 1332,
+    "oldFailureArtifactFilesUnchanged": 23,
+    "originalFreezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloadFilesUnchanged": 67,
+    "budgetModuleUnchanged": true,
+    "isolationModuleUnchanged": true,
+    "privateMaterialsUploaded": false,
+    "existingRealReportsUnchanged": true
+  },
+  "limitations": [
+    "Real model behavior under the new shared instruction has not been tested.",
+    "A complete fresh two-arm v2 run needs new explicit authorization; no selective P or judge-only continuation.",
+    "Prior MiniMax access was confirmed only for the four old requests; current access and future quota are not established by offline checks.",
+    "MiMo real authentication, model entitlement and Token Plan state remain unknown.",
+    "The pinned USD equivalent limit is not an account-wide actual invoice cap."
+  ],
+  "sourceFiles": [
+    {
+      "path": "README.md",
+      "sha256": "4725bda754565af0b23294f0d1d33fd0da0b08ab9a30f38a4b07b381726c2bb5"
+    },
+    {
+      "path": "src/cli/positive-probe-v2.ts",
+      "sha256": "92b9230b42222f407e04d9d6b811b417e96faff3c65e0161cfe75adac7639117"
+    },
+    {
+      "path": "src/cli/positive-probe-v2.test.ts",
+      "sha256": "70e567d9f5752d464ff175c65adcd87f0897be3f62efb9c71ceefb3d53c8fbac"
+    },
+    {
+      "path": "src/core/positive-environment.ts",
+      "sha256": "ae07f3522c9154193cf88ce6d077aa3e8cdcde947014a508ce9e443dabb9d940"
+    },
+    {
+      "path": "src/core/positive-failure.ts",
+      "sha256": "31df2a3569f86a386a31cdf4a143205fee9beb51627b31c49e7b02d736d0fbd1"
+    },
+    {
+      "path": "src/core/positive-failure.test.ts",
+      "sha256": "17b037b1b4b8c2eb7789590c8c026af1b9983a798b0b97634ddae297f08f643f"
+    },
+    {
+      "path": "src/core/positive-revision.ts",
+      "sha256": "6a944f9f0b0558d7f4de3bbdb72a5a33aa93a023e9daa4f75c08eef4146e759a"
+    },
+    {
+      "path": "src/core/positive-revision.test.ts",
+      "sha256": "04c6270d1a27a9ce18293db273b5513c0e088558c85077111c3f2d72a3872f42"
+    },
+    {
+      "path": "src/core/positive-probe.ts",
+      "sha256": "6108d9f1c9c315541d333a88690a527b529815fdff38c6773a43a09b3cb49098"
+    },
+    {
+      "path": "src/core/positive-probe.test.ts",
+      "sha256": "1623087826e9811364dcca0c248701f7c917d8abd7b32e2bcb22318e515d3477"
+    },
+    {
+      "path": "src/core/positive-session.ts",
+      "sha256": "c2114572866f662d2e1fd41d68904cb5fe5b658725c6b5855eb7a92e90fa2338"
+    },
+    {
+      "path": "src/core/positive-session.test.ts",
+      "sha256": "ec4e0b37cdb2338e3f55878bb78fc7c4e5ff8de3957c2a7cf985e97abaf31a64"
+    },
+    {
+      "path": "src/core/positive-worker.ts",
+      "sha256": "01ea9e7b597b468dec2c32419d944de4328011e9edf0cf245a77bba969cc5712"
+    },
+    {
+      "path": "src/core/positive-worker.test.ts",
+      "sha256": "95a485bbf22dd210a891788084ad0bd830b6ed25c171ef3bf4c702afe5545321"
+    },
+    {
+      "path": "docs/阳性校验受控入口-v2-2026-11-07.md",
+      "sha256": "5bc94bb0a13edc22c3b0536177b28164c726cd6295acd2b31eec7670dab66a06"
+    },
+    {
+      "path": "docs/plans/2026-11-07-data-analysis-1.9.0-positive-v2-plan.json",
+      "sha256": "eaf5b63eee7c1fd6b853e4f12298f0a293958dd6299133b1d1490527332afe2c"
+    }
+  ]
+}
