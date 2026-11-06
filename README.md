@@ -74,6 +74,17 @@ npm run eval -- preflight \
 
 本次内置目录漏检的修正与离线验证见 [模型预检更正记录](docs/模型预检更正-2026-11-06.md)；原冻结包及历史判定保留。
 
+### data-analysis 1.9.0 两题阳性受控入口
+
+```bash
+# 默认只描述冻结方案；不读取鉴权、不创建运行目录、不调用 Provider
+node --experimental-strip-types src/cli/positive-probe.ts
+# 追加只读核验冻结 SDK、Node 和完整合并模型目录
+node --experimental-strip-types src/cli/positive-probe.ts --verify-runtime
+```
+
+独立入口固定两题、4 个被评会话及 4 个评委会话，最多 8 会话、US$1 保守等价预算。每个 HTTP 请求先预留最坏费用，再从原始 usage 结算；异常即停。模型与原生工具进程禁止联网，真实凭证仅由父进程持有。入口和限额配置位于原冻结包外，当前仍未授权真实执行；细节及离线证据见 [受控入口验证记录](docs/阳性校验受控入口-2026-11-06.md)。
+
 ### pi 配置隔离
 
 pi CLI 会用 `~/.pi/agent/` 下的锁文件，且并发运行会争用。评估时建议用隔离 HOME：

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-controlled-positive-entry-publication-20261106-v1",
+  "phase": "PRE_COMMIT_PUBLICATION_VERIFIED",
+  "target": {
+    "remote": "origin",
+    "repository": "https://github.com/gadfly-hbo/skill-eval",
+    "branch": "main",
+    "parentCommit": "f08f14e39a162176e25f3f6bb5cde61e34505887"
+  },
+  "authorization": {
+    "gitCommitAndPush": true,
+    "realProviderExecution": false
+  },
+  "verificationSnapshot": {
+    "path": "docs/validation/2026-11-06-controlled-positive-entry.json",
+    "sha256": "e75470f09e1a6ca87d344d373e6b5afc91c75bba207ac88f2041185d25fc3260",
+    "originalBytesPreserved": true,
+    "deliveryFieldScope": "The workspace-only delivery field and not-committed report text describe the preceding offline preparation stage. This append-only record documents the later Git publication request; no prior validation verdict is rewritten."
+  },
+  "scope": {
+    "positiveTasks": 2,
+    "subjectSessions": 4,
+    "judgeSessions": 4,
+    "maxSessions": 8,
+    "maxUsdEquivalent": 1,
+    "budgetBasis": "Pinned public PAYGO rates, conservative input/cache pricing; not an account-wide invoice cap",
+    "model": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "failurePolicy": "Reserve before every HTTP request, accumulate subject and judge charges, retain ambiguous reservations and stop immediately"
+  },
+  "validation": {
+    "command": "npm run check",
+    "typecheck": "PASS",
+    "tests": 437,
+    "passed": 437,
+    "failed": 0,
+    "skipped": 0,
+    "log": ".local/controlled-positive-20261106/delivery-20261106/check.log",
+    "logSha256": "83d4683c8a8666607859b6a61f35754f54388cc502979fc9781b8ee8d16fd691",
+    "providerCalls": "NOT_RUN"
+  },
+  "preservation": {
+    "protectedFilesChecked": 790,
+    "protectedFilesUnchanged": 790,
+    "originalFreezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloadFiles": 67,
+    "realRunRootExists": false,
+    "trackedLocalFiles": 0,
+    "originalRecordsRewritten": false
+  },
+  "privateMaterials": {
+    "location": ".local/",
+    "upload": false,
+    "contents": [
+      "Private truth",
+      "Hidden assertions",
+      "Frozen package",
+      "Raw logs and stopped offline fixtures"
+    ]
+  },
+  "remainingRealExecutionBlocks": [
+    "No authorization to call a real Provider",
+    "Real authentication validity remains unknown",
+    "Account model entitlement and remote revision remain unknown",
+    "Account balance and Token Plan Credits remain unknown",
+    "Actual regional or plan billing and account-wide spend limits remain unknown"
+  ],
+  "publicationEvidence": "The containing Git commit and remote main ref establish actual publication; this receipt is prepared before committing."
+}

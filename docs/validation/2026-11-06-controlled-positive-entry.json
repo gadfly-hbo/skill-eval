@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-controlled-positive-entry-20261106-v1",
+  "date": "2026-11-06",
+  "status": "IMPLEMENTED_OFFLINE_VERIFIED_REAL_EXECUTION_NOT_AUTHORIZED",
+  "sourceCommitBeforeChanges": "f08f14e39a162176e25f3f6bb5cde61e34505887",
+  "delivery": "workspace-only-not-committed-or-pushed",
+  "evidenceLevel": "offline-unit-regression-native-sdk-and-tools-with-in-memory-sse",
+  "actualProviderCalls": "NOT_RUN",
+  "executionAuthorized": false,
+  "actualPositiveVerdict": "NOT_RUN",
+  "actualActivationRate": null,
+  "actualWinRate": null,
+  "candidateEffectiveness": "NOT_EVALUATED",
+  "mainExperiment": "NOT_RUN",
+  "controlledConfiguration": {
+    "entrypoint": "controlled-positive-v1",
+    "frozenReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "runId": "da190-20261106-frozen-v1-positive",
+    "model": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "tasks": 2,
+    "subjectSessions": 4,
+    "judgeSessions": 4,
+    "policy": {
+      "version": "da190-positive-budget-v1",
+      "pricingVerifiedAt": "2026-11-06",
+      "pricingBasis": "Conservative public PAYGO USD equivalent; all input/cache tokens charged at uncached input rate; Token Plan cash billing remains unknown",
+      "pricingSources": [
+        "https://www.minimax.io/blog/minimax-m31f",
+        "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+        "https://mimo.mi.com/docs/en-US/price/token-plan"
+      ],
+      "maxSessions": 8,
+      "maxNanoUsd": 1000000000,
+      "models": {
+        "subject": {
+          "model": "minimax-cn/MiniMax-M3.1-Flash",
+          "contextWindow": 1000000,
+          "maxOutputTokens": 4096,
+          "inputNanoUsdPerToken": 150,
+          "outputNanoUsdPerToken": 600
+        },
+        "judge": {
+          "model": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+          "contextWindow": 1048576,
+          "maxOutputTokens": 1024,
+          "inputNanoUsdPerToken": 140,
+          "outputNanoUsdPerToken": 280
+        }
+      }
+    },
+    "executionAuthorized": false,
+    "providerCalls": "NOT_RUN",
+    "runRootMustBeFresh": true,
+    "executionDifferences": [
+      "Native Pi SDK with original tools instead of print CLI",
+      "Network-denied model/tool worker; parent authenticates and brokers requests",
+      "Subject max output 4096; judge max output 1024",
+      "Automatic retry, compaction and cache warming disabled",
+      "Every HTTP request reserves worst-case USD equivalent before dispatch",
+      "Script evidence accepts only /usr/bin/python3 with exact frozen script/mode and plain file input or quoted here-document; shell composition is unverified",
+      "All sessions set xcrun_db=<workspace>/.xcrun_db to keep system Python cache inside the sandbox"
+    ],
+    "accountAuth": "UNKNOWN",
+    "accountModelPermission": "UNKNOWN",
+    "quota": "UNKNOWN",
+    "actualBilling": "UNKNOWN",
+    "budgetScope": "Conservative USD equivalent at pinned public rates; not an account-wide invoice cap",
+    "mainExperiment": "NOT_RUN",
+    "candidateEffectiveness": "NOT_EVALUATED"
+  },
+  "validation": {
+    "command": "npm run check",
+    "typecheck": "PASS",
+    "tests": 437,
+    "passed": 437,
+    "failed": 0,
+    "skipped": 0,
+    "baselineTests": 378,
+    "addedTests": 59,
+    "log": ".local/controlled-positive-20261106/check-verified-final.log",
+    "logSha256": "fddfbb446463cdc80393490714860e21a973bd9c9bc294958fe54e0b932f9e56",
+    "localRuntimeReadiness": {
+      "status": "LOCAL_RUNTIME_AND_MODELS_CONFIRMED",
+      "sdkInventoryEntries": 15138,
+      "exactModelsConfirmed": 2,
+      "authRead": false,
+      "providerCalls": "NOT_RUN"
+    },
+    "nativeEndToEnd": {
+      "evidenceLevel": "simulated-native-sdk-and-tools",
+      "actualProviderCalls": "NOT_RUN",
+      "status": "PASS",
+      "sessions": 8,
+      "passedSessions": 8,
+      "requests": 12,
+      "subjectRequests": 8,
+      "judgeRequests": 4,
+      "nativeSkillReads": 2,
+      "nativeScriptRuns": 2,
+      "chargedNanoUsd": 235200,
+      "usdEquivalent": 0.0002352,
+      "reservedNanoUsd": 0,
+      "candidateEffectiveness": "NOT_EVALUATED",
+      "mainExperiment": "NOT_RUN",
+      "evidence": ".local/controlled-positive-20261106/native-e2e-1793979665325/native-e2e-summary.json",
+      "sha256": "144742f7ccdff4e717d294d5e5238666125ac57765abf6837e0dae3dbd855924",
+      "stoppedFixtureRecordsPreserved": 3
+    },
+    "cliGuardChecks": [
+      "Missing execution authorization rejected",
+      "Missing execute flag rejected",
+      "Model override rejected",
+      "Read-only/runtime and execution flags cannot be combined"
+    ]
+  },
+  "independentReview": {
+    "status": "NO_REMAINING_MATERIAL_FINDINGS_WITHIN_SCOPE",
+    "mode": "read-only-independent-agent",
+    "productionSha256": {
+      "src/core/positive-budget.ts": "2cbfaed908aec3d4a19bdec0f31e33f3c121d72a34c99287bc6b4a10a83d03d2",
+      "src/core/positive-session.ts": "82714901917791fcda817a2c41f14c5464c7f80ee2d02bdb5b12a9a5f1dcf54d",
+      "src/core/positive-worker.ts": "8f4612b8250c09a6714b153ee5ddfc44236afbd7dd990973d74f06b673f42174",
+      "src/core/positive-probe.ts": "052d341c418ede23d5cf73fd808a63f92cd35024c0cd1821a0612bd399387cdd",
+      "src/cli/positive-probe.ts": "d95ec8dd2d4d0e758c9eb5d9bf47e469355ca229289c4b63e4888cecbdd6ad33"
+    }
+  },
+  "preservation": {
+    "filesChecked": 790,
+    "filesUnchanged": 790,
+    "changed": [],
+    "frozenPayloadFilesChecked": 67,
+    "freezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "plannedRealRunRootExists": false
+  },
+  "privateMaterials": {
+    "location": ".local/",
+    "publish": false,
+    "includes": [
+      "Private truth",
+      "Hidden assertions",
+      "Original frozen package",
+      "Native end-to-end fixture task content",
+      "All stopped offline fixture records",
+      "Raw test logs"
+    ]
+  },
+  "remainingUnknown": [
+    "Real authentication validity",
+    "Account model entitlement and remote model revision",
+    "Remaining balance and Token Plan Credits",
+    "Actual regional/plan billing and account-wide spend limits"
+  ],
+  "sourceFiles": [
+    {
+      "path": "README.md",
+      "sha256": "87ea6d13b40779bc790d89ef313b4a18cd43b0ed300268acf4ae78ae28bb730a"
+    },
+    {
+      "path": "src/cli/positive-probe.ts",
+      "sha256": "d95ec8dd2d4d0e758c9eb5d9bf47e469355ca229289c4b63e4888cecbdd6ad33"
+    },
+    {
+      "path": "src/cli/positive-probe.test.ts",
+      "sha256": "a7b0c203f60d6d113a7bd9565f9c78df15f09f8151d87efe83a8a1415ee392ef"
+    },
+    {
+      "path": "src/core/positive-budget.ts",
+      "sha256": "2cbfaed908aec3d4a19bdec0f31e33f3c121d72a34c99287bc6b4a10a83d03d2"
+    },
+    {
+      "path": "src/core/positive-budget.test.ts",
+      "sha256": "f4ebab0695910021c998c41aadb29e489073e416bea2018d621c9444810357d8"
+    },
+    {
+      "path": "src/core/positive-probe.ts",
+      "sha256": "052d341c418ede23d5cf73fd808a63f92cd35024c0cd1821a0612bd399387cdd"
+    },
+    {
+      "path": "src/core/positive-probe.test.ts",
+      "sha256": "b99462c27272f83ed498e037ebb741b4ad2a89e2c821b86e2314f7d407f170d1"
+    },
+    {
+      "path": "src/core/positive-session.ts",
+      "sha256": "82714901917791fcda817a2c41f14c5464c7f80ee2d02bdb5b12a9a5f1dcf54d"
+    },
+    {
+      "path": "src/core/positive-session.test.ts",
+      "sha256": "9b92f99d5ff5b9fec44f9a643464c1bc19c92c8b4752685299217fb1ea58ef36"
+    },
+    {
+      "path": "src/core/positive-worker.ts",
+      "sha256": "8f4612b8250c09a6714b153ee5ddfc44236afbd7dd990973d74f06b673f42174"
+    },
+    {
+      "path": "src/core/positive-worker.test.ts",
+      "sha256": "bf71574c6aa141f016aef953ea89af45394be4dab39b25d4aba39a9d6da02d30"
+    },
+    {
+      "path": "docs/阳性校验受控入口-2026-11-06.md",
+      "sha256": "9db155f61deb0c1e1cd2ba59256872b7f5bb9e6e11b8aa0af66f5adc674cd115"
+    }
+  ]
+}
