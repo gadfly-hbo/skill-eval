@@ -1,6 +1,6 @@
-/** The positive probe's conservative USD equivalent, independent of SDK/plan cost fields. */
-export const POSITIVE_BUDGET_POLICY = Object.freeze({
-  version: "da190-positive-budget-v1",
+/** Controlled eval's conservative USD equivalent, independent of SDK/plan cost fields. */
+export const CONTROLLED_BUDGET_POLICY = Object.freeze({
+  version: "controlled-eval-budget-v1",
   pricingVerifiedAt: "2026-11-06",
   pricingBasis: "Conservative public PAYGO USD equivalent; all input/cache tokens charged at uncached input rate; Token Plan cash billing remains unknown",
   pricingSources: Object.freeze(["https://www.minimax.io/blog/minimax-m31f", "https://mimo.mi.com/docs/en-US/price/pay-as-you-go", "https://mimo.mi.com/docs/en-US/price/token-plan"]),
@@ -12,24 +12,24 @@ export const POSITIVE_BUDGET_POLICY = Object.freeze({
   }),
 });
 
-export type PositiveSessionRole = "subject" | "judge";
-export interface PositiveUsage { input: number; output: number; cacheRead?: number; cacheWrite?: number; }
+export type SessionRole = "subject" | "judge";
+export interface ControlledUsage { input: number; output: number; cacheRead?: number; cacheWrite?: number; }
 interface SessionCharge {
   id: string;
-  role: PositiveSessionRole;
+  role: SessionRole;
   model: string;
   state: "running" | "completed" | "failed";
 }
 interface RequestCharge {
   id: string;
   sessionId: string;
-  role: PositiveSessionRole;
+  role: SessionRole;
   model: string;
   reservedNanoUsd: number;
   chargedNanoUsd: number;
   maxOutputTokens: number;
   state: "pending" | "settled" | "failed";
-  usage?: Required<PositiveUsage>;
+  usage?: Required<ControlledUsage>;
   reason?: string;
 }
 
@@ -38,20 +38,20 @@ export class BudgetStopError extends Error {
 }
 
 /** Single-flight reservation ledger. Failed/ambiguous requests keep their entire reservation. */
-export class PositiveBudget {
+export class ControlledBudget {
   private sessions: SessionCharge[] = [];
   private requests: RequestCharge[] = [];
   private active?: SessionCharge;
   private pending?: RequestCharge;
   private stoppedReason?: string;
 
-  beginSession(id: string, role: PositiveSessionRole, model: string): void {
+  beginSession(id: string, role: SessionRole, model: string): void {
     this.assertOpen();
     if (typeof id !== "string" || !id.trim() || this.sessions.some(row => row.id === id)) this.reject("invalid-or-duplicate-session");
     if (this.active || this.pending) this.reject("concurrent-session");
-    if (this.sessions.length >= POSITIVE_BUDGET_POLICY.maxSessions) this.reject("session-limit");
+    if (this.sessions.length >= CONTROLLED_BUDGET_POLICY.maxSessions) this.reject("session-limit");
     if (role !== "subject" && role !== "judge") this.reject("invalid-session-role");
-    const policy = POSITIVE_BUDGET_POLICY.models[role];
+    const policy = CONTROLLED_BUDGET_POLICY.models[role];
     if (!policy || model !== policy.model) this.reject("model-identity-mismatch");
     this.active = { id, role, model, state: "running" };
     this.sessions.push(this.active);
@@ -62,7 +62,7 @@ export class PositiveBudget {
     if (!this.active) this.reject("request-without-session");
     if (this.pending) this.reject("concurrent-request");
     if (typeof requestId !== "string" || !requestId.trim() || this.requests.some(row => row.id === requestId)) this.reject("invalid-or-duplicate-request");
-    const policy = POSITIVE_BUDGET_POLICY.models[this.active.role];
+    const policy = CONTROLLED_BUDGET_POLICY.models[this.active.role];
     const reservedNanoUsd = policy.contextWindow * policy.inputNanoUsdPerToken + policy.maxOutputTokens * policy.outputNanoUsdPerToken;
     if (reservedNanoUsd > this.snapshot().availableNanoUsd) this.reject("budget-exhausted-before-dispatch");
     this.pending = {
@@ -73,10 +73,10 @@ export class PositiveBudget {
     return { reservedNanoUsd, maxOutputTokens: policy.maxOutputTokens, model: policy.model };
   }
 
-  settle(requestId: string, usage: PositiveUsage): void {
+  settle(requestId: string, usage: ControlledUsage): void {
     this.assertOpen();
     if (!this.pending || this.pending.id !== requestId) this.reject("usage-without-matching-request");
-    const policy = POSITIVE_BUDGET_POLICY.models[this.pending.role];
+    const policy = CONTROLLED_BUDGET_POLICY.models[this.pending.role];
     if (!usage || typeof usage !== "object") this.reject("missing-usage");
     const normalized = { input: usage.input, output: usage.output, cacheRead: usage.cacheRead === undefined ? 0 : usage.cacheRead, cacheWrite: usage.cacheWrite === undefined ? 0 : usage.cacheWrite };
     if (Object.values(normalized).some(value => !Number.isSafeInteger(value) || value < 0)) this.reject("invalid-usage");
@@ -119,12 +119,12 @@ export class PositiveBudget {
     const chargedNanoUsd = this.requests.reduce((sum, row) => sum + row.chargedNanoUsd, 0);
     const reservedNanoUsd = this.pending?.reservedNanoUsd ?? 0;
     return {
-      policy: POSITIVE_BUDGET_POLICY,
+      policy: CONTROLLED_BUDGET_POLICY,
       state: this.stoppedReason ? "stopped" as const : "open" as const,
       stoppedReason: this.stoppedReason ?? null,
       chargedNanoUsd,
       reservedNanoUsd,
-      availableNanoUsd: POSITIVE_BUDGET_POLICY.maxNanoUsd - chargedNanoUsd - reservedNanoUsd,
+      availableNanoUsd: CONTROLLED_BUDGET_POLICY.maxNanoUsd - chargedNanoUsd - reservedNanoUsd,
       sessions: this.sessions.map(row => ({ ...row })),
       requests: this.requests.map(row => ({ ...row, ...(row.usage ? { usage: { ...row.usage } } : {}) })),
     };
@@ -133,3 +133,5 @@ export class PositiveBudget {
   private assertOpen(): void { if (this.stoppedReason) throw new BudgetStopError(this.stoppedReason); }
   private reject(reason: string): never { this.stop(reason); throw new BudgetStopError(this.stoppedReason!); }
 }
+
+export type BudgetSnapshot = ReturnType<ControlledBudget["snapshot"]>;

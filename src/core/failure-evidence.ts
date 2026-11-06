@@ -1,10 +1,10 @@
 /** Sanitized first-cause evidence. Observation never changes the strict stop policy. */
 import type { PiEvent } from "./pi.ts";
 
-export type PositiveIncidentType = "tool_error" | "worker_error" | "assistant_error" | "request_error" | "timeout" | "startup_error" | "persistence_error" | "tool_aborted_during_cleanup" | "assistant_aborted_during_cleanup";
-export interface PositiveFailureCause {
+export type IncidentType = "tool_error" | "worker_error" | "assistant_error" | "request_error" | "timeout" | "startup_error" | "persistence_error" | "tool_aborted_during_cleanup" | "assistant_aborted_during_cleanup";
+export interface FailureCause {
   code: string;
-  incidentType: PositiveIncidentType;
+  incidentType: IncidentType;
   eventIndex: number | null;
   toolCallId: string | null;
   toolName: string | null;
@@ -20,14 +20,14 @@ interface OutputObservation {
 }
 const identifier = (value: unknown): string | null => typeof value === "string" ? value.slice(0, 256) : null;
 
-export class PositiveFailureEvidence {
-  private firstCause: PositiveFailureCause | null = null;
-  private secondary: PositiveFailureCause[] = [];
+export class FailureEvidence {
+  private firstCause: FailureCause | null = null;
+  private secondary: FailureCause[] = [];
   private observations: OutputObservation[] = [];
   private readonly sessionId: string;
   constructor(sessionId: string) { this.sessionId = sessionId; }
 
-  record(code: string, incidentType: PositiveIncidentType, eventIndex: number | null = null): void {
+  record(code: string, incidentType: IncidentType, eventIndex: number | null = null): void {
     this.add({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(code) ? code : "CONTROLLED_FAILURE", incidentType, eventIndex, toolCallId: null, toolName: null, exitCode: null });
   }
 
@@ -66,10 +66,10 @@ export class PositiveFailureEvidence {
     return { schemaVersion: 1, sessionId: this.sessionId, firstCause: this.firstCause ? { ...this.firstCause } : null, secondary: this.secondary.map(cause => ({ ...cause })), observations: this.observations.map(row => ({ ...row })) };
   }
 
-  private add(cause: PositiveFailureCause): void {
+  private add(cause: FailureCause): void {
     if (this.firstCause === null) this.firstCause = cause;
     else this.secondary.push(cause);
   }
 }
 
-export type PositiveFailureSnapshot = ReturnType<PositiveFailureEvidence["snapshot"]>;
+export type FailureSnapshot = ReturnType<FailureEvidence["snapshot"]>;

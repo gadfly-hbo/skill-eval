@@ -17,7 +17,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { join, basename, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { runPi } from "./pi.ts";
+import { createControlledExecution, validateControlledPlan, type EvaluationExecution } from "./execution.ts";
 import { detectActivation, summarizeActivation, parseFrontmatter, type ActivationResult } from "./activation.ts";
 import { detectContamination, type ContaminationReport } from "./contamination.ts";
 import { evaluateAssertions, type Assertion, type AssertionReport } from "./assertions.ts";
@@ -108,6 +108,36 @@ export interface RunnerOptions {
   skillDirForContamination?: string;
   /** 进度回调。 */
   onProgress?: (event: ProgressEvent) => void;
+  /** 离线回归可显式注入模拟执行器；真实运行始终共用受控执行层。 */
+  execution?: EvaluationExecution;
+}
+
+interface PlannedSession {
+  phase: "subject" | "judge";
+  variantId: string;
+  taskId: string;
+  attempt: number;
+  roundIndex?: number;
+  status: "NOT_RUN" | "RUNNING" | "SUCCESS" | "FAILED";
+  reason?: string;
+}
+
+interface ExecutionStatus {
+  sessions: PlannedSession[];
+  stopped: boolean;
+  reason: string | null;
+}
+
+function saveExecutionStatus(runRoot: string, state: ExecutionStatus, fresh = false): void {
+  writeFileSync(join(runRoot, "execution-status.json"), JSON.stringify(state, null, 2), {
+    encoding: "utf8", flag: fresh ? "wx" : "w",
+  });
+}
+
+function stopBatch(options: RunnerOptions, state: ExecutionStatus, reason: string): void {
+  state.stopped = true;
+  state.reason ??= reason;
+  saveExecutionStatus(options.runRoot, state);
 }
 
 export interface ProgressEvent {
@@ -238,6 +268,7 @@ export interface EvaluationSummary {
   isolation?: VerificationState;
   policyVersion?: string;
   evidenceLevel?: "real-model" | "replay" | "offline-fixture";
+  execution?: { statusFile: string; plannedSessions: number; attemptedSessions: number; notRunSessions: number; stopped: boolean; reason: string | null };
   manifest?: RunManifest;
   analysisOf?: { runId: string; originalSuiteHash?: string; suiteHash?: string; createdAt: string };
   judgeRepeat: number;
@@ -288,21 +319,57 @@ export interface Disagreement {
 export async function runEvaluation(options: RunnerOptions): Promise<EvaluationSummary> {
   const startedAt = Date.now();
   const judgeRepeat = options.judgeRepeat ?? DEFAULT_JUDGE_REPEAT;
-
+  if (!Number.isSafeInteger(options.repeat) || options.repeat < 1 || !Number.isSafeInteger(judgeRepeat) || judgeRepeat < 1) {
+    throw new Error("repeat/judgeRepeat 必须为正整数");
+  }
+  const baseline = options.variants.find((variant) => variant.skillPaths.length === 0);
+  const sessions: PlannedSession[] = [];
+  for (const variant of options.variants) for (const task of options.tasks) for (let attempt = 1; attempt <= options.repeat; attempt++) {
+    sessions.push({ phase: "subject", variantId: variant.id, taskId: task.id, attempt, status: "NOT_RUN" });
+  }
+  if (baseline) for (const variant of options.variants.filter((item) => item.id !== baseline.id)) {
+    for (const task of options.tasks) for (let attempt = 1; attempt <= options.repeat; attempt++) {
+      for (let roundIndex = 0; roundIndex < judgeRepeat; roundIndex++) {
+        sessions.push({ phase: "judge", variantId: variant.id, taskId: task.id, attempt, roundIndex, status: "NOT_RUN" });
+      }
+    }
+  }
+  if (!options.execution) validateControlledPlan({ model: options.model, judgeModel: options.judgeModel ?? options.model, plannedSessions: sessions.length });
   mkdirSync(options.runRoot, { recursive: true });
+  if (existsSync(join(options.runRoot, "execution-status.json"))) throw new Error("运行执行记录已存在，禁止覆盖历史记录");
   for (const variant of options.variants) for (const task of options.tasks) for (let attempt = 1; attempt <= options.repeat; attempt++) {
     const path = join(options.runRoot, "cases", variant.id, task.id, String(attempt));
     if (existsSync(path) && readdirSync(path).length > 0) throw new Error("运行产物已存在，禁止覆盖历史记录；请新建运行目录");
   }
-
+  const execution = options.execution ?? createControlledExecution({
+    runRoot: options.runRoot, home: options.home, model: options.model,
+    judgeModel: options.judgeModel ?? options.model, plannedSessions: sessions.length,
+  });
+  options = { ...options, execution };
+  const state: ExecutionStatus = { sessions, stopped: false, reason: null };
+  saveExecutionStatus(options.runRoot, state, true);
   const results: RunResult[] = [];
 
   // 阶段一：运行所有 variant × task × attempt。
-  for (const variant of options.variants) {
+  subjectBatch: for (const variant of options.variants) {
     for (const task of options.tasks) {
       for (let attempt = 1; attempt <= options.repeat; attempt += 1) {
-        const result = await runCase(options, variant, task, attempt);
+        if (execution.isStopped() || state.stopped) break subjectBatch;
+        const planned = sessions.find((row) => row.phase === "subject" && row.variantId === variant.id && row.taskId === task.id && row.attempt === attempt)!;
+        planned.status = "RUNNING";
+        saveExecutionStatus(options.runRoot, state);
+        let result: RunResult;
+        try { result = await runCase(options, variant, task, attempt); }
+        catch (error) {
+          planned.status = "FAILED";
+          planned.reason = error instanceof Error ? error.message : String(error);
+          stopBatch(options, state, planned.reason);
+          break subjectBatch;
+        }
         results.push(result);
+        planned.status = result.status === "success" ? "SUCCESS" : "FAILED";
+        if (result.status === "failed") stopBatch(options, state, result.error ?? "subject 运行失败");
+        else saveExecutionStatus(options.runRoot, state);
         options.onProgress?.({
           phase: "run",
           variantId: variant.id,
@@ -315,12 +382,14 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
   }
 
   // 阶段二：成对评判。
-  const pairwise = await judgeAll(options, results, judgeRepeat);
+  const pairwise = await judgeAll(options, results, judgeRepeat, runPairwiseJudge, state);
+  if (execution.isStopped() && !state.stopped) stopBatch(options, state, execution.snapshot().stoppedReason ?? "受控执行层已停止");
 
   const endedAt = Date.now();
   const failedCount = results.filter((result) => result.status === "failed").length;
   const status: EvaluationSummary["status"] =
-    failedCount === 0 ? "success" : failedCount === results.length ? "failed" : "partial";
+    results.length === 0 || failedCount === results.length ? "failed" :
+      state.stopped || failedCount > 0 || sessions.some((row) => row.status !== "SUCCESS") ? "partial" : "success";
 
   return {
     runId: options.runId,
@@ -330,7 +399,11 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
     tasks: options.tasks,
     manifest: options.manifest,
     policyVersion: options.manifest?.policyVersion,
-    evidenceLevel: "real-model",
+    evidenceLevel: execution.mode === "simulated" ? "offline-fixture" : "real-model",
+    execution: { statusFile: "execution-status.json", plannedSessions: sessions.length,
+      attemptedSessions: sessions.filter((row) => row.status !== "NOT_RUN").length,
+      notRunSessions: sessions.filter((row) => row.status === "NOT_RUN").length,
+      stopped: state.stopped, reason: state.reason },
     integrity: checkRunIntegrity(options.runRoot, options.manifest ?? null, results),
     isolation: {
       verified: results.length > 0 && results.every((result) => result.isolation?.verified === true),
@@ -365,8 +438,8 @@ async function runCase(
   const prompt = [options.contextPrefix, task.prompt].filter((part) => part && part.trim()).join("\n\n");
   const startedAt = Date.now();
 
-  const run = await runPi({
-    workspaceRoot: caseDir,
+  const run = await options.execution!.run("subject", {
+    workspaceRoot: join(caseDir, "workspace"),
     sessionId: `${options.runId}-${id}`,
     prompt,
     model: options.model,
@@ -378,7 +451,7 @@ async function runCase(
 
   const endedAt = Date.now();
   const output = run.metrics.output;
-  const failed = run.exitCode !== 0 || !output.trim();
+  const failed = run.exitCode !== 0 || run.timedOut || !run.isolation.verified || !output.trim();
 
   const activation = detectActivation({
     skillPaths: variant.skillPaths,
@@ -472,23 +545,27 @@ export async function judgeAll(
   results: RunResult[],
   judgeRepeat: number = DEFAULT_JUDGE_REPEAT,
   runJudge: typeof runPairwiseJudge = runPairwiseJudge,
+  state?: ExecutionStatus,
 ): Promise<PairwiseResult[]> {
   const baseline = options.variants.find((variant) => variant.skillPaths.length === 0);
   if (!baseline) return [];
   const outputs: PairwiseResult[] = [];
   const baselineByKey = new Map(results.filter((r) => r.variantId === baseline.id).map((r) => [pairwiseKey(r.taskId, r.attempt), r]));
 
-  for (const result of results) {
-    if (result.variantId === baseline.id) continue;
-    const base = baselineByKey.get(pairwiseKey(result.taskId, result.attempt));
-    const task = options.tasks.find((t) => t.id === result.taskId);
-    if (!base || !task) continue;
-    if (base.status !== "success" || result.status !== "success") {
+  let halted = state?.stopped ?? false;
+  for (const variant of options.variants.filter((item) => item.id !== baseline.id)) {
+    for (const task of options.tasks) for (let attempt = 1; attempt <= options.repeat; attempt++) {
+    const result = results.find((item) => item.variantId === variant.id && item.taskId === task.id && item.attempt === attempt);
+    const base = baselineByKey.get(pairwiseKey(task.id, attempt));
+    if (!base || !result || base.status !== "success" || result.status !== "success" || halted || options.execution?.isStopped()) {
       outputs.push({
-        baselineResultId: base.id, variantResultId: result.id, variantId: result.variantId,
-        taskId: result.taskId, attempt: result.attempt, verdict: "not_judged",
+        baselineResultId: base?.id ?? `${sanitizeId(baseline.id)}-${sanitizeId(task.id)}-${attempt}`,
+        variantResultId: result?.id ?? `${sanitizeId(variant.id)}-${sanitizeId(task.id)}-${attempt}`, variantId: variant.id,
+        taskId: task.id, attempt, verdict: "not_judged",
         scoreDelta: null, baselineScore: null, variantScore: null, confidence: null,
-        reason: "baseline 或 variant 运行失败，未评判", error: null, judgeRuns: [], biasProbe: null,
+        reason: !base || !result ? "baseline 或 variant 未运行，未评判" : halted || options.execution?.isStopped()
+          ? "整批已停止，评委未运行" : "baseline 或 variant 运行失败，未评判",
+        error: null, judgeRuns: [], biasProbe: null,
       });
       continue;
     }
@@ -506,7 +583,11 @@ export async function judgeAll(
     const candidateEvidence = loadEvidenceFromDir(join(options.runRoot, result.evidenceDir));
     const runs: JudgeResult[] = [];
     for (const round of rounds) {
-      const raw = await runJudge({
+      if (halted || options.execution?.isStopped()) break;
+      const planned = state?.sessions.find((row) => row.phase === "judge" && row.variantId === result.variantId && row.taskId === result.taskId && row.attempt === result.attempt && row.roundIndex === round.roundIndex);
+      if (planned) { planned.status = "RUNNING"; saveExecutionStatus(options.runRoot, state!); }
+      let raw: JudgeResult;
+      try { raw = await runJudge({
         judgeDir: join(judgeDir, round.dirName),
         runId: `${options.runId}-${result.id}-${round.roundIndex}`,
         task: task.prompt, expectedPoints: task.expectedPoints, rubric: task.rubric,
@@ -515,6 +596,7 @@ export async function judgeAll(
         evidenceA: round.swapped ? candidateEvidence : baseEvidence,
         evidenceB: round.swapped ? baseEvidence : candidateEvidence,
         model: options.judgeModel, home: options.home, timeoutMs: options.judgeTimeoutMs,
+        execution: options.execution,
         swapped: round.swapped, roundIndex: round.roundIndex,
         sourceIdentifiers: [
           options.skillPathForContamination ?? "",
@@ -530,13 +612,30 @@ export async function judgeAll(
           })),
           base.variantLabel, result.variantLabel,
         ].filter((value) => value.length >= 4),
-      });
+      }); } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        if (planned) { planned.status = "FAILED"; planned.reason = reason; }
+        halted = true;
+        if (state) stopBatch(options, state, reason);
+        break;
+      }
       runs.push(reconcileJudgeRun(raw, round.swapped));
+      if (planned) planned.status = raw.verdict === "not_judged" || raw.error ? "FAILED" : "SUCCESS";
+      if (raw.verdict === "not_judged" || raw.error) {
+        halted = true;
+        if (planned) planned.reason = raw.error ?? raw.reason;
+        if (state) stopBatch(options, state, raw.error ?? raw.reason);
+      } else if (state) saveExecutionStatus(options.runRoot, state);
     }
     const forward = runs.find((run) => run.swapped === false);
     const reversed = runs.find((run) => run.swapped === true);
     const biasProbe = forward && reversed ? detectPositionBias(forward.verdict, reversed.verdict) : null;
-    const aggregated = aggregateJudgeRuns(runs);
+    // 未执行轮次只为聚合保留预定分母，不写入真实 judgeRuns。
+    const missingVotes: JudgeResult[] = rounds.slice(runs.length).map(() => ({
+      verdict: "not_judged", scoreA: null, scoreB: null, scoreDelta: null,
+      confidence: null, reason: "NOT_RUN：整批已停止", error: "NOT_RUN",
+    }));
+    const aggregated = aggregateJudgeRuns([...runs, ...missingVotes]);
     outputs.push({
       baselineResultId: base.id, variantResultId: result.id, variantId: result.variantId,
       taskId: result.taskId, attempt: result.attempt, verdict: aggregated.verdict,
@@ -548,6 +647,7 @@ export async function judgeAll(
       phase: "judge", variantId: result.variantId, taskId: result.taskId, attempt: result.attempt,
       message: `${result.variantLabel} / ${result.taskId} / 第 ${result.attempt} 次评判：${aggregated.verdict}`,
     });
+  }
   }
   return outputs;
 }
@@ -952,6 +1052,74 @@ export async function recomputeSummary(
       pair.reason = "配对原始运行缺失或失败；旧评委轮次仅作诊断保留";
     }
   }
+  // Controlled runs carry an independent complete execution matrix. Subject
+  // success alone cannot erase a stopped judge phase during offline replay.
+  const executionPath = join(runRoot, "execution-status.json");
+  const controlled = stored?.execution !== undefined || existsSync(join(runRoot, "controlled-execution.json")) || existsSync(executionPath);
+  let execution = stored?.execution;
+  let incompleteExecution = false;
+  if (controlled) {
+    try {
+      if (!existsSync(executionPath)) throw new Error("执行状态侧车缺失");
+      const state = JSON.parse(readFileSync(executionPath, "utf8")) as ExecutionStatus;
+      if (!state || !Array.isArray(state.sessions) || typeof state.stopped !== "boolean" ||
+          (state.stopped ? typeof state.reason !== "string" || !state.reason.trim() : state.reason !== null)) throw new Error("执行状态侧车格式无效");
+      const executionTasks = frozen?.tasks ?? stored?.tasks ?? options.tasks;
+      const judgeRepeat = frozen?.judgeRepeat ?? stored?.judgeRepeat ?? 0;
+      if (!Number.isSafeInteger(repeat) || repeat < 1 || !Number.isSafeInteger(judgeRepeat) || judgeRepeat < 1) throw new Error("执行矩阵缺少冻结重复次数");
+      const expected: Array<Omit<PlannedSession, "status" | "reason">> = [];
+      for (const variant of variants) for (const task of executionTasks) for (let attempt = 1; attempt <= repeat; attempt++) {
+        expected.push({ phase: "subject", variantId: variant.id, taskId: task.id, attempt });
+      }
+      const executionBaseline = variants.find(variant => variant.skillPaths.length === 0);
+      if (executionBaseline) for (const variant of variants.filter(item => item.id !== executionBaseline.id)) {
+        for (const task of executionTasks) for (let attempt = 1; attempt <= repeat; attempt++) {
+          for (let roundIndex = 0; roundIndex < judgeRepeat; roundIndex++) expected.push({ phase: "judge", variantId: variant.id, taskId: task.id, attempt, roundIndex });
+        }
+      }
+      if (state.sessions.length !== expected.length) throw new Error("执行状态侧车不含完整冻结矩阵");
+      const allowed = new Set(["phase", "variantId", "taskId", "attempt", "roundIndex", "status", "reason"]);
+      let unfinished = false;
+      for (const [index, row] of state.sessions.entries()) {
+        const planned = expected[index]!;
+        if (!row || Object.keys(row).some(key => !allowed.has(key)) ||
+            row.phase !== planned.phase || row.variantId !== planned.variantId || row.taskId !== planned.taskId ||
+            row.attempt !== planned.attempt || row.roundIndex !== planned.roundIndex ||
+            !["NOT_RUN", "RUNNING", "SUCCESS", "FAILED"].includes(row.status) ||
+            row.reason !== undefined && typeof row.reason !== "string") throw new Error("执行状态侧车身份、状态或顺序无效");
+        if (unfinished && row.status !== "NOT_RUN") throw new Error("执行状态侧车出现停批后的会话");
+        if (row.status !== "SUCCESS") unfinished = true;
+        if (row.status === "FAILED" && !state.stopped) throw new Error("失败会话缺少整批停止状态");
+        const result = results.find(item => item.variantId === row.variantId && item.taskId === row.taskId && item.attempt === row.attempt);
+        if (row.phase === "subject") {
+          if (row.status === "SUCCESS" && result?.status !== "success" || row.status === "NOT_RUN" && result || row.status === "FAILED" && result?.status === "success") throw new Error("subject 执行状态与原始产物不一致");
+        } else {
+          const resultId = result?.id ?? `${sanitizeId(row.variantId)}-${sanitizeId(row.taskId)}-${row.attempt}`;
+          const roundDir = join(runRoot, "pairwise", resultId, `round-${String(row.roundIndex! + 1).padStart(3, "0")}`);
+          const hasJudgment = existsSync(join(roundDir, "judgment.json"));
+          const vote = pairwise.find(pair => pair.variantId === row.variantId && pair.taskId === row.taskId && pair.attempt === row.attempt)?.judgeRuns.find(run => run.roundIndex === row.roundIndex);
+          const validVote = hasJudgment && vote && vote.verdict !== "not_judged" && !vote.error;
+          if (row.status === "SUCCESS" && !validVote || row.status === "FAILED" && validVote ||
+              row.status === "NOT_RUN" && existsSync(roundDir) && readdirSync(roundDir).length > 0) throw new Error("judge 执行状态与原始产物不一致");
+        }
+      }
+      execution = { statusFile: "execution-status.json", plannedSessions: expected.length,
+        attemptedSessions: state.sessions.filter(row => row.status !== "NOT_RUN").length,
+        notRunSessions: state.sessions.filter(row => row.status === "NOT_RUN").length,
+        stopped: state.stopped, reason: state.reason };
+      if (stored?.execution && (Object.keys(execution) as Array<keyof NonNullable<EvaluationSummary["execution"]>>).some(key => stored.execution![key] !== execution![key])) throw new Error("执行状态侧车与已保存汇总不一致");
+      incompleteExecution = state.stopped || state.sessions.some(row => row.status !== "SUCCESS");
+      // Missing votes remain in the already-computed quorum denominator; only
+      // actual saved judgments belong in the list of executed judge runs.
+      for (const pair of pairwise) pair.judgeRuns = pair.judgeRuns.filter(run => {
+        const row = state.sessions.find(item => item.phase === "judge" && item.variantId === pair.variantId && item.taskId === pair.taskId && item.attempt === pair.attempt && item.roundIndex === run.roundIndex);
+        return row && row.status !== "NOT_RUN" && existsSync(join(runRoot, "pairwise", pair.variantResultId, `round-${String(row.roundIndex! + 1).padStart(3, "0")}`, "judgment.json"));
+      });
+    } catch (error) {
+      incompleteExecution = true;
+      issues.push(`受控执行状态未验证：${error instanceof Error ? error.message : "执行状态侧车无法读取"}`);
+    }
+  }
   const integrity = checkRunIntegrity(runRoot, manifest, stored?.results ?? []);
   integrity.issues.push(...issues);
   integrity.verified = integrity.verified && issues.length === 0;
@@ -959,14 +1127,14 @@ export async function recomputeSummary(
   const failedCount = results.filter((r) => r.status === "failed").length;
   const status: EvaluationSummary["status"] = missing || issues.length > 0 ? "partial"
     : results.length === 0 ? stored?.status ?? "failed"
-    : failedCount === 0 ? "success" : failedCount === results.length ? "failed" : "partial";
+    : failedCount === results.length ? "failed" : incompleteExecution || failedCount > 0 ? "partial" : "success";
   return {
     runId: stored?.runId ?? frozen?.runId ?? basename(runRoot),
     model: frozen?.model ?? stored?.model ?? "（未记录）",
     judgeModel: frozen?.judgeModel ?? stored?.judgeModel ?? "（未记录）",
     repeat, judgeRepeat: frozen?.judgeRepeat ?? stored?.judgeRepeat ?? 0,
     tasks: options.tasks, manifest: frozen,
-    policyVersion: "paired-task-v2", integrity,
+    policyVersion: "paired-task-v2", integrity, execution, evidenceLevel: "replay",
     isolation: {
       verified: !missing && results.length > 0 && results.every((r) => r.isolation?.verified === true),
       issues: [...new Set(results.flatMap((r) => r.isolation?.issues ?? ["历史运行缺少访问隔离验证记录"]).concat(missing ? ["存在未验证的缺失运行"] : []))],

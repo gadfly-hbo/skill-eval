@@ -98,7 +98,7 @@ export function emptyMetrics(): PiRunMetrics {
  *
  * 重量级 skill 是常态而非例外，超时必须留足余量。
  */
-const DEFAULT_TIMEOUT_MS = 480_000;
+export const DEFAULT_TIMEOUT_MS = 480_000;
 
 /**
  * 关闭宿主 IDE 注入的 fs hook。

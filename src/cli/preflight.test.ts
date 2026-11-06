@@ -44,7 +44,11 @@ export class ModelRuntime {
 }
 `);
   const env = { PATH: bin, HOME: home, LANG: "en_US.UTF-8" };
-  const run = (args: string[], extraEnv: Record<string, string> = {}) => spawnSync(process.execPath, ["--experimental-strip-types", cli, ...args], { cwd: repo, env: { ...env, ...extraEnv }, encoding: "utf8", timeout: 20000 });
+  const denyFetch = join(root, "deny-fetch.mjs");
+  writeFileSync(denyFetch, "globalThis.fetch = async () => { throw new Error('OFFLINE_NETWORK_DENIED'); };\n");
+  // Catalog lookup already launches its own network-denied sandbox; macOS cannot safely nest that Node sandbox.
+  const run = (args: string[], extraEnv: Record<string, string> = {}) => spawnSync(process.execPath,
+    ["--import", denyFetch, "--experimental-strip-types", cli, ...args], { cwd: repo, env: { ...env, ...extraEnv }, encoding: "utf8", timeout: 20000 });
   return { root, bin, home, env, run, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -116,11 +120,12 @@ test("eval 精确模型缺失即阻断，不创建运行目录或调用 Pi", { s
     const suite = join(f.root, "suite.json");
     writeFileSync(suite, JSON.stringify({ id: "offline-cli-test", tasks: [{ id: "task", prompt: "fixture task", assertions: [{ kind: "mustContain", value: "answer" }] }] }));
     const out = join(f.root, "must-not-create");
-    const result = f.run(["eval", "--suite", suite, "--skill", skill, "--models", "fixture/subject,fixture/missing", "--judge-model", "fixture/judge", "--home", f.home, "--out", out]);
+    const result = f.run(["eval", "--suite", suite, "--skill", skill, "--model", "minimax-cn/MiniMax-M3.1-Flash", "--judge-model", "xiaomi-token-plan-cn/mimo-v2.6-flash", "--repeat", "1", "--judge-repeat", "2", "--home", f.home, "--out", out]);
     assert.equal(result.status, 1);
-    assert.equal(existsSync(out), false, "full matrix must be checked before any case or run root");
+    assert.equal(existsSync(out), false, "exact supported models must be checked before any case or run root");
     assert(!result.stderr.includes("MODEL_INVOCATION_TRIPWIRE"));
-    assert.match(result.stderr, /fixture\/missing/);
+    assert.match(result.stderr, /minimax-cn\/MiniMax-M3\.1-Flash/);
+    assert.match(result.stderr, /模型预检未通过/);
   } finally { f.cleanup(); }
 });
 

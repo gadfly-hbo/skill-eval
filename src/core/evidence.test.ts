@@ -1,161 +1,120 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
-import { extractToolCalls, formatEvidence } from "./evidence.ts";
+import { extractToolCalls, formatEvidence, loadEvidenceFromDir } from "./evidence.ts";
 import type { PiEvent } from "./pi.ts";
 
-test("评委执行证据去掉加载读取、候选名称路径、脚本名和输出来源信号", () => {
-  const text = formatEvidence([
-    { tool: "read", action: "/Users/person/pending/data-analysis/SKILL.md", exitCode: 0 },
-    { tool: "bash", action: "python /Users/person/data-analysis/scripts/calc.py", exitCode: 0,
-      outputExcerpt: "variant Skill(data-analysis) calc.py /Users/person/pending" },
+test("提取只保留判定状态，不构建命令、路径或输出摘要，原事件保持完整", () => {
+  const events: PiEvent[] = [
+    { type: "tool_execution_start", toolCallId: "private", toolName: "bash", args: { command: "python /private/candidate/secret.py" } },
+    { type: "tool_execution_end", toolCallId: "private", toolName: "bash", isError: false, result: { structuredContent: { exit_code: 0, output: "PRIVATE_OUTPUT_SENTINEL" } } },
+  ];
+  const before = JSON.stringify(events);
+  const calls = extractToolCalls(events);
+  assert.deepEqual(calls, [{ tool: "bash", isError: false, exitCode: 0 }]);
+  assert.equal(JSON.stringify(events), before);
+  assert.equal(formatEvidence(calls), "匿名执行结果：成功 1 次；失败 0 次；结果未知 0 次。");
+});
+
+test("按 toolCallId 配对交错事件，不把结果归到另一调用", () => {
+  const events: PiEvent[] = [
+    { type: "tool_execution_start", toolCallId: "first", toolName: "bash" },
+    { type: "tool_execution_start", toolCallId: "second", toolName: "bash" },
+    { type: "tool_execution_end", toolCallId: "second", toolName: "bash", isError: true, result: { structuredContent: { exit_code: 2 } } },
+    { type: "tool_execution_end", toolCallId: "first", toolName: "bash", result: { structuredContent: { exit_code: 0 } } },
+  ];
+  assert.deepEqual(extractToolCalls(events), [
+    { tool: "bash", exitCode: 0, isError: false },
+    { tool: "bash", exitCode: 2, isError: true },
   ]);
-  assert.doesNotMatch(text, /read|SKILL\.md|data-analysis|calc\.py|variant|\/Users|pending/);
-  assert.match(text, /成功/);
 });
 
-test("提取 bash 调用并带上退出码与结果摘要", () => {
+test("start 缺失时仍保留 end 的成功或失败状态", () => {
   const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "bash",
-      args: { command: "python3 scripts/calc.py period --base-start 2026-02-01" },
-    },
-    {
-      type: "tool_execution_end",
-      toolCallId: "c1",
-      toolName: "bash",
-      result: {
-        structuredContent: { output: '{"day_ratio":"53.57%"}', exit_code: 0 },
-      },
-      isError: false,
-    },
+    { type: "tool_execution_end", toolCallId: "end-only", toolName: "bash", isError: true },
   ];
-
-  const calls = extractToolCalls(events);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.tool, "bash");
-  assert.match(calls[0]!.action, /calc\.py/);
-  assert.match(calls[0]!.action, /\[脚本: calc\.py\]/);
-  assert.equal(calls[0]!.exitCode, 0);
-  assert.match(calls[0]!.outputExcerpt ?? "", /53\.57%/);
+  assert.deepEqual(extractToolCalls(events), [{ tool: "bash", isError: true }]);
+  assert.match(formatEvidence(extractToolCalls(events)), /成功 0 次；失败 1 次；结果未知 0 次/);
 });
 
-test("识别执行过的脚本名，便于评委核实「已用脚本复算」的声明", () => {
+test("只有 start 没有 end 时结果未知", () => {
+  const calls = extractToolCalls([
+    { type: "tool_execution_start", toolCallId: "unfinished", toolName: "bash" },
+  ]);
+  assert.deepEqual(calls, [{ tool: "bash" }]);
+  assert.match(formatEvidence(calls), /成功 0 次；失败 0 次；结果未知 1 次/);
+});
+
+test("匿名计数保留退出码与错误标记的判定优先级", () => {
+  const text = formatEvidence([
+    { tool: "bash", exitCode: 0, isError: false },
+    { tool: "bash", exitCode: 0, isError: true },
+    { tool: "bash", exitCode: 2, isError: false },
+    { tool: "bash", isError: false },
+    { tool: "read", exitCode: 0 },
+  ]);
+  assert.equal(text, "匿名执行结果：成功 1 次；失败 2 次；结果未知 1 次。");
+});
+
+test("加载与文件读取不成为评委质量证据", () => {
   const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "bash",
-      args: { command: "cd /tmp && python3 /abs/path/scripts/quality_check.py --data da.csv" },
-    },
+    { type: "tool_execution_start", toolCallId: "read", toolName: "read", args: { path: "/Users/person/pending/data-analysis/SKILL.md" } },
+    { type: "tool_execution_end", toolCallId: "read", toolName: "read", isError: false },
   ];
-  const calls = extractToolCalls(events);
-  assert.match(calls[0]!.action, /脚本: quality_check\.py/);
+  assert.equal(formatEvidence(extractToolCalls(events)), "");
 });
 
-test("read 调用只保留路径末两段，避免长路径淹没评委", () => {
-  const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "read",
-      args: { path: "/Users/huangbo/Dev/Projects/skill-eval/pending/data-analysis/SKILL.md" },
-    },
-  ];
-  const calls = extractToolCalls(events);
-  assert.equal(calls[0]!.tool, "read");
-  assert.match(calls[0]!.action, /…\/data-analysis\/SKILL\.md$/);
-  assert.doesNotMatch(calls[0]!.action, /huangbo/);
-});
-
-test("bash 报错时标记 isError 并保留退出码", () => {
-  const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "bash",
-      args: { command: "python3 scripts/calc.py compare --label x" },
-    },
-    {
-      type: "tool_execution_end",
-      toolCallId: "c1",
-      toolName: "bash",
-      result: { structuredContent: { output: "syntax error near unexpected token", exit_code: 2 } },
-      isError: true,
-    },
-  ];
-  const calls = extractToolCalls(events);
-  assert.equal(calls[0]!.isError, true);
-  assert.equal(calls[0]!.exitCode, 2);
-});
-
-test("只有 start 没有 end 时仍保留该次调用", () => {
-  const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "bash",
-      args: { command: "python3 scripts/calc.py trend" },
-    },
-  ];
-  const calls = extractToolCalls(events);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.exitCode, undefined);
-});
-
-test("无关事件类型被忽略", () => {
+test("无关事件与缺少 toolCallId 的事件被忽略", () => {
   const events: PiEvent[] = [
     { type: "session", version: 3, id: "x" },
     { type: "message_start", message: { role: "user" } },
     { type: "turn_end" },
+    { type: "tool_execution_start", toolName: "bash" },
+    { type: "tool_execution_end", toolCallId: "", toolName: "bash" },
   ];
   assert.deepEqual(extractToolCalls(events), []);
   assert.equal(formatEvidence([]), "");
 });
 
-test("格式化输出只提供匿名执行结果计数", () => {
-  const text = formatEvidence([
-    { tool: "bash", action: "python3 scripts/calc.py period", exitCode: 0, outputExcerpt: "OK" },
-    { tool: "read", action: "…/data-analysis/SKILL.md", exitCode: 0 },
-  ]);
-  assert.match(text, /成功 1 次；失败 0 次；结果未知 0 次/);
-  assert.doesNotMatch(text, /read|bash|calc\.py|SKILL\.md|data-analysis|OK/);
-});
-
-test("命令与结果里的绝对路径被压缩，不把运行机用户名带进评委提示词", () => {
-  const events: PiEvent[] = [
-    {
-      type: "tool_execution_start",
-      toolCallId: "c1",
-      toolName: "bash",
-      args: { command: "python3 /Users/huangbo/Dev/Projects/x/scripts/calc.py period" },
-    },
-    {
-      type: "tool_execution_end",
-      toolCallId: "c1",
-      toolName: "bash",
-      result: {
-        structuredContent: {
-          output: "写文件到 /Users/huangbo/Dev/Projects/x/scripts/out.json",
-          exit_code: 0,
-        },
-      },
-    },
-  ];
-  const text = formatEvidence(extractToolCalls(events));
-  assert.doesNotMatch(text, /huangbo/);
-  assert.doesNotMatch(text, /scripts|calc\.py|out\.json/);
-  assert.match(text, /成功 1 次/);
-});
-
-test("超过 maxCalls 时截断", () => {
+test("maxCalls 仍按全部工具的首次出现顺序截断，默认最多 16 条", () => {
   const events: PiEvent[] = Array.from({ length: 30 }, (_, i) => ({
     type: "tool_execution_start",
     toolCallId: `c${i}`,
-    toolName: "bash",
-    args: { command: `echo ${i}` },
+    toolName: i === 0 ? "read" : "bash",
+    args: { command: `echo ${i}`, path: "/private/SKILL.md" },
   }));
-  assert.equal(extractToolCalls(events, { maxCalls: 5 }).length, 5);
+  assert.equal(extractToolCalls(events).length, 16);
+  const calls = extractToolCalls(events, { maxCalls: 5 });
+  assert.equal(calls.length, 5);
+  assert.equal(calls[0]!.tool, "read");
+  assert.match(formatEvidence(calls), /结果未知 4 次/);
+});
+
+test("读取临时事件文件只输出匿名计数，不改写原事件", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidence-"));
+  try {
+    const raw = JSON.stringify([
+      { type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "python /Users/person/data-analysis/calc.py" } },
+      { type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: { structuredContent: { exit_code: 0, output: "variant Skill(data-analysis)" } } },
+    ]);
+    writeFileSync(join(root, "events.json"), raw);
+    assert.equal(loadEvidenceFromDir(root), "匿名执行结果：成功 1 次；失败 0 次；结果未知 0 次。");
+    assert.equal(readFileSync(join(root, "events.json"), "utf8"), raw);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("事件文件缺失或无效时不提供执行证据", () => {
+  const root = mkdtempSync(join(tmpdir(), "evidence-"));
+  try {
+    assert.equal(loadEvidenceFromDir(root), "");
+    writeFileSync(join(root, "events.json"), "not JSON");
+    assert.equal(loadEvidenceFromDir(root), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

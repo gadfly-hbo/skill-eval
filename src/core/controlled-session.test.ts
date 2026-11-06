@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PositiveBudget } from "./positive-budget.ts";
+import { ControlledBudget } from "./controlled-budget.ts";
 import { resolvePiRuntime } from "./isolation.ts";
-import { dispatchPositiveRequest, parsePositiveUsage, simulateControlledSession } from "./positive-session.ts";
-import { POSITIVE_ENVIRONMENT_V2 } from "./positive-environment.ts";
+import { dispatchControlledRequest, parseProviderUsage, simulateControlledSession } from "./controlled-session.ts";
+
+// Parent-side test guard: every HTTP response must come from an explicit fixture.
+globalThis.fetch = async () => { throw new Error("REAL_PROVIDER_FORBIDDEN_IN_OFFLINE_TEST"); };
 
 const subject = "minimax-cn/MiniMax-M3.1-Flash";
 const judge = "xiaomi-token-plan-cn/mimo-v2.6-flash";
@@ -18,12 +20,14 @@ const anthropic = [
 const request = { requestId: "r1", url: "https://api.minimaxi.com/anthropic/v1/messages?beta=true", body: JSON.stringify({ model: "MiniMax-M3.1-Flash", max_tokens: 4096, stream: true, messages: [] }), headers: {} };
 
 test("broker reserves before dispatch and settles raw provider usage independently of SDK cost", async () => {
-  const budget = new PositiveBudget();
+  const budget = new ControlledBudget();
   budget.beginSession("b1", "subject", subject);
-  let called = 0;
-  await dispatchPositiveRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal,
+  let called = 0, persisted = 0;
+  await dispatchControlledRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal,
+    onLedger: () => { persisted++; },
     fetcher: async (_url, init) => {
       called++;
+      assert.equal(persisted, 1, "reservation must be flushed before the first HTTP dispatch");
       assert.equal(init?.redirect, "error");
       assert.match(JSON.stringify(budget.snapshot()), /r1/);
       assert.equal((init?.headers as Record<string, string>)["x-api-key"], "fixture-only");
@@ -32,8 +36,22 @@ test("broker reserves before dispatch and settles raw provider usage independent
   });
   budget.endSession();
   assert.equal(called, 1);
+  assert.equal(persisted, 2, "settled original usage must also be flushed");
   // 100×150 + 20×600 nanoUSD, no reliance on model-provided monetary fields.
   assert.match(JSON.stringify(budget.snapshot()), /27000/);
+});
+
+test("failure to persist a reserved charge prevents HTTP and conservatively retains the reservation", async () => {
+  const budget = new ControlledBudget(); budget.beginSession("disk-failed", "subject", subject);
+  let calls = 0;
+  await assert.rejects(dispatchControlledRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal,
+    onLedger: () => { throw new Error("OFFLINE_DISK_FAILURE"); },
+    fetcher: async () => { calls++; throw new Error("MUST_NOT_DISPATCH"); },
+  }));
+  assert.equal(calls, 0);
+  assert.equal(budget.snapshot().state, "stopped");
+  assert.equal(budget.snapshot().chargedNanoUsd, 152_457_600);
+  assert.equal(budget.snapshot().requests[0]?.state, "failed");
 });
 
 test("routing or wire cap changes never reach HTTP and stop the entire batch", async () => {
@@ -45,9 +63,9 @@ test("routing or wire cap changes never reach HTTP and stop the entire batch", a
     { ...request, body: request.body.replace('"messages":[]', '"messages":[],"mcp_servers":[{"url":"https://example.com"}]') },
     { ...request, body: request.body.replace('"messages":[]', '"messages":[{"content":[{"type":"image","source":{}}]}]') },
   ]) {
-    const budget = new PositiveBudget(); budget.beginSession("b", "subject", subject);
+    const budget = new ControlledBudget(); budget.beginSession("b", "subject", subject);
     let calls = 0;
-    await assert.rejects(dispatchPositiveRequest(changed, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(anthropic); } }));
+    await assert.rejects(dispatchControlledRequest(changed, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(anthropic); } }));
     assert.equal(calls, 0);
     assert.throws(() => budget.reserve("after-failure"));
   }
@@ -59,63 +77,63 @@ test("401, network failure and missing usage retain the reservation and prohibit
     async () => { throw new Error("PRIVATE_NETWORK_TEXT"); },
     async () => new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } }),
   ]) {
-    const budget = new PositiveBudget(); budget.beginSession("b", "subject", subject);
+    const budget = new ControlledBudget(); budget.beginSession("b", "subject", subject);
     let calls = 0;
     const options = { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return fetcher(); } };
-    await assert.rejects(dispatchPositiveRequest(request, options), (error: Error) => !/PRIVATE/.test(error.message));
-    await assert.rejects(dispatchPositiveRequest({ ...request, requestId: "retry" }, options));
+    await assert.rejects(dispatchControlledRequest(request, options), (error: Error) => !/PRIVATE/.test(error.message));
+    await assert.rejects(dispatchControlledRequest({ ...request, requestId: "retry" }, options));
     assert.equal(calls, 1);
     assert.match(JSON.stringify(budget.snapshot()), /152457600/);
   }
 });
 
 test("raw usage requires completed streams, bounded integer counts and normal completion", () => {
-  assert.deepEqual(parsePositiveUsage(subject, anthropic), { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 });
+  assert.deepEqual(parseProviderUsage(subject, anthropic), { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 });
   for (const bad of [anthropic.replace('"input_tokens":100', '"input_tokens":-1'), anthropic.replace('"output_tokens":20', '"output_tokens":0.5'), anthropic.replace("end_turn", "max_tokens"), anthropic.replace('data: {"type":"message_stop"}\n\n', "")]) {
-    assert.throws(() => parsePositiveUsage(subject, bad));
+    assert.throws(() => parseProviderUsage(subject, bad));
   }
   const openai = 'data: {"model":"mimo-v2.6-flash","choices":[{"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":30,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":20}}}\n\ndata: [DONE]\n\n';
-  assert.deepEqual(parsePositiveUsage(judge, openai), { input: 10, output: 10, cacheRead: 20, cacheWrite: 0 });
-  assert.throws(() => parsePositiveUsage(judge, openai.replace("stop", "length")));
-  assert.throws(() => parsePositiveUsage(judge, openai.replace('"cached_tokens":20', '"cached_tokens":31')));
-  assert.throws(() => parsePositiveUsage(judge, openai.replace('"cached_tokens":20', '"cached_tokens":null')));
-  assert.throws(() => parsePositiveUsage(judge, openai.replace('"prompt_tokens":30', '"total_tokens":999,"prompt_tokens":30')));
-  assert.throws(() => parsePositiveUsage(judge, openai + 'data: {"choices":[]}\n\n'));
-  assert.throws(() => parsePositiveUsage(subject, anthropic.replace('"input_tokens":100', '"input_tokens":100,"cache_read_input_tokens":null')));
-  assert.throws(() => parsePositiveUsage(subject, anthropic + 'data: {"type":"ping"}\n\n'));
+  assert.deepEqual(parseProviderUsage(judge, openai), { input: 10, output: 10, cacheRead: 20, cacheWrite: 0 });
+  assert.throws(() => parseProviderUsage(judge, openai.replace("stop", "length")));
+  assert.throws(() => parseProviderUsage(judge, openai.replace('"cached_tokens":20', '"cached_tokens":31')));
+  assert.throws(() => parseProviderUsage(judge, openai.replace('"cached_tokens":20', '"cached_tokens":null')));
+  assert.throws(() => parseProviderUsage(judge, openai.replace('"prompt_tokens":30', '"total_tokens":999,"prompt_tokens":30')));
+  assert.throws(() => parseProviderUsage(judge, openai + 'data: {"choices":[]}\n\n'));
+  assert.throws(() => parseProviderUsage(subject, anthropic.replace('"input_tokens":100', '"input_tokens":100,"cache_read_input_tokens":null')));
+  assert.throws(() => parseProviderUsage(subject, anthropic + 'data: {"type":"ping"}\n\n'));
 });
 
 test("Anthropic final input and cache usage replace initial counters before releasing any reservation", async () => {
   const updated = anthropic.replace('"usage":{"output_tokens":20}', '"usage":{"output_tokens":20,"input_tokens":1000,"cache_read_input_tokens":200,"cache_creation_input_tokens":30}');
-  assert.deepEqual(parsePositiveUsage(subject, updated), { input: 1000, output: 20, cacheRead: 200, cacheWrite: 30 });
-  const budget = new PositiveBudget(); budget.beginSession("b", "subject", subject);
-  await dispatchPositiveRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => new Response(updated, { headers: { "content-type": "text/event-stream" } }) });
+  assert.deepEqual(parseProviderUsage(subject, updated), { input: 1000, output: 20, cacheRead: 200, cacheWrite: 30 });
+  const budget = new ControlledBudget(); budget.beginSession("b", "subject", subject);
+  await dispatchControlledRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => new Response(updated, { headers: { "content-type": "text/event-stream" } }) });
   assert.equal(budget.snapshot().chargedNanoUsd, 196500);
 });
 
 test("request transport cannot use another active session's cheaper reservation", async () => {
-  const budget = new PositiveBudget(); budget.beginSession("j", "judge", judge);
+  const budget = new ControlledBudget(); budget.beginSession("j", "judge", judge);
   let calls = 0;
-  await assert.rejects(dispatchPositiveRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(anthropic); } }));
+  await assert.rejects(dispatchControlledRequest(request, { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(anthropic); } }));
   assert.equal(calls, 0);
 });
 
 test("MiMo thinking uses the shared completion cap without an Anthropic budget_tokens field", async () => {
-  const budget = new PositiveBudget(); budget.beginSession("j", "judge", judge);
+  const budget = new ControlledBudget(); budget.beginSession("j", "judge", judge);
   let calls = 0;
   const wire = { requestId: "j-r1", url: "https://token-plan-cn.xiaomimimo.com/v1/chat/completions", headers: {}, body: JSON.stringify({ model: "mimo-v2.6-flash", stream: true, max_completion_tokens: 1024, messages: [], stream_options: { include_usage: true }, thinking: { type: "enabled" } }) };
   const body = 'data: {"model":"mimo-v2.6-flash","choices":[{"finish_reason":"stop"}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120}}\n\ndata: [DONE]\n\n';
-  await dispatchPositiveRequest(wire, { model: judge, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(body, { headers: { "content-type": "text/event-stream" } }); } });
+  await dispatchControlledRequest(wire, { model: judge, budget, apiKey: "fixture-only", signal: new AbortController().signal, fetcher: async () => { calls++; return new Response(body, { headers: { "content-type": "text/event-stream" } }); } });
   assert.equal(calls, 1);
   assert.equal(budget.snapshot().chargedNanoUsd, 19600);
 });
 
 const nativeAvailable = (() => { try { return process.platform === "darwin" && existsSync(join(resolvePiRuntime().readOnlyRoots[0]!, "dist", "index.js")); } catch { return false; } })();
 test("evidence persistence failures have a stable first cause and never overwrite a prior evidence record", async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-evidence-existing-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-evidence-existing-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
   const evidence = join(root, "failure-evidence.json"); writeFileSync(evidence, "IMMUTABLE_PRIOR_EVIDENCE");
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-persistence-existing", prompt: "fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 1000 }, async () => { calls++; throw new Error("MUST_NOT_DISPATCH"); });
     assert.equal(calls, 0);
@@ -127,9 +145,9 @@ test("evidence persistence failures have a stable first cause and never overwrit
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test("catalog drift stops before dispatch, so baseline and P cannot silently use different settings", async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-catalog-drift-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-catalog-drift-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-catalog", prompt: "fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 1000,
       catalogHashes: { "models.json": "0".repeat(64), "models-store.json": null },
@@ -142,9 +160,9 @@ test("catalog drift stops before dispatch, so baseline and P cannot silently use
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 test("native controlled parent aborts on timeout and retains any dispatched reservation", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-timeout-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-timeout-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-timeout", prompt: "Offline timeout fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 3000 }, async (_url, init) => {
       calls++;
@@ -163,9 +181,9 @@ test("native controlled parent aborts on timeout and retains any dispatched rese
 });
 
 test("native parent stops and cleans the worker even when ledger persistence fails after HTTP", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-persistence-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-persistence-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0, persists = 0;
+  const budget = new ControlledBudget(); let calls = 0, persists = 0;
   try {
     await assert.rejects(simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-persistence", prompt: "Offline failure fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10_000,
       onLedger: () => { if (++persists >= 3) throw new Error("OFFLINE_DISK_FAILURE"); },
@@ -192,15 +210,15 @@ function nativeResponse(content: string, tool?: { id: string; name: string; inpu
   ].map(data => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 }
 
-test("parent forwards the fixed v2 environment into native wire and missing-definition output is a normal execution", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-v2-environment-"));
+test("an ordinary task prompt and missing-definition answer remain normal execution", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-prompt-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
-    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-v2-environment", prompt: "Underspecified offline fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000, environmentInstruction: POSITIVE_ENVIRONMENT_V2 }, async (_url, init) => {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-task-prompt", prompt: "Underspecified offline fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async (_url, init) => {
       calls++;
       const payload = JSON.parse(String(init?.body));
-      assert.ok(payload.system.some((block: { text?: string }) => block.text?.includes(POSITIVE_ENVIRONMENT_V2)));
+      assert.ok(JSON.stringify(payload.messages).includes("Underspecified offline fixture"));
       return new Response(nativeResponse("缺少流程定义，无法确定交付规则。"), { headers: { "content-type": "text/event-stream" } });
     });
     assert.equal(calls, 1);
@@ -211,10 +229,29 @@ test("parent forwards the fixed v2 environment into native wire and missing-defi
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("exit-zero compound shell denial remains observational and does not change the strict native error gate", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-compound-"));
+test("a normal provider completion with empty final output stops execution and retains its usage", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-empty-output-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
+  try {
+    const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-empty-output", prompt: "Offline empty output fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
+      calls++;
+      return new Response(nativeResponse(""), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(calls, 1);
+    assert.notEqual(result.exitCode, 0);
+    assert.equal(result.stderr, "SESSION_FAILED_OR_EMPTY");
+    assert.equal(budget.snapshot().state, "stopped");
+    assert.equal(budget.snapshot().requests[0]?.state, "settled");
+    assert.equal(budget.snapshot().chargedNanoUsd, 27000);
+    assert.equal(result.failureEvidence.firstCause?.code, "SESSION_FAILED_OR_EMPTY");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("exit-zero compound shell denial remains observational and does not change the strict native error gate", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-compound-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-compound", prompt: "Offline compound status fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
       calls++;
@@ -231,9 +268,9 @@ test("exit-zero compound shell denial remains observational and does not change 
 });
 
 test("native tools cannot overwrite first-cause evidence and a real tool failure still prevents all followup HTTP", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-failure-tamper-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-failure-tamper-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-failure-tamper", prompt: "Offline evidence boundary fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
       calls++;
@@ -251,9 +288,9 @@ test("native tools cannot overwrite first-cause evidence and a real tool failure
 });
 
 test("native broker failure records the HTTP cause before generic worker termination and retains the full charge", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-http-cause-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-http-cause-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-http-cause", prompt: "Offline auth error fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
       calls++;
@@ -270,9 +307,9 @@ test("native broker failure records the HTTP cause before generic worker termina
 });
 
 test("an event evidence write failure stops with a persistence cause instead of being mislabeled invalid JSON", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-event-persistence-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-event-persistence-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   try {
     const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-event-persistence", prompt: "Offline event persistence fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => {
       calls++;
@@ -289,9 +326,9 @@ test("an event evidence write failure stops with a persistence cause instead of 
 });
 
 test("native tools cannot overwrite the controller's original wire accounting evidence", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "positive-parent-tamper-"));
+  const root = mkdtempSync(join(tmpdir(), "controlled-parent-tamper-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
-  const budget = new PositiveBudget(); let calls = 0;
+  const budget = new ControlledBudget(); let calls = 0;
   const evidence = join(root, "wire-offline-tamper-r1.json");
   const payload = [
     { type: "message_start", message: { id: "fixture", type: "message", role: "assistant", model: "MiniMax-M3.1-Flash", content: [], usage: { input_tokens: 100, output_tokens: 0 } } },

@@ -3,7 +3,7 @@
  * skill-eval 命令行入口。
  *
  * 子命令：
- *   eval       执行对照评估（支持单模型或 --models 多模型矩阵）并生成报告
+ *   eval       执行受控对照评估并生成报告
  *   preflight  只读核验 Pi 完整本地目录中的精确模型身份
  *   check      静态校验套件质量（可选结合 --run 做实证灵敏度体检）
  *   report     从已有运行产物重新生成报告
@@ -73,16 +73,7 @@ import {
   type CalibrationAnswerKey,
   type CalibrationResult,
 } from "../core/calibration.ts";
-import {
-  summarizeModelMatrix,
-  renderMatrixMarkdown,
-  type ModelMatrixCell,
-} from "../core/matrix.ts";
-import {
-  buildImprovementAdvice,
-  generateLlmRewriteAdvice,
-  type SkillDocContext,
-} from "../core/improve.ts";
+import { type SkillDocContext } from "../core/improve.ts";
 import {
   ACTIVATION_THRESHOLD,
   COST_WARN_TOKENS_PER_PP,
@@ -103,6 +94,7 @@ import {
 import { freezeSkill } from "../core/provenance.ts";
 import { assertFreshRunRoot, saveRunManifest, loadRunManifest, frozenSkillPath, relativeSnapshotDir, EVALUATION_POLICY_VERSION, type RunManifest } from "../core/run-manifest.ts";
 import { preflightModels } from "../core/model-preflight.ts";
+import { validateControlledPlan } from "../core/execution.ts";
 
 interface CliArgs {
   command: string;
@@ -149,6 +141,18 @@ function flagNumber(flags: Record<string, string | boolean>, key: string): numbe
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function positiveInteger(flags: Record<string, string | boolean>, key: string, fallback: number): number {
+  const value = flags[key] === undefined ? fallback : Number(flagString(flags, key));
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`参数 --${key} 必须为正整数`);
+  return value;
+}
+
+function rejectUnbudgetedAdvice(flags: Record<string, string | boolean>): void {
+  if (flags["llm-advice"] !== undefined) {
+    throw new Error("--llm-advice 尚未接入共享费用账本，禁止额外模型调用；请使用报告中的离线改进建议");
+  }
+}
+
 /** eval 与只读预检共享选型优先级，不依赖交互式 Pi 的默认模型。 */
 function modelSelection(flags: Record<string, string | boolean>) {
   for (const key of ["model", "models", "judge-model", "home"]) {
@@ -176,7 +180,7 @@ function printHelp(): void {
   skill-eval eval --suite <套件.json> --skill <SKILL.md> [选项]
   skill-eval preflight --model <provider/model> [--judge-model <provider/model>] [--home <dir>]
   skill-eval check --suite <套件.json> [--run <运行目录>] [--strict]
-  skill-eval report --run <运行目录> [--suite-file <套件.json>] [--llm-advice]
+  skill-eval report --run <运行目录> [--suite-file <套件.json>]
   skill-eval archive --run <运行目录> --skill <SKILL.md> [选项]
   skill-eval verify --original <原版目录> --broken <破坏版目录>
   skill-eval verify --generate-broken <SKILL.md> --out <输出目录>
@@ -188,9 +192,9 @@ function printHelp(): void {
 eval 选项：
   --suite <path>          评估套件定义（必填）
   --skill <path>          被测 SKILL.md 路径（可覆盖套件中的设置）
-  --model <id>            被评模型，如 provider/model
-  --models <m1,m2,...>    多模型矩阵评估（逗号分隔多个模型，输出 MATRIX_REPORT.md）
-  --judge-model <id>      评委模型（默认同被评模型；强烈建议跨模型做评委）
+  --model <id>            被评模型：minimax-cn/MiniMax-M3.1-Flash
+  --models <id>           仅接受单个模型；多模型矩阵尚未配置共享预算，拒绝执行
+  --judge-model <id>      评委：xiaomi-token-plan-cn/mimo-v2.6-flash（须显式指定或设置环境变量）
   --repeat <n>            每用例重复次数（默认取套件值或 ${DEFAULT_REPEAT}）
   --judge-repeat <n>      评委轮数，≥2 启用位置偏好探测（默认取套件值或 ${DEFAULT_JUDGE_REPEAT}）
   --out <dir>             输出目录（默认 runs/<run-id>）
@@ -199,7 +203,7 @@ eval 选项：
   --no-keyword-signal     关闭关键词弱证据，仅用工具调用取证
   --timeout <ms>          单次运行超时（默认 480000）
   --judge-timeout <ms>    评委单次超时（默认 300000）
-  --llm-advice            额外调用模型针对失败根因生成 SKILL.md 段落级改写草案
+  --llm-advice            暂停使用：额外付费通道尚未接入共享账本，eval/report 均拒绝
   --archive-to <dir>      评估后把通过测评的 skill 归档到该仓库（默认归档到 <dir>/archive）
   --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
   --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
@@ -207,6 +211,10 @@ eval 选项：
   --allow-partial         允许归档存在部分超时/失败的跑批（标记 provisional=true）
   --allow-low-gain        允许归档断言增益未达标的评估（标记 lowGain=true）
   --gain-threshold <pp>   增益门槛（百分点，默认 ${GAIN_THRESHOLD_PP}）
+
+当前唯一获准成本配置：全部被评与评委计划合计最多 8 会话，固定 US$1 等价预算；异常即停。
+诊断题与全部评委轮次同样计入会话规划；不会替换未受支持的模型。
+超过限额请缩小本次计划，或另行制定预算。
 
 preflight 选项：
   --model / --models     被评模型；选型与 eval 相同，要求精确 provider/model
@@ -413,7 +421,6 @@ async function runSingleModelEval(params: {
   timeoutMs: number | undefined;
   judgeTimeoutMs: number | undefined;
   gainThresholdPp: number | undefined;
-  wantLlmAdvice: boolean;
 }): Promise<{ summary: EvaluationSummary; decision: VerdictDecision; reportPath: string }> {
   const { suite, skillPath, model, judgeModel, repeat, judgeRepeat, outDir, runId } = params;
   assertFreshRunRoot(outDir);
@@ -475,23 +482,6 @@ async function runSingleModelEval(params: {
   });
   const skillContext = buildSkillDocContext(frozen.skillPath, summary);
 
-  let llmAdviceDraft: string | null = null;
-  if (params.wantLlmAdvice && skillContext?.skillContent) {
-    const variantSummary = summary.variantSummaries.find((v) => v.variantId !== "baseline");
-    const advice = buildImprovementAdvice(summary.results, variantSummary?.activationRate ?? 0, {
-      verdict: decision.verdict,
-      tasks: suite.tasks,
-      skillContext,
-    });
-    llmAdviceDraft = await generateLlmRewriteAdvice({
-      skillContent: skillContext.skillContent,
-      groupedDiagnoses: advice.groupedDiagnoses,
-      workspaceRoot: outDir,
-      model: judgeModel,
-      home: params.piHome,
-    });
-  }
-
   const meta: ReportMeta = {
     skillPath,
     skillHash: frozen.identity.hash,
@@ -513,7 +503,6 @@ async function runSingleModelEval(params: {
     expensive: decision.expensive,
     verdictReason: decision.reason,
     skillContext,
-    llmAdviceDraft,
     calibration: loadCalibrationIfPresent(outDir),
   });
 
@@ -525,6 +514,7 @@ async function runSingleModelEval(params: {
 }
 
 async function commandEval(args: CliArgs): Promise<number> {
+  rejectUnbudgetedAdvice(args.flags);
   const suitePath = flagString(args.flags, "suite");
   if (!suitePath) {
     process.stderr.write("缺少 --suite\n");
@@ -563,81 +553,34 @@ async function commandEval(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const repeat = flagNumber(args.flags, "repeat") ?? suite.repeat ?? DEFAULT_REPEAT;
-  const judgeRepeat = flagNumber(args.flags, "judge-repeat") ?? suite.judgeRepeat ?? DEFAULT_JUDGE_REPEAT;
+  const repeat = positiveInteger(args.flags, "repeat", suite.repeat ?? DEFAULT_REPEAT);
+  const judgeRepeat = positiveInteger(args.flags, "judge-repeat", suite.judgeRepeat ?? DEFAULT_JUDGE_REPEAT);
   const timeoutMs = flagNumber(args.flags, "timeout");
   const judgeTimeoutMs = flagNumber(args.flags, "judge-timeout");
   const keywordSignal = args.flags["no-keyword-signal"] !== true;
   const contextPrefix = flagString(args.flags, "context") ?? suite.contextPrefix;
   const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
-  const wantLlmAdvice = args.flags["llm-advice"] === true;
 
   // Keep historical-output protection ahead of SDK discovery without creating a directory.
   const requestedOut = flagString(args.flags, "out");
   if (requestedOut && existsSync(resolve(requestedOut)) && readdirSync(resolve(requestedOut)).length > 0) {
     throw new Error("运行目录非空，禁止覆盖历史评测记录；请使用新的 --out");
   }
-  // 全部矩阵模型及评委先核验，缺失时不创建运行目录或启动任何模型会话。
+  if (modelList.length > 1) {
+    throw new Error("多模型矩阵尚未配置共享预算，禁止执行；请用 --model 或单元素 --models 运行一次评估");
+  }
+  const model = (modelList[0] ?? singleModel)!;
+  const judgeModel = judgeOverride ?? model;
+  // All task kinds are executed and judged. Plan the full successful path before any directory or Provider.
+  validateControlledPlan({ model, judgeModel, plannedSessions: suite.tasks.length * repeat * (2 + judgeRepeat) });
+
+  // 核验完整本地目录中的精确身份；缺失时不创建运行目录或启动任何模型会话。
   const modelCheck = await preflightModels({ models, judgeModel: judgeOverride, home: piHome });
   if (!modelCheck.valid) {
     process.stderr.write(`模型预检未通过（未调用 Provider）：\n  ${modelCheck.errors.join("\n  ")}\n`);
     return 1;
   }
 
-  // 多模型矩阵模式（--models m1,m2,...）
-  if (modelList.length > 1) {
-    const matrixRunId = newRunId();
-    const matrixRoot = flagString(args.flags, "out")
-      ? resolve(flagString(args.flags, "out")!)
-      : resolve("runs", `matrix-${matrixRunId}`);
-    assertFreshRunRoot(matrixRoot);
-
-    const cells: ModelMatrixCell[] = [];
-    for (const m of modelList) {
-      const safeName = m.replace(/[^a-zA-Z0-9._-]+/g, "_");
-      const subOut = join(matrixRoot, safeName);
-      const res = await runSingleModelEval({
-        suite,
-        suiteHash: suiteCheck.suiteHash,
-        skillPath,
-        model: m,
-        judgeModel: judgeOverride ?? m,
-        repeat,
-        judgeRepeat,
-        outDir: subOut,
-        runId: `${matrixRunId}-${safeName}`,
-        piHome,
-        contextPrefix,
-        keywordSignal,
-        timeoutMs,
-        judgeTimeoutMs,
-        gainThresholdPp,
-        wantLlmAdvice,
-      });
-      cells.push({
-        model: m,
-        runDir: subOut,
-        summary: res.summary,
-        decision: res.decision,
-      });
-    }
-
-    const matrixReport = summarizeModelMatrix(cells);
-    const matrixMd = renderMatrixMarkdown(matrixReport, {
-      suiteId: suite.id,
-      skillPath,
-      judgeModel: judgeOverride ?? "各模型自评",
-      generatedAt: new Date().toISOString(),
-    });
-    writeFileSync(join(matrixRoot, "MATRIX_REPORT.md"), matrixMd, "utf8");
-    writeFileSync(join(matrixRoot, "matrix-summary.json"), JSON.stringify(matrixReport, null, 2), "utf8");
-    process.stdout.write(`${matrixReport.classification}\n${matrixReport.summaryText}\n`);
-    return 0;
-  }
-
-  // 单模型标准模式
-  const model = (modelList[0] ?? singleModel)!;
-  const judgeModel = judgeOverride ?? model;
   const runId = newRunId();
   const outDir = flagString(args.flags, "out") ? resolve(flagString(args.flags, "out")!) : resolve("runs", runId);
 
@@ -657,7 +600,6 @@ async function commandEval(args: CliArgs): Promise<number> {
     timeoutMs,
     judgeTimeoutMs,
     gainThresholdPp,
-    wantLlmAdvice,
   });
 
   const archiveTo = flagString(args.flags, "archive-to");
@@ -696,13 +638,14 @@ async function commandEval(args: CliArgs): Promise<number> {
   }
 
   process.stdout.write(`${decision.verdict}\n${decision.reason}\n`);
-  return summary.status === "failed" ? 1 : 0;
+  return summary.status === "success" ? 0 : 1;
 }
 
 /**
  * 从已有运行产物重新生成报告。
  */
 async function commandReport(args: CliArgs): Promise<number> {
+  rejectUnbudgetedAdvice(args.flags);
   const runDir = flagString(args.flags, "run");
   if (!runDir) {
     process.stderr.write("缺少 --run\n");
@@ -811,22 +754,6 @@ async function commandReport(args: CliArgs): Promise<number> {
   });
   const skillContext = buildSkillDocContext(summary.manifest ? frozenSkillPath(absolute, summary.manifest) : resolvedSkillPath, summary);
 
-  let llmAdviceDraft: string | null = null;
-  if (args.flags["llm-advice"] === true && skillContext?.skillContent) {
-    const variantSummary = summary.variantSummaries.find((v) => v.variantId !== "baseline");
-    const advice = buildImprovementAdvice(summary.results, variantSummary?.activationRate ?? 0, {
-      verdict: decision.verdict,
-      tasks,
-      skillContext,
-    });
-    llmAdviceDraft = await generateLlmRewriteAdvice({
-      skillContent: skillContext.skillContent,
-      groupedDiagnoses: advice.groupedDiagnoses,
-      workspaceRoot: absolute,
-      model: summary.judgeModel || summary.model,
-    });
-  }
-
   const report = renderReport({
     summary,
     meta,
@@ -836,7 +763,6 @@ async function commandReport(args: CliArgs): Promise<number> {
     expensive: decision.expensive,
     verdictReason: decision.reason,
     skillContext,
-    llmAdviceDraft,
     calibration: loadCalibrationIfPresent(absolute),
   });
 

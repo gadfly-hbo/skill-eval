@@ -20,6 +20,8 @@ const repoRoot = dirname(dirname(dirname(mainPath)));
 function installOfflinePi(root: string): string {
   const bin = join(root, "offline-pi", "bin");
   mkdirSync(bin, { recursive: true });
+  mkdirSync(join(root, "offline-pi", "home"));
+  writeFileSync(join(root, "offline-pi", "deny-fetch.mjs"), "globalThis.fetch = async () => { throw new Error('OFFLINE_NETWORK_DENIED'); };\n");
   writeFileSync(join(root, "offline-pi", "package.json"), '{"name":"offline-pi-fixture","type":"module"}');
   const command = join(bin, "pi");
   writeFileSync(command, '#!/usr/bin/env node\nimport {writeFileSync} from "node:fs";\nimport {join} from "node:path";\nwriteFileSync(join(process.cwd(),"PI_WAS_STARTED"),"unexpected pi execution");\nprocess.exit(99);\n');
@@ -28,9 +30,10 @@ function installOfflinePi(root: string): string {
 }
 
 function invoke(bin: string, args: string[]) {
-  return spawnSync(process.execPath, ["--experimental-strip-types", mainPath, ...args], {
+  return spawnSync(process.platform === "darwin" ? "/usr/bin/sandbox-exec" : process.execPath,
+    [...(process.platform === "darwin" ? ["-p", "(version 1)(allow default)(deny network*)", process.execPath] : []), "--import", join(dirname(bin), "deny-fetch.mjs"), "--experimental-strip-types", mainPath, ...args], {
     cwd: repoRoot, encoding: "utf8", timeout: 20000,
-    env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    env: { PATH: `${bin}:/usr/bin:/bin`, HOME: join(dirname(bin), "home"), LANG: "en_US.UTF-8" },
   });
 }
 

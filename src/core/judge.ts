@@ -14,7 +14,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { runPi, type PiRunResult } from "./pi.ts";
+import type { PiRunResult } from "./pi.ts";
+import type { EvaluationExecution } from "./execution.ts";
 
 export type Verdict = "win" | "tie" | "loss" | "not_judged";
 
@@ -67,6 +68,7 @@ export interface JudgeOptions {
   roundIndex?: number;
   /** 仅用于构造盲审提示词的身份词表；替换表本身不得发送给评委。 */
   sourceIdentifiers?: string[];
+  execution?: EvaluationExecution;
 }
 
 export interface JudgeResult {
@@ -229,9 +231,11 @@ export const DEFAULT_JUDGE_TIMEOUT_MS = 300_000;
  * 失败时返回 `not_judged` 并附错误信息，不抛异常。
  */
 export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResult> {
+  if (!options.execution) throw new Error("评委必须使用本轮共享的受控执行器");
   const prompt = buildJudgePrompt(options);
-  const run: PiRunResult = await runPi({
-    workspaceRoot: options.judgeDir,
+  mkdirSync(options.judgeDir, { recursive: true });
+  const run: PiRunResult = await options.execution.run("judge", {
+    workspaceRoot: join(options.judgeDir, "workspace"),
     sessionId: `judge-${options.runId}`,
     prompt,
     model: options.model,
@@ -242,7 +246,6 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
   });
 
   // 评委原始产物落盘，供复核与重算使用。
-  mkdirSync(options.judgeDir, { recursive: true });
   writeFileSync(join(options.judgeDir, "output.md"), run.metrics.output, "utf8");
   writeFileSync(join(options.judgeDir, "prompt.md"), prompt, "utf8");
   writeFileSync(join(options.judgeDir, "events.json"), JSON.stringify(run.events, null, 2), "utf8");

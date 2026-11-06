@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildImprovementAdvice, generateLlmRewriteAdvice } from "./improve.ts";
+import { buildImprovementAdvice } from "./improve.ts";
 import type { RunResult } from "./runner.ts";
 
 /**
@@ -455,27 +455,7 @@ test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp �
   assert.match(advice.groupedDiagnoses[0]!.skillLocationHint ?? "", /report-structure\.md/);
   assert.match(advice.groupedDiagnoses[0]!.skillLocationHint ?? "", /未读取/);
 
-  const draft = await generateLlmRewriteAdvice({
-    skillContent: "# Deep Research",
-    groupedDiagnoses: advice.groupedDiagnoses,
-    workspaceRoot: "/tmp",
-    runner: async () => ({
-      exitCode: 0,
-      metrics: {
-        totalTokens: 100,
-        totalCost: 0.001,
-        toolCalls: 0,
-        output: "Before: ...\nAfter: 严禁在末尾添加免责声明。",
-        readPaths: [],
-        toolNames: [],
-      },
-      events: [],
-      stderr: "",
-      timedOut: false,
-      isolation: { verified: true, issues: [], backend: "offline-test" },
-    }),
-  });
-  assert.match(draft ?? "", /严禁在末尾添加免责声明/);
+
 });
 
 

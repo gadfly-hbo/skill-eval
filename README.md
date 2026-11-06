@@ -49,13 +49,13 @@ variant（装 skill）     ┘
 npm install
 npm run check                    # 类型检查 + 单元测试
 
-# 跑一个真实评估（需要本机 pi CLI 且已配置模型）
+# 另行授权后跑两题受控冒烟（需要本机 Pi SDK 和模型配置）
 npm run eval -- eval \
-  --suite suites/example-suite.json \
-  --skill path/to/skill/SKILL.md \
+  --suite suites/controlled-example.json \
+  --skill examples/json-contract-skill/SKILL.md \
   --model minimax-cn/MiniMax-M3.1-Flash \
   --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash \
-  --repeat 3 \
+  --repeat 1 --judge-repeat 2 \
   --out runs/exp-001
 ```
 
@@ -74,31 +74,23 @@ npm run eval -- preflight \
 
 本次内置目录漏检的修正与离线验证见 [模型预检更正记录](docs/模型预检更正-2026-11-06.md)；原冻结包及历史判定保留。
 
-### data-analysis 1.9.0 两题阳性受控入口
+### 一套编排，一层受控执行
 
-```bash
-# 默认只描述冻结方案；不读取鉴权、不创建运行目录、不调用 Provider
-node --experimental-strip-types src/cli/positive-probe.ts
-# 追加只读核验冻结 SDK、Node 和完整合并模型目录
-node --experimental-strip-types src/cli/positive-probe.ts --verify-runtime
-```
+真实执行统一使用上面的 `eval`：原 `runner` 负责 B/P、断言、匿名双轮评委和报告，共享受控层负责每次 HTTP 的预留、usage 结算、OS 隔离及首次失败取证。当前成本配置固定被评模型 `minimax-cn/MiniMax-M3.1-Flash`、评委 `xiaomi-token-plan-cn/mimo-v2.6-flash`，每次完整运行最多 **8 会话、US$1 保守等价预算**；不自动换模型。
 
-独立入口固定两题、4 个被评会话及 4 个评委会话，最多 8 会话、US$1 保守等价预算。每个 HTTP 请求先预留最坏费用，再从原始 usage 结算；异常即停。模型与原生工具进程禁止联网，真实凭证仅由父进程持有。入口和限额配置位于原冻结包外；初次离线准备见 [受控入口验证记录](docs/阳性校验受控入口-2026-11-06.md)。
+计划会话数为 `任务数 × repeat × (2 + judgeRepeat)`，诊断任务与全部评委轮次也计算在内。上面的两题示例恰为 8 会话，只用于检查链路，不足以判定 skill 有效。超限、其他模型组合、多模型实际跑批以及额外付费 `--llm-advice` 都在创建运行目录前拒绝。
 
-v1 的一次真实运行已因 baseline 工具越界失败而停止；结果见 [真实执行报告](docs/阳性校验真实执行-data-analysis-1.9.0-2026-11-06.md)。冻结包外的 v2 使用新运行计划，给 B/P 追加完全相同的资源边界说明，并记录首次失败及后续清理中止：
+每个 HTTP 请求先持久化最坏费用预留，再派发并从原始 usage 结算；失败或 usage 不明时保留预留并停止。模型和工具进程禁止联网，凭证仅留在父进程。SDK 成本只是估计；共享 `budget-ledger.json` 覆盖 subject 和 judge 的保守等价费用，不代表账户账单封顶。
 
-```bash
-# 只读描述 v2 新计划及其关联的旧失败记录
-node --experimental-strip-types src/cli/positive-probe-v2.ts
-# 只读核验原冻结包、旧失败、Node/SDK 及精确模型目录
-node --experimental-strip-types src/cli/positive-probe-v2.ts --verify-runtime
-```
+任何执行、超时、工具错误、空输出或评委解析异常都会停整批。完整矩阵先写入 `execution-status.json`，未执行项保持 `NOT_RUN`，不产生虚构输出、零 usage 或真实评委票；任务断言不通过仍按原规则计分。原始事件、输出、失败首因保存在模型可写 `workspace/` 的父目录。
 
-v2 不续跑旧目录，仍需新的真实执行授权。其任务、模型、8 会话／US$1 等价限额、隔离及异常即停规则均沿用原计划；离线准备见 [v2 验证记录](docs/阳性校验受控入口-v2-2026-11-07.md)。
+v1/v2 阳性专用入口和候选/日期/历史目录硬编码编排已退役，旧源码可在提交 `dc032df` 查看。原冻结包、两次失败运行和公开报告均保留：[v1 真实记录](docs/阳性校验真实执行-data-analysis-1.9.0-2026-11-06.md)、[v2 准备记录](docs/阳性校验受控入口-v2-2026-11-07.md)。本次收敛不续跑这些目录，不改冻结包，也不启动主复测。
+
+`npm run check` 的标准测试入口使用临时空 HOME，清除凭证环境变量，并拒绝真实网络；原生会话用显式假响应及假凭证测试，工具进程仍保持自身 OS 隔离。
 
 ### pi 配置隔离
 
-pi CLI 会用 `~/.pi/agent/` 下的锁文件，且并发运行会争用。评估时建议用隔离 HOME：
+`--home` 指定父进程读取的 Pi 模型目录与认证配置。每个模型会话另建无真实凭证的临时 HOME。可预先准备独立的来源配置：
 
 ```bash
 bash scripts/setup-pi-home.sh      # 默认建在 ~/.skill-eval/pi-home
@@ -112,8 +104,7 @@ npm run eval -- eval --suite ... --home ~/.skill-eval/pi-home
 # 只校验套件结构、正则合法性、恒真断言与白送断言（可选结合 --run）
 npm run eval -- check --suite suites/example-suite.json
 
-# 多模型矩阵评估（防止弱模型结论外推到强模型失效）
-npm run eval -- eval --suite suites/example-suite.json --skill path/to/SKILL.md --models minimax-cn/MiniMax-M3.1-Flash,openai/gpt-5.4
+# 当前真实执行限于单模型成本配置；历史多模型结果仍可离线报告/比较
 
 # 阴性对照元评估：剥离行为契约后验证工具与套件的区分能力
 npm run eval -- verify --generate-broken path/to/SKILL.md --out /tmp/broken-skill
@@ -139,7 +130,7 @@ npm run eval -- pending --repo . --init
 npm run eval -- pending --repo .
 
 # 一条命令跑完直接入库：评估 + 归档
-npm run eval -- eval --suite suites/example-suite.json --model <被评模型> --archive-to .
+npm run eval -- eval --suite suites/controlled-example.json --model minimax-cn/MiniMax-M3.1-Flash --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash --repeat 1 --archive-to .
 
 # 查看回归门禁阈值
 npm run eval -- threshold
@@ -164,7 +155,8 @@ npm run eval -- threshold
 ```text
 src/
 ├── core/          评估内核（无业务耦合，可单测）
-│   ├── runner.ts        对照实验编排
+│   ├── runner.ts        唯一对照实验编排、停批及 NOT_RUN
+│   ├── execution.ts     subject/judge 共用受控会话与账本
 │   ├── verdict.ts       综合结论判定引擎（覆盖率/超时惩罚/规则纠偏/置信区间/成本分级）
 │   ├── thresholds.ts    全局判定与展示阈值单一真相来源
 │   ├── stats.ts         任务级保守区间、描述性比例区间与 Cohen's κ

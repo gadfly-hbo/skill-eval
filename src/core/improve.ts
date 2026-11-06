@@ -14,7 +14,6 @@
  * | `assertion-too-strict` | mustMatch 失败但命中了声明的等价写法 | **套件问题**，不是 skill 的问题 |
  */
 
-import { runPi } from "./pi.ts";
 import type { AssertionOutcome } from "./assertions.ts";
 import type { RunResult } from "./runner.ts";
 
@@ -498,59 +497,4 @@ export function buildImprovementAdvice(
     skillIssueCount,
     falseFailureCount: diagnoses.length - skillIssueCount,
   };
-}
-
-/**
- * 可选：调用模型针对聚合后的根因生成 SKILL.md 段落级改写草案（`--llm-advice`）。
- *
- * 默认不自动启用，保证常规评估零额外开销与 100% 确定性。
- */
-export async function generateLlmRewriteAdvice(options: {
-  skillContent: string;
-  groupedDiagnoses: GroupedDiagnosis[];
-  workspaceRoot: string;
-  model?: string | undefined;
-  home?: string | undefined;
-  timeoutMs?: number;
-  runner?: typeof runPi;
-}): Promise<string | null> {
-  const actionable = options.groupedDiagnoses.filter((g) => isSkillIssue(g.mode)).slice(0, 5);
-  if (actionable.length === 0) return null;
-
-  const issuesText = actionable
-    .map(
-      (g, idx) =>
-        `${idx + 1}. [${MODE_LABEL[g.mode]}] ${g.note || g.detail}（影响用例：${g.tasks.join(", ")}，预计修复增益 +${g.expectedGainPp.toFixed(1)}pp）` +
-        (g.skillLocationHint ? `\n   ${g.skillLocationHint}` : ""),
-    )
-    .join("\n");
-
-  const prompt = `你是 Agent Skill 工程化改写顾问。请根据以下实测失败根因，对被测 SKILL.md 给出**最小、可直接粘贴替换**的具体段落改写建议（Before -> After）。
-
-要求：
-1. 不要泛泛而谈，直接给出原段落定位与替换后的 Markdown 文本。
-2. 若根因是「漏触发」或「误触发」，只改写 YAML frontmatter 的 description。
-3. 若根因是规则未落地或不稳，将软性描述改为可验证的硬性红线或输出模板。
-4. 控制在 400 字以内，条理清晰。
-
-# 实测待修复根因
-${issuesText}
-
-# 当前 SKILL.md 内容
-${options.skillContent.slice(0, 12000)}
-`;
-
-  const execRunner = options.runner ?? runPi;
-  const res = await execRunner({
-    workspaceRoot: options.workspaceRoot,
-    sessionId: "llm-advice",
-    prompt,
-    model: options.model,
-    skillPaths: [],
-    home: options.home,
-    timeoutMs: options.timeoutMs ?? 120_000,
-  });
-
-  if (res.exitCode !== 0 || !res.metrics.output.trim()) return null;
-  return res.metrics.output.trim();
 }
