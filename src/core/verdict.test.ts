@@ -3,6 +3,46 @@ import assert from "node:assert/strict";
 import { decideVerdict } from "./verdict.ts";
 import type { EvaluationSummary, RunResult, VariantSummary } from "./runner.ts";
 
+/** 补全合成夹具的冻结范围；不会改动任何真实运行记录。 */
+function freezeFixture(summary: EvaluationSummary): EvaluationSummary {
+  summary.repeat = Math.max(1, ...summary.results.map(r => r.attempt));
+  summary.tasks = [...new Set(summary.results.map(r => r.taskId))].map(id => {
+    const count = summary.results.find(r => r.taskId === id)?.assertions?.total ?? 0;
+    return { id, prompt: `合成任务 ${id}`, assertions: Array.from({ length: count }, () => ({ kind: "mustMatch" as const, pattern: ".+" })) };
+  });
+  summary.integrity = { verified: true, issues: [] };
+  summary.isolation = { verified: true, issues: [] };
+  return summary;
+}
+
+/**
+ * 成本与胜率门槛测试用的独立合成任务簇，显式扩大算法夹具而非重算历史证据。
+ * 每个簇只有一个配对 attempt；断言条数不会增加独立任务数。
+ */
+function independentTaskFixture(summary: EvaluationSummary, taskCount: number): EvaluationSummary {
+  const templates = summary.results;
+  const skill = summary.variantSummaries.find(v => v.variantId !== "baseline")!;
+  const oldDecided = skill.win + skill.tie + skill.loss;
+  const wins = Math.round(taskCount * skill.win / oldDecided);
+  const ties = Math.round(taskCount * skill.tie / oldDecided);
+  summary.results = Array.from({ length: taskCount }, (_, i) => templates.map(r => ({
+    ...r, taskId: `synthetic-independent-${i}`, id: `${r.variantId}-synthetic-independent-${i}-1`, attempt: 1,
+  }))).flat();
+  summary.pairwise = Array.from({ length: taskCount }, (_, i) => ({
+    baselineResultId: `baseline-synthetic-independent-${i}-1`, variantResultId: `skill-synthetic-independent-${i}-1`,
+    taskId: `synthetic-independent-${i}`, variantId: "skill", attempt: 1,
+    verdict: i < wins ? "win" : i < wins + ties ? "tie" : "loss",
+    scoreDelta: i < wins ? 20 : i < wins + ties ? 0 : -20, baselineScore: 50, variantScore: 70,
+    confidence: .8, reason: "合成评委判定", error: null, judgeRuns: [], biasProbe: null,
+  }));
+  Object.assign(skill, {
+    total: taskCount, success: taskCount, failed: 0, win: wins, tie: ties, loss: taskCount - wins - ties,
+    scoredJudged: taskCount, totalScoredPairs: taskCount, pairCoverage: 1, winRate: wins / taskCount,
+    effectiveWinRate: wins / taskCount, ruleAdjustedWinRate: wins / taskCount, winRateLowerBound: wins / taskCount,
+  });
+  return freezeFixture(summary);
+}
+
 function makeAssertionResult(
   variantId: string,
   taskId: string,
@@ -55,7 +95,7 @@ function makeAssertionResult(
   };
 }
 
-test("json-contract 画像：激活充分、胜率达标、断言增益显著且开销省算力 → effective（非昂贵）", () => {
+test("json-contract 原小样本画像：省算力但仅3个独立任务，任务级置信区间不足 → inconclusive（非昂贵）", () => {
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 1, 3),
     makeAssertionResult("baseline", "t1", 2, 1, 3),
@@ -152,14 +192,15 @@ test("json-contract 画像：激活充分、胜率达标、断言增益显著且
     totalTokens: 82526,
   };
 
-  const decision = decideVerdict(summary);
-  assert.equal(decision.verdict, "effective");
+  const decision = decideVerdict(freezeFixture(summary));
+  assert.equal(decision.verdict, "inconclusive");
   assert.equal(decision.expensive, false);
   assert.equal(decision.costGrade, "lean");
-  assert.equal(decision.blockers.length, 0);
+  assert.ok(decision.blockers.some(b => b.includes("置信区间")));
+  assert.equal(decision.metrics.gainCiPp?.independentTasks, 3);
 });
 
-test("data-analysis v2 画像：指标全部过硬但 token 膨胀 15.2x → effective 且标记 expensive=true", () => {
+test("data-analysis 成本合成画像：40个独立任务确认增益但 token 膨胀 15.2x → effective 且标记 expensive=true", () => {
   // 模拟 baseline 22/106 → skill 101/106
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 22, 106),
@@ -247,7 +288,7 @@ test("data-analysis v2 画像：指标全部过硬但 token 膨胀 15.2x → eff
     totalTokens: 1977160,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(independentTaskFixture(summary, 40));
   assert.equal(decision.verdict, "effective");
   assert.equal(decision.expensive, true);
   assert.equal(decision.costGrade, "expensive");
@@ -329,7 +370,7 @@ test("deep-research 画像：高超时率 + 评判覆盖率仅 40% + 全样本�
     totalTokens: 2330000,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(decision.blockers.length >= 3);
   assert.ok(decision.blockers.some((b) => b.includes("覆盖率")));
@@ -411,7 +452,7 @@ test("规则优先于评委：增益未过硬（+16.7pp）时评委 75% 胜率�
     totalTokens: 88000,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(decision.blockers.some((b) => b.includes("规则")));
 });
@@ -490,12 +531,12 @@ test("负向用例误触发率超标（> 20%）→ 阻断判为 effective", () =
     totalTokens: 56000,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(decision.blockers.some((b) => b.includes("误触发")));
 });
 
-test("0 断言套件且小样本（4/6 胜率 66.7%，Wilson 95% 下界 <= 50%）→ 拦截为 inconclusive", () => {
+test("0 断言套件且小样本（4/6 胜率66.7%，独立任务级下界证据不足）→ 拦截为 inconclusive", () => {
   const summary: EvaluationSummary = {
     runId: "zero-assertion-small-run",
     model: "m1",
@@ -565,7 +606,7 @@ test("0 断言套件且小样本（4/6 胜率 66.7%，Wilson 95% 下界 <= 50%�
     totalTokens: 39000,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(decision.blockers.some((b) => b.includes("无规则断言") || b.includes("缺少规则断言")));
 });
@@ -643,7 +684,7 @@ test("阴性对照破坏版画像：100% 激活、充足样本下胜率 22.2% �
     totalTokens: 772650,
   };
 
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "ineffective");
 });
 
@@ -745,14 +786,14 @@ function makeWinGateSummary(opts: {
   };
 }
 
-test("断言驱动双档门槛：增益 +62.3pp 过硬而胜率仅 53.3%（run1 画像）→ effective 并提示按守门线判定", () => {
+test("断言驱动双档门槛：60个独立合成任务确认 +62.3pp 增益且胜率53.3% → effective 并提示守门线", () => {
   // 2026-11-05 data-analysis run1 实测画像：增益 +62.9pp（稳定），胜率 8/15 = 53.3%（噪声）。
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 17, 106),
     makeAssertionResult("skill", "t1", 1, 83, 106),
   ];
   const summary = makeWinGateSummary({ runId: "drive-gate-run", results, win: 8, tie: 4, loss: 3 });
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(independentTaskFixture(summary, 60));
   assert.equal(decision.verdict, "effective");
   assert.equal(decision.blockers.length, 0, `不应有阻断项：${decision.blockers.join("；")}`);
   assert.ok(
@@ -768,7 +809,7 @@ test("断言驱动双档门槛边界：增益 +15pp 未过硬（10–20pp 压线
     makeAssertionResult("skill", "t1", 1, 65, 100),
   ];
   const summary = makeWinGateSummary({ runId: "marginal-gain-run", results, win: 8, tie: 4, loss: 3 });
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(
     decision.blockers.some((b) => b.includes("胜率") && b.includes("60%")),
@@ -776,13 +817,13 @@ test("断言驱动双档门槛边界：增益 +15pp 未过硬（10–20pp 压线
   );
 });
 
-test("断言驱动双档门槛下界：增益 +62.3pp 过硬但胜率 46.7% 低于 50% 守门线 → inconclusive", () => {
+test("断言驱动双档门槛下界：60个独立合成任务确认 +62.3pp 增益但胜率46.7% → inconclusive", () => {
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 17, 106),
     makeAssertionResult("skill", "t1", 1, 83, 106),
   ];
   const summary = makeWinGateSummary({ runId: "weak-judge-run", results, win: 7, tie: 5, loss: 3 });
-  const decision = decideVerdict(summary);
+  const decision = decideVerdict(independentTaskFixture(summary, 60));
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(
     decision.blockers.some((b) => b.includes("断言驱动守门线")),

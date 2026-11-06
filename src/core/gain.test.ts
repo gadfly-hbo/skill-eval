@@ -5,7 +5,60 @@ import {
   evaluateGain,
   computeGainPp,
   DEFAULT_GAIN_THRESHOLD_PP,
+  evaluateGainFromResults,
 } from "./gain.ts";
+
+function pairedRows(taskId: string, base: number, skill: number, copies = 1, attempt = 1) {
+  return [["baseline", base], ["skill", skill]].map(([variantId, fraction]) => {
+    const total = 10 * copies;
+    return {
+      variantId: variantId as string, taskId, attempt, status: "success" as const,
+      assertions: { total, outcomes: Array.from({ length: total }, (_, i) => ({ passed: i < Number(fraction) * total })) },
+    };
+  });
+}
+
+test("任务级增益区间不因复制断言或同任务重复次数而收窄", () => {
+  const tasks = [{ id: "t1" }, { id: "t2" }];
+  const original = evaluateGainFromResults([...pairedRows("t1", .2, .8), ...pairedRows("t2", .4, .9)], "skill", 10, tasks, 1);
+  const copied = evaluateGainFromResults([...pairedRows("t1", .2, .8, 100), ...pairedRows("t2", .4, .9, 100)], "skill", 10, tasks, 1);
+  const repeated = evaluateGainFromResults([1, 2, 3].flatMap(a => [...pairedRows("t1", .2, .8, 1, a), ...pairedRows("t2", .4, .9, 1, a)]), "skill", 10, tasks, 3);
+  assert.equal(original.gainPp, 55);
+  assert.deepEqual(copied.ciPp, original.ciPp);
+  assert.deepEqual(repeated.ciPp, original.ciPp);
+  assert.equal(original.pairedTaskCount, 2);
+  assert.equal(original.ciPp?.method, "task-hoeffding");
+  assert.ok(original.ciPp!.lowPp < 0, "两个独立任务不能靠断言数量放行");
+});
+
+test("增益按任务等权，diagnostic 与负向触发任务不进入分子和分母", () => {
+  const tasks = [{ id: "small" }, { id: "large" }, { id: "diag", kind: "diagnostic" as const }, { id: "neg", shouldActivate: false }];
+  const rows = [...pairedRows("small", 0, 1), ...pairedRows("large", 1, 0, 100), ...pairedRows("diag", 0, 1, 100), ...pairedRows("neg", 0, 1, 100)];
+  const gain = evaluateGainFromResults(rows, "skill", 10, tasks, 1);
+  assert.equal(gain.complete, true);
+  assert.equal(gain.gainPp, 0);
+  assert.equal(gain.pairedTaskCount, 2);
+  assert.equal(gain.baselineCounts.total, 1010);
+});
+
+test("缺失attempt、重复pair、失败空输出和未知任务范围均不得推断完整增益", () => {
+  const tasks = [{ id: "t1" }];
+  for (const [rows, repeat] of [
+    [pairedRows("t1", 0, 1), 2],
+    [[...pairedRows("t1", 0, 1), ...pairedRows("t1", 0, 1)], 1],
+    [pairedRows("t1", 0, 1).map(r => r.variantId === "skill" ? { ...r, status: "failed", assertions: null } : r), 1],
+  ] as const) {
+    const gain = evaluateGainFromResults(rows as never, "skill", 10, tasks, repeat);
+    assert.equal(gain.complete, false);
+    assert.equal(gain.gainPp, null);
+    assert.equal(gain.ciPp, null);
+    assert.equal(gain.passed, false);
+    assert.ok(gain.issues.length > 0);
+  }
+  const unknown = evaluateGainFromResults(pairedRows("t1", 0, 1), "skill");
+  assert.equal(unknown.complete, false);
+  assert.equal(unknown.gainPp, null);
+});
 
 /**
  * 增益门槛的判定规则。

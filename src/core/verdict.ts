@@ -6,8 +6,8 @@
  * 2. skill 侧超时率门禁（timeoutRate <= 20%）与全样本胜率下界（winRateLowerBound >= 50%）
  * 3. 不对称超时惩罚后的有效胜率（effectiveWinRate >= 胜率门槛）
  * 4. 规则优先于评委（ruleAdjustedWinRate >= 胜率门槛，防止评委乐观分覆盖客观断言倒退）
- * 5. 客观断言增益（gainPp >= 10pp）及其 95% Newcombe-Wilson 置信下界 > 0（小样本显著性）
- * 6. 0 断言套件的小样本保护（纯评委 Wilson 95% 置信下界须 > 50%）
+ * 5. 任务等权配对断言增益及保守 95% Hoeffding 下界 > 0（假定任务簇独立）
+ * 6. 0 断言套件同样按任务簇统计，避免重跑次数冒充独立任务数
  * 7. 负向用例误触发率门禁（falseActivationRate <= 20%）
  * 8. 成本效率分级：expensive 标记「有效但昂贵」，runaway 降级为 inconclusive
  *
@@ -34,9 +34,9 @@ import {
   WIN_RATE_STRONG_THRESHOLD,
   WIN_RATE_THRESHOLD,
 } from "./thresholds.ts";
-import { evaluateGain, evaluateGainFromResults } from "./gain.ts";
+import { evaluateGainFromResults, isScoredTask } from "./gain.ts";
 import { evaluateCostEfficiency, type CostGrade } from "./cost.ts";
-import { wilsonInterval, type DiffIntervalPp } from "./stats.ts";
+import { wilsonInterval, taskGainInterval, type DiffIntervalPp } from "./stats.ts";
 import type { EvaluationSummary } from "./runner.ts";
 
 export type VerdictOutcome = "effective" | "ineffective" | "inconclusive";
@@ -63,6 +63,27 @@ export interface VerdictMetrics {
   hasAssertions: boolean;
   gainPp: number | null;
   gainCiPp: DiffIntervalPp | null;
+}
+
+function judgeTaskInterval(summary: EvaluationSummary, variantId: string): { low: number; high: number } | null {
+  const tasks = summary.tasks?.filter(isScoredTask);
+  if (!tasks?.length || !Number.isInteger(summary.repeat) || summary.repeat < 1) return null;
+  const taskRates: number[] = [];
+  for (const task of tasks) {
+    let wins = 0;
+    for (let attempt = 1; attempt <= summary.repeat; attempt++) {
+      const pairs = summary.pairwise.filter(p => p.variantId === variantId && p.taskId === task.id && p.attempt === attempt);
+      if (pairs.length !== 1) return null;
+      const pair = pairs[0]!;
+      const base = summary.results.filter(r => r.id === pair.baselineResultId);
+      const variant = summary.results.filter(r => r.id === pair.variantResultId);
+      if (base.length !== 1 || variant.length !== 1) return null;
+      if (pair.verdict === "win") wins++;
+    }
+    taskRates.push(2 * wins / summary.repeat - 1);
+  }
+  const interval = taskGainInterval(taskRates);
+  return interval ? { low: (interval.lowPp / 100 + 1) / 2, high: (interval.highPp / 100 + 1) / 2 } : null;
 }
 
 export interface VerdictDecision {
@@ -177,33 +198,18 @@ export function decideVerdict(
         ? inferredTimedOut / variant.total
         : 0;
 
-  // 规则断言增益与置信区间：优先用原始运行结果精确计数，兼容无 results 的精简摘要回退。
-  let hasAssertions = false;
+  // 只依据冻结计分任务和完整配对运行推断；历史摘要缺证据不回退为已验证。
+  const fromResults = evaluateGainFromResults(summary.results, variant.variantId, gainThresholdPp, summary.tasks, summary.repeat);
+  const hasAssertions = Boolean(summary.tasks?.some(t => isScoredTask(t) && t.assertions?.length)) ||
+    (fromResults.baselineCounts.total > 0 && fromResults.variantCounts.total > 0);
   let gainPp: number | null = null;
   let gainCiPp: DiffIntervalPp | null = null;
   let gainThresholdOk = false;
 
-  if (summary.results.length > 0) {
-    const fromResults = evaluateGainFromResults(summary.results, variant.variantId, gainThresholdPp);
-    hasAssertions = fromResults.baselineCounts.total > 0 && fromResults.variantCounts.total > 0;
-    if (hasAssertions) {
-      gainPp = fromResults.gainPp;
-      gainCiPp = fromResults.ciPp ?? null;
-      gainThresholdOk = fromResults.passed;
-    }
-  } else if (
-    baseline?.assertionPassRate !== null &&
-    baseline?.assertionPassRate !== undefined &&
-    variant.assertionPassRate !== null
-  ) {
-    hasAssertions = true;
-    const fallbackGain = evaluateGain(
-      baseline.assertionPassRate,
-      variant.assertionPassRate,
-      gainThresholdPp,
-    );
-    gainPp = fallbackGain.gainPp;
-    gainThresholdOk = fallbackGain.passed;
+  if (hasAssertions) {
+    gainPp = fromResults.gainPp;
+    gainCiPp = fromResults.ciPp ?? null;
+    gainThresholdOk = fromResults.passed;
   }
 
   // 断言驱动的双档胜率门槛：客观增益过硬（≥ 20pp 且 CI 下界 > 0）时，
@@ -214,7 +220,7 @@ export function decideVerdict(
     gainThresholdOk &&
     gainPp !== null &&
     gainPp >= GAIN_STRONG_THRESHOLD_PP - EPS &&
-    (gainCiPp === null || gainCiPp.lowPp > 0);
+    gainCiPp !== null && gainCiPp.lowPp > 0;
   const winGate = objectiveStrong ? WIN_RATE_RELAXED_THRESHOLD : WIN_RATE_THRESHOLD;
 
   const costEfficiency =
@@ -261,9 +267,16 @@ export function decideVerdict(
   }
 
   const timeoutOk = timeoutRate <= MAX_VARIANT_TIMEOUT_RATE + EPS;
+  const evidenceIssues: string[] = [];
+  if (!summary.integrity?.verified || summary.integrity.issues.length > 0) evidenceIssues.push(`运行身份完整性未通过核验${summary.integrity?.issues.length ? `：${summary.integrity.issues.join("；")}` : "（缺少核验证据）"}`);
+  if (!summary.isolation?.verified || summary.isolation.issues.length > 0) evidenceIssues.push(`实验隔离未通过核验${summary.isolation?.issues.length ? `：${summary.isolation.issues.join("；")}` : "（缺少核验证据）"}`);
+  if (summary.results.some(r => r.contamination?.contaminated)) evidenceIssues.push("运行存在被测 skill 或评测私有材料污染");
+  if (!summary.tasks?.length) evidenceIssues.push("缺少冻结任务范围");
+  if (summary.results.length === 0) evidenceIssues.push("缺少可复算的原始运行记录");
+  const evidenceOk = evidenceIssues.length === 0;
 
   // 零激活且无任何胜出（且运行本身正常完成而非全超时崩溃）→ 直接证伪。
-  if (variant.success > 0 && timeoutOk && activationRate === 0 && (winRate === null || winRate === 0)) {
+  if (evidenceOk && variant.success > 0 && timeoutOk && activationRate === 0 && (winRate === null || winRate === 0)) {
     return {
       verdict: "ineffective",
       costGrade,
@@ -276,7 +289,7 @@ export function decideVerdict(
     };
   }
 
-  const blockers: string[] = [];
+  const blockers: string[] = [...evidenceIssues];
   const warnings: string[] = [];
 
   const activationOk = activationRate >= ACTIVATION_THRESHOLD - EPS;
@@ -360,26 +373,31 @@ export function decideVerdict(
 
   let objectiveOk = true;
   if (hasAssertions) {
+    if (!fromResults.complete) {
+      objectiveOk = false;
+      blockers.push(`配对断言覆盖不完整：${fromResults.issues.join("；")}`);
+    }
     if (!gainThresholdOk) {
       objectiveOk = false;
       blockers.push(
-        `规则断言条目增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛`,
+        `规则断言任务等权配对增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛`,
       );
     } else if (gainCiPp !== null && gainCiPp.lowPp <= 0) {
       objectiveOk = false;
       blockers.push(
-        `断言增益 95% 置信区间 [${gainCiPp.lowPp >= 0 ? "+" : ""}${gainCiPp.lowPp.toFixed(1)}pp, +${gainCiPp.highPp.toFixed(1)}pp] 跨越 0，样本内改善尚不具备统计显著性`,
+        `任务等权增益保守 95% Hoeffding 置信区间 [${gainCiPp.lowPp >= 0 ? "+" : ""}${gainCiPp.lowPp.toFixed(1)}pp, ${gainCiPp.highPp >= 0 ? "+" : ""}${gainCiPp.highPp.toFixed(1)}pp] 跨越 0（独立任务 ${fromResults.pairedTaskCount} 个），证据不足`,
       );
     } else if (gainPp !== null && gainPp < GAIN_STRONG_THRESHOLD_PP - EPS) {
       warnings.push(`断言增益 +${gainPp.toFixed(1)}pp 处于压线区间（10pp–20pp）`);
     }
   } else {
-    // 套件无任何规则断言时，纯靠 LLM 评委必须满足 Wilson 95% 置信下界 > 50%，防止 4/6 小样本噪声放行。
-    const judgeCiOk = winRateCi !== null && winRateCi.low > 0.5;
+    // 纯评委同样按冻结任务簇推断，不能让同任务多次重跑制造样本量。
+    const taskCi = judgeTaskInterval(summary, variant.variantId);
+    const judgeCiOk = taskCi !== null && taskCi.low > 0.5;
     if (!judgeCiOk) {
       objectiveOk = false;
       blockers.push(
-        `套件缺少规则断言，且纯评委胜率 95% 置信下界（${pct(winRateCi?.low ?? null)}）未超过 50%，小样本不足以单独支撑有效结论`,
+        `套件缺少规则断言，且任务级纯评委胜率保守 95% 置信下界（${pct(taskCi?.low ?? null)}）未超过 50%，独立任务证据不足`,
       );
     }
   }
@@ -396,6 +414,7 @@ export function decideVerdict(
 
   // 所有硬门禁全部通过 → effective（若 expensive=true，报告与归档呈现「有效但昂贵」）。
   if (
+    evidenceOk &&
     activationOk &&
     falseActivationOk &&
     coverageOk &&
@@ -430,7 +449,7 @@ export function decideVerdict(
   // 区分「明确证伪（ineffective）」与「证据不足/超时污染/偏科（inconclusive）」：
   // 1. 样本健康时，激活率与胜率双双不及格 → ineffective
   // 2. 激活充分、样本充足且无超时污染时，胜率低于弱提升线（45%）且客观断言增益也未达标 → 空壳/无效契约证伪为 ineffective
-  if (coverageOk && sampleSizeOk && timeoutOk) {
+  if (evidenceOk && coverageOk && sampleSizeOk && timeoutOk) {
     if (!activationOk && !rawWinOk) {
       return {
         verdict: "ineffective",

@@ -1,16 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateGain } from "./gain.ts";
+import { freezeSkill, identifySkill } from "./provenance.ts";
+import { saveRunManifest } from "./run-manifest.ts";
+import type { EvaluationSummary } from "./runner.ts";
 import {
   archiveSkill,
   buildVersion,
   collectArchiveInput,
   copySkillTree,
   formatTimestamp,
-  hashSkillFile,
   isNoise,
   readFrontmatterVersion,
   redactHomeInText,
@@ -52,7 +54,7 @@ function makeSkill(root: string, name = "demo-skill", version?: string): string 
 
 /** 造一个最小可用的运行目录。 */
 function makeRun(root: string, opts: { verdict?: string; passed?: number; total?: number } = {}): string {
-  const dir = join(root, "run-1");
+  const dir = mkdtempSync(join(root, "run-"));
   mkdirSync(dir, { recursive: true });
   const passed = opts.passed ?? 4;
   const total = opts.total ?? 4;
@@ -136,6 +138,25 @@ function makeRun(root: string, opts: { verdict?: string; passed?: number; total?
     "utf8",
   );
   writeFileSync(join(dir, "REPORT.md"), "# 评估报告\n\n结论 effective\n", "utf8");
+  const sourceDir = readdirSync(root).map(name => join(root, name)).find(path => existsSync(join(path, "SKILL.md")))!;
+  const source = join(sourceDir, "SKILL.md");
+  const frozen = freezeSkill(source, join(dir, ".frozen", "skill"));
+  const summary = JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) as EvaluationSummary;
+  const tasks = [{ id: "t1", prompt: "fixture", assertions: Array.from({ length: total }, () => ({ kind: "mustMatch" as const, pattern: "x" })) }];
+  summary.tasks = tasks;
+  summary.suiteMeta!.skillPath = source;
+  summary.suiteMeta!.suiteHash = "sha256:fixture";
+  for (const row of summary.results) {
+    row.taskId = "t1"; row.attempt = 1;
+    row.assertions!.outcomes = Array.from({ length: total }, (_, i) => ({ kind: "mustMatch" as const, passed: i < row.assertions!.passed, detail: "fixture" }));
+    if (row.variantId !== "baseline") row.skillPaths = [frozen.skillPath];
+  }
+  writeFileSync(join(dir, "summary.json"), JSON.stringify(summary));
+  saveRunManifest(dir, { schemaVersion: 1, policyVersion: "paired-task-v2", runId: summary.runId, model: summary.model, judgeModel: summary.judgeModel, repeat: 1, judgeRepeat: 1, judgeSeed: summary.runId, tasks,
+    variants: [{ id: "baseline", label: "baseline", skillPaths: [] }, { id: "skill", label: "skill", skillPaths: [frozen.skillPath] }],
+    candidate: { identity: frozen.identity, snapshotDir: ".frozen/skill", originalSkillPath: source },
+    suiteMeta: { ...summary.suiteMeta!, suiteHash: "sha256:fixture" },
+  });
   return dir;
 }
 
@@ -277,7 +298,7 @@ test("collectArchiveInput 从运行产物提取元信息", () => {
   assert.equal(input.baselineAllPassedRate, 0);
   assert.equal(input.variantAllPassedRate, 1);
   assert.equal(input.assertionTotal, 8, "baseline 4 条 + skill 4 条");
-  assert.match(input.skillHash, /^sha256:[0-9a-f]{16}$/);
+  assert.match(input.skillHash, /^sha256:[0-9a-f]{64}$/);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -294,7 +315,7 @@ test("collectArchiveInput 的 skillHash 与文件实际内容一致", () => {
     verdictReason: "测试",
   });
 
-  assert.equal(input.skillHash, hashSkillFile(skillPath));
+  assert.equal(input.skillHash, identifySkill(skillPath).hash);
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -440,6 +461,20 @@ test("archiveSkill 归档内容与源文件逐字节一致", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("归档不得覆盖 skill 包自带的 REPORT.md 或 ARCHIVE.md", (t) => {
+  const root = makeTmpDir("reserved-names");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = makeSkill(root);
+  writeFileSync(join(source, "REPORT.md"), "original candidate report");
+  writeFileSync(join(source, "ARCHIVE.md"), "original candidate archive");
+  const runDir = makeRun(root);
+  const skillPath = join(source, "SKILL.md");
+  const input = collectArchiveInput({ runDir, skillPath, verdict: "effective", verdictReason: "offline fixture" });
+  const result = archiveSkill({ input, runDir, skillPath, archiveRoot: join(root, "archive"), version: "v1" });
+  assert.equal(readFileSync(join(result.versionDir, "REPORT.md"), "utf8"), "original candidate report");
+  assert.equal(readFileSync(join(result.versionDir, "ARCHIVE.md"), "utf8"), "original candidate archive");
+});
+
 test("archiveSkill 对同内容幂等——重复归档不产生新版本", () => {
   const root = makeTmpDir("idem");
   const skillDir = makeSkill(root, "demo-skill", "1.2.3");
@@ -502,8 +537,9 @@ test("archiveSkill 同版本不同内容不覆盖原目录", () => {
 
   // 改内容 → 哈希变化
   writeFileSync(skillPath, "---\nname: demo-skill\nversion: 1.2.4\n---\n\n# 改过了\n", "utf8");
+  const changedRun = makeRun(root);
   const changed = collectArchiveInput({
-    runDir,
+    runDir: changedRun,
     skillPath,
     verdict: "effective",
     verdictReason: "测试",
@@ -512,7 +548,7 @@ test("archiveSkill 同版本不同内容不覆盖原目录", () => {
 
   const second = archiveSkill({
     input: changed,
-    runDir,
+    runDir: changedRun,
     skillPath,
     archiveRoot,
     repoRoot: root,
@@ -632,6 +668,24 @@ test("collectArchiveInput 计算出断言增益并判定是否达标", () => {
   assert.equal(input.gainCheck.thresholdPp, 10);
 
   rmSync(root, { recursive: true, force: true });
+});
+
+test("冻结的自定义增益门槛在归档卡与索引中一致", (t) => {
+  const root = makeTmpDir("frozen-threshold");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = makeSkill(root);
+  const runDir = makeRun(root, { passed: 2, total: 4 });
+  const path = join(runDir, "run-manifest.json");
+  const manifest = JSON.parse(readFileSync(path, "utf8"));
+  manifest.settings = { gainThresholdPp: 20, keywordSignal: true, nodeVersion: process.version };
+  writeFileSync(path, JSON.stringify(manifest));
+  const skillPath = join(source, "SKILL.md");
+  const input = collectArchiveInput({ runDir, skillPath, verdict: "effective", verdictReason: "offline fixture" });
+  assert.equal(input.gainCheck.thresholdPp, 20);
+  const archived = archiveSkill({ input, runDir, skillPath, archiveRoot: join(root, "archive"), version: "v1" });
+  const index = JSON.parse(readFileSync(join(archived.archiveRoot, "latest.json"), "utf8"));
+  assert.equal(index.gainThresholdPp, 20);
+  assert.match(readFileSync(join(archived.versionDir, "ARCHIVE.md"), "utf8"), /门槛 \| 20 pp/);
 });
 
 test("archiveSkill 在增益未达标时标记 lowGain", () => {
@@ -754,9 +808,10 @@ test("archiveSkill 对 partial 跑批强制标记 provisional=true，并检测�
 
   // 修改 skill 内容并更换 suiteHash + runStatus="partial"
   writeFileSync(join(skillDir, "SKILL.md"), "---\nversion: 1.1\n---\n# v2\n", "utf8");
+  const nextRun = makeRun(root);
   const input2: ArchiveInput = {
     ...collectArchiveInput({
-      runDir,
+      runDir: nextRun,
       skillPath: join(skillDir, "SKILL.md"),
       verdict: "effective",
       verdictReason: "部分超时但显式放行",
@@ -766,7 +821,7 @@ test("archiveSkill 对 partial 跑批强制标记 provisional=true，并检测�
   };
   const res2 = archiveSkill({
     input: input2,
-    runDir,
+    runDir: nextRun,
     skillPath: join(skillDir, "SKILL.md"),
     archiveRoot,
     repoRoot: root,

@@ -28,6 +28,21 @@ variant（装 skill）     ┘
 - **证据留痕**。每次运行的完整事件流、输出、usage 均落盘，可复核可回放。
 - **失败保留**。崩溃、超时、判失败都计入分母，不做选择性重跑。
 
+## 当前判定策略与历史记录
+
+可信度修复使用 `paired-task-v2` 策略：运行前冻结完整 skill 包、任务与运行矩阵；归档只接受内容身份一致的冻结快照。
+真实运行目前要求 macOS `sandbox-exec`，每次调用先执行本地访问探针；缺少隔离后端或探针失败会阻止启动，不回退到未隔离执行。
+
+显著性推断以**任务簇**为单位：任务内先平均配对重复，任务间等权，使用保守的 95% Hoeffding 区间（假设任务之间独立）。
+断言条目累计率仍展示为描述指标；复制断言或增加同任务的重复次数都不会增加独立样本数。
+小套件可能得到 `inconclusive`，不应通过复制题目或放宽门槛制造显著性。
+
+`report` 将复核保存到 `analyses/<analysis-id>/`，保留来源和判据指纹，不覆盖原报告与摘要。
+已有实验与归档属于各自原判据下的历史记录，下面的历史数字未追溯修改；
+缺少冻结清单、访问隔离证据或明确评委协议的旧运行，在新策略复核中标为未验证，不能借给当前候选归档（`--force` 也不能替换身份）。
+
+本次修复、回归覆盖及未验证项见 [离线修复验证记录](docs/离线修复验证-2026-11-06.md)。
+
 ## 快速开始
 
 ```bash
@@ -71,7 +86,7 @@ npm run eval -- verify --original runs/orig --broken runs/broken
 npm run eval -- calibrate --run runs/exp-001 --export /tmp/blind.json --suite-file suites/example-suite.json
 npm run eval -- calibrate --run runs/exp-001 --score /tmp/blind.json
 
-# 从原始产物重算并重新生成报告（支持 --llm-advice 生成段落级改写草案）
+# 从原始产物重算，另存派生报告 analyses/<id>/（原记录不覆盖）
 npm run eval -- report --run runs/exp-001 --suite-file suites/example-suite.json
 
 # 把通过测评的 skill 快照存进仓库 archive/
@@ -115,7 +130,7 @@ src/
 │   ├── runner.ts        对照实验编排
 │   ├── verdict.ts       综合结论判定引擎（覆盖率/超时惩罚/规则纠偏/置信区间/成本分级）
 │   ├── thresholds.ts    全局判定与展示阈值单一真相来源
-│   ├── stats.ts         Wilson / Newcombe-Wilson 95% 置信区间与 Cohen's κ
+│   ├── stats.ts         任务级保守区间、描述性比例区间与 Cohen's κ
 │   ├── activation.ts    激活检测（工具取证含包内附属文件 + 正负向触发分离）
 │   ├── judge.ts         成对评委、头尾保留采样与多轮聚合
 │   ├── assertions.ts    规则断言判定
@@ -127,7 +142,10 @@ src/
 │   ├── cost.ts          可解释成本效率评级（lean / moderate / expensive / runaway）
 │   ├── regression.ts    回归门禁（含 suiteHash 漂移拦截）
 │   ├── archive.ts       通过测评的 skill 归档（含 partial 拦截与套件漂移告警）
-│   ├── gain.ts          断言条目累计增益门槛与置信区间（排除失败空输出）
+│   ├── gain.ts          任务等权配对增益、完整覆盖核验与描述性条目率
+│   ├── provenance.ts    完整 skill 包身份与冻结快照
+│   ├── run-manifest.ts  冻结运行清单、原始产物哈希与完整性核验
+│   ├── isolation.ts     进程文件访问边界及每次启动前的本地探针
 │   ├── improve.ts       激活感知归因、跨用例根因合并与 SKILL.md 定位建议
 │   ├── pending.ts       待测评暂存区管理
 │   ├── paths.ts         路径处理（~ 展开）

@@ -472,6 +472,7 @@ test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp �
       events: [],
       stderr: "",
       timedOut: false,
+      isolation: { verified: true, issues: [], backend: "offline-test" },
     }),
   });
   assert.match(draft ?? "", /严禁在末尾添加免责声明/);

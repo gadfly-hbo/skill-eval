@@ -37,9 +37,7 @@ import {
   type RegressionThresholds,
 } from "../core/regression.ts";
 import { expandTilde } from "../core/paths.ts";
-import { evaluateGain, DEFAULT_GAIN_THRESHOLD_PP } from "../core/gain.ts";
-import { evaluateRecomputeGuard } from "../core/report-safety.ts";
-import { evaluateOverwriteGuard } from "../core/report-quality.ts";
+import { evaluateGainFromResults, DEFAULT_GAIN_THRESHOLD_PP } from "../core/gain.ts";
 import { recoverMetaFromReport, mergeMeta } from "../core/report-meta.ts";
 import {
   pendingRootFor,
@@ -100,6 +98,9 @@ import {
   WIN_RATE_RELAXED_THRESHOLD,
   WIN_RATE_THRESHOLD,
 } from "../core/thresholds.ts";
+
+import { freezeSkill } from "../core/provenance.ts";
+import { assertFreshRunRoot, saveRunManifest, loadRunManifest, frozenSkillPath, relativeSnapshotDir, EVALUATION_POLICY_VERSION, type RunManifest } from "../core/run-manifest.ts";
 
 interface CliArgs {
   command: string;
@@ -378,12 +379,21 @@ async function runSingleModelEval(params: {
   wantLlmAdvice: boolean;
 }): Promise<{ summary: EvaluationSummary; decision: VerdictDecision; reportPath: string }> {
   const { suite, skillPath, model, judgeModel, repeat, judgeRepeat, outDir, runId } = params;
-  mkdirSync(outDir, { recursive: true });
-
+  assertFreshRunRoot(outDir);
+  const frozen = freezeSkill(skillPath, join(outDir, ".frozen", "skill"));
+  const effectiveSuiteHash = hashSuite({ ...suite, contextPrefix: params.contextPrefix });
   const variants: Variant[] = [
     { id: "baseline", label: "Baseline（不装 skill）", skillPaths: [] },
-    { id: "skill", label: `Skill（${suite.skill?.version ?? "当前版本"}）`, skillPaths: [skillPath] },
+    { id: "skill", label: `Skill（${suite.skill?.version ?? "当前版本"}）`, skillPaths: [frozen.skillPath] },
   ];
+  const manifest: RunManifest = {
+    schemaVersion: 1, policyVersion: EVALUATION_POLICY_VERSION, runId, model, judgeModel, repeat, judgeRepeat, judgeSeed: runId,
+    tasks: suite.tasks, variants, contextPrefix: params.contextPrefix,
+    settings: { gainThresholdPp: params.gainThresholdPp ?? GAIN_THRESHOLD_PP, timeoutMs: params.timeoutMs, judgeTimeoutMs: params.judgeTimeoutMs, keywordSignal: params.keywordSignal, nodeVersion: process.version },
+    candidate: { identity: frozen.identity, snapshotDir: relativeSnapshotDir(outDir, frozen.skillPath), originalSkillPath: skillPath },
+    suiteMeta: { suiteId: suite.id, suiteVersion: suite.version ?? "未标注", suiteHash: effectiveSuiteHash, skillVersion: suite.skill?.version ?? "未标注", skillPath },
+  };
+  saveRunManifest(outDir, manifest);
 
   const totalRuns = variants.length * suite.tasks.length * repeat;
   process.stderr.write(
@@ -398,6 +408,8 @@ async function runSingleModelEval(params: {
   const summary = await runEvaluation({
     runRoot: outDir,
     runId,
+    manifest,
+    judgeSeed: manifest.judgeSeed,
     model,
     judgeModel,
     variants,
@@ -418,19 +430,13 @@ async function runSingleModelEval(params: {
     },
   });
 
-  summary.suiteMeta = {
-    suiteId: suite.id,
-    suiteVersion: suite.version ?? "未标注",
-    suiteHash: params.suiteHash,
-    skillVersion: suite.skill?.version ?? "未标注",
-    skillPath,
-  };
+  summary.suiteMeta = manifest.suiteMeta;
   writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
 
   const decision = decideVerdict(summary, {
     ...(params.gainThresholdPp !== undefined ? { gainThresholdPp: params.gainThresholdPp } : {}),
   });
-  const skillContext = buildSkillDocContext(skillPath, summary);
+  const skillContext = buildSkillDocContext(frozen.skillPath, summary);
 
   let llmAdviceDraft: string | null = null;
   if (params.wantLlmAdvice && skillContext?.skillContent) {
@@ -451,11 +457,11 @@ async function runSingleModelEval(params: {
 
   const meta: ReportMeta = {
     skillPath,
-    skillHash: hashFile(skillPath),
+    skillHash: frozen.identity.hash,
     skillVersion: suite.skill?.version ?? "未标注",
     suiteId: suite.id,
     suiteVersion: suite.version ?? "未标注",
-    suiteHash: params.suiteHash,
+    suiteHash: effectiveSuiteHash,
     runRoot: outDir,
     piHome: params.piHome ?? null,
     generatedAt: new Date().toISOString(),
@@ -540,7 +546,7 @@ async function commandEval(args: CliArgs): Promise<number> {
     const matrixRoot = flagString(args.flags, "out")
       ? resolve(flagString(args.flags, "out")!)
       : resolve("runs", `matrix-${matrixRunId}`);
-    mkdirSync(matrixRoot, { recursive: true });
+    assertFreshRunRoot(matrixRoot);
 
     const cells: ModelMatrixCell[] = [];
     const judgeOverride = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL;
@@ -700,23 +706,19 @@ async function commandReport(args: CliArgs): Promise<number> {
         ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
       }),
     );
-    variants = (stored.variantSummaries ?? []).map(
-      (item): Variant => ({ id: item.variantId, label: item.variantLabel, skillPaths: [] }),
-    );
+    const manifest = loadRunManifest(absolute);
+    tasks = stored.tasks ?? manifest?.tasks ?? tasks;
+    variants = manifest?.variants ?? rebuildVariantsForRecompute(stored, stored.suiteMeta?.skillPath ?? "(legacy-unverified)");
   }
 
-  const summary = suitePath ? await recomputeSummary(absolute, { variants, tasks }) : stored;
-
-  if (suitePath) {
-    const guard = evaluateRecomputeGuard({
-      resultCount: summary.results.length,
-      storedResultCount: stored?.results?.length ?? 0,
-      hasStored: Boolean(stored),
-    });
-    if (guard.blocked) {
-      process.stderr.write(`拒绝重算：${absolute}\n  ${guard.reason}\n  ${guard.hint}\n`);
-      return 1;
-    }
+  const summary = await recomputeSummary(absolute, { variants, tasks });
+  summary.evidenceLevel = "replay";
+  summary.analysisOf = { runId: stored.runId, originalSuiteHash: stored.suiteMeta?.suiteHash, suiteHash: computedSuiteHash ?? stored.suiteMeta?.suiteHash, createdAt: new Date().toISOString() };
+  if (loadedSuite && computedSuiteHash && summary.suiteMeta) summary.suiteMeta = {
+    ...summary.suiteMeta, suiteId: loadedSuite.id, suiteVersion: loadedSuite.version ?? "未标注", suiteHash: computedSuiteHash,
+  };
+  if (computedSuiteHash && stored.suiteMeta?.suiteHash && computedSuiteHash !== stored.suiteMeta.suiteHash) {
+    summary.integrity = { verified: false, issues: [...(summary.integrity?.issues ?? []), "派生复核使用了不同套件判据，旧评委记录不能作为新判据的确认性证据"] };
   }
 
   const existingReportPath = join(absolute, "REPORT.md");
@@ -750,11 +752,7 @@ async function commandReport(args: CliArgs): Promise<number> {
 
   const meta: ReportMeta = {
     skillPath: merged.skillPath ?? "（未记录）",
-    skillHash:
-      merged.skillHash ??
-      (resolvedSkillPath && existsSync(resolvedSkillPath)
-        ? hashFile(resolvedSkillPath)
-        : "（未记录）"),
+    skillHash: summary.manifest?.candidate.identity.hash ?? merged.skillHash ?? "（未记录）",
     skillVersion: merged.skillVersion ?? "（未记录）",
     suiteId: merged.suiteId ?? "（未记录）",
     suiteVersion: merged.suiteVersion ?? "（未记录）",
@@ -767,9 +765,9 @@ async function commandReport(args: CliArgs): Promise<number> {
   const decision = decideVerdict(summary, {
     ...(flagNumber(args.flags, "gain-threshold") !== undefined
       ? { gainThresholdPp: flagNumber(args.flags, "gain-threshold")! }
-      : {}),
+      : summary.manifest?.settings ? { gainThresholdPp: summary.manifest.settings.gainThresholdPp } : {}),
   });
-  const skillContext = buildSkillDocContext(resolvedSkillPath, summary);
+  const skillContext = buildSkillDocContext(summary.manifest ? frozenSkillPath(absolute, summary.manifest) : resolvedSkillPath, summary);
 
   let llmAdviceDraft: string | null = null;
   if (args.flags["llm-advice"] === true && skillContext?.skillContent) {
@@ -800,16 +798,12 @@ async function commandReport(args: CliArgs): Promise<number> {
     calibration: loadCalibrationIfPresent(absolute),
   });
 
-  if (args.flags["force"] !== true) {
-    const qualityGuard = evaluateOverwriteGuard(report, existingReportText);
-    if (qualityGuard.blocked) {
-      process.stderr.write(`拒绝覆盖报告：${qualityGuard.reason}\n  如需强制覆盖请加 --force。\n`);
-      return 1;
-    }
-  }
-
-  writeFileSync(existingReportPath, report, "utf8");
-  process.stdout.write(`报告已重新生成：${existingReportPath}\n`);
+  const analysisRoot = join(absolute, "analyses", newRunId());
+  mkdirSync(analysisRoot, { recursive: true });
+  writeFileSync(join(analysisRoot, "REPORT.md"), report, { encoding: "utf8", flag: "wx" });
+  writeFileSync(join(analysisRoot, "summary.json"), JSON.stringify(summary, null, 2), { encoding: "utf8", flag: "wx" });
+  writeFileSync(join(analysisRoot, "analysis.json"), JSON.stringify({ ...summary.analysisOf, policyVersion: EVALUATION_POLICY_VERSION, sourceRun: absolute }, null, 2), { encoding: "utf8", flag: "wx" });
+  process.stdout.write(`派生复核已生成（原记录未覆盖）：${join(analysisRoot, "REPORT.md")}\n`);
   process.stdout.write(`${decision.verdict}${decision.expensive ? " (expensive)" : ""}\n${decision.reason}\n`);
   return 0;
 }
@@ -868,6 +862,7 @@ function performArchive(options: {
     verdict: decision.verdict,
     verdictReason: decision.reason,
     expensive: decision.expensive,
+    summary: options.summary,
     suiteId: options.suiteId,
     suiteVersion: options.suiteVersion,
     suiteHash: options.suiteHash,
@@ -875,7 +870,7 @@ function performArchive(options: {
   });
 
   const thresholdPp = options.gainThresholdPp ?? DEFAULT_GAIN_THRESHOLD_PP;
-  const gainCheck = evaluateGain(input.baselineAssertionRate, input.variantAssertionRate, thresholdPp);
+  const gainCheck = evaluateGainFromResults(options.summary.results, options.summary.variantSummaries.find((v) => v.variantId !== "baseline")?.variantId ?? "skill", thresholdPp, options.summary.tasks, options.summary.repeat);
   if (!gainCheck.passed && !options.allowLowGain && !options.force) {
     process.stderr.write(
       `拒绝归档：断言增益未达标。\n  ${gainCheck.reason}\n` +
@@ -978,9 +973,12 @@ async function commandArchive(args: CliArgs): Promise<number> {
   // 否则 runner 的 isBaseline（skillPaths.length === 0）把 skill 侧误判为 baseline，
   // pairCoverage / winRateLowerBound 被置 null → decideVerdict 误拦为 inconclusive。
   const skillFlag = flagString(args.flags, "skill");
-  const inferred =
-    storedSummary.results.find((r) => r.variantId !== "baseline")?.skillPaths?.[0] ??
-    storedSummary.suiteMeta?.skillPath;
+  const manifest = loadRunManifest(absoluteRun);
+  if (!manifest) {
+    process.stderr.write("拒绝归档：历史运行缺少冻结候选身份与运行清单；原始记录保留不变，需新建评估记录。\n");
+    return 1;
+  }
+  const inferred = frozenSkillPath(absoluteRun, manifest);
   const skillPath = skillFlag ? resolve(expandTilde(skillFlag)) : inferred ? resolve(expandTilde(inferred)) : undefined;
 
   if (!skillPath) {
@@ -992,22 +990,18 @@ async function commandArchive(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const pairwiseDir = join(absoluteRun, "pairwise");
-  const summary = existsSync(pairwiseDir)
-    ? await recomputeSummary(absoluteRun, {
-        variants: rebuildVariantsForRecompute(storedSummary, skillPath),
-        tasks: (storedSummary.taskSummaries ?? []).map(
-          (task): EvalTask => ({
-            id: task.taskId,
-            prompt: "",
-            kind: task.kind,
-            ...(task.shouldActivate !== undefined ? { shouldActivate: task.shouldActivate } : {}),
-          }),
-        ),
-      })
-    : storedSummary;
+  const summary = await recomputeSummary(absoluteRun, {
+    variants: manifest.variants,
+    tasks: manifest.tasks,
+    repeat: manifest.repeat,
+  });
 
-  const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
+  const requestedGainThreshold = flagNumber(args.flags, "gain-threshold");
+  const gainThresholdPp = manifest.settings?.gainThresholdPp ?? GAIN_THRESHOLD_PP;
+  if (requestedGainThreshold !== undefined && requestedGainThreshold !== gainThresholdPp) {
+    process.stderr.write("拒绝归档：归档门槛不得修改运行前冻结的判定配置；请另建派生分析或新运行。\n");
+    return 1;
+  }
   const decision = decideVerdict(summary, {
     ...(gainThresholdPp !== undefined ? { gainThresholdPp } : {}),
   });
@@ -1047,7 +1041,7 @@ async function commandArchive(args: CliArgs): Promise<number> {
 }
 
 /** 阴性对照元评估子命令（`skill-eval verify`）。 */
-function commandVerify(args: CliArgs): number {
+async function commandVerify(args: CliArgs): Promise<number> {
   const genBrokenSource = flagString(args.flags, "generate-broken");
   if (genBrokenSource) {
     const srcPath = resolve(expandTilde(genBrokenSource));
@@ -1096,8 +1090,18 @@ function commandVerify(args: CliArgs): number {
     return 1;
   }
 
-  const origSummary = JSON.parse(readFileSync(origSummaryPath, "utf8")) as EvaluationSummary;
-  const brokenSummary = JSON.parse(readFileSync(brokenSummaryPath, "utf8")) as EvaluationSummary;
+  const revalidate = async (runDir: string, path: string): Promise<EvaluationSummary> => {
+    const stored = JSON.parse(readFileSync(path, "utf8")) as EvaluationSummary;
+    try {
+      const manifest = loadRunManifest(runDir);
+      if (!manifest) return { ...stored, integrity: { verified: false, issues: ["缺少冻结清单与当前原始产物核验，不能信任历史摘要中的已验证旗标"] } };
+      return await recomputeSummary(runDir, { variants: manifest.variants, tasks: manifest.tasks, repeat: manifest.repeat });
+    } catch {
+      return { ...stored, integrity: { verified: false, issues: ["冻结清单或原始产物无法核验"] } };
+    }
+  };
+  const origSummary = await revalidate(resolve(origDir), origSummaryPath);
+  const brokenSummary = await revalidate(resolve(brokenDir), brokenSummaryPath);
   const thresholdPp = flagNumber(args.flags, "gain-threshold");
   const report = evaluateNegativeControl(origSummary, brokenSummary, {
     ...(thresholdPp !== undefined ? { thresholdPp } : {}),

@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { judgeAll, readJudgeDirs, type RunnerOptions, type RunResult } from "./runner.ts";
 import {
   aggregateJudgeRuns,
   parseJudgeResponse,
@@ -9,6 +13,10 @@ import {
   reconcileJudgeRun,
   LABEL_CONFLICT_MIN_DELTA,
   DEFAULT_JUDGE_TIMEOUT_MS,
+  buildJudgeSchedule,
+  JUDGE_PROTOCOL_VERSION,
+  type JudgeOptions,
+  type JudgeResult,
 } from "./judge.ts";
 
 const baseOptions = {
@@ -61,13 +69,40 @@ test("多数票聚合 win 多数", () => {
   assert.equal(aggregated.scoreA, 50);
 });
 
-test("票数并列时按平均分差裁决", () => {
+test("票数并列时保持 tie，不按分差或固定方向选 win", () => {
   const runs = [
     { verdict: "win" as const, scoreA: 50, scoreB: 90, scoreDelta: 40, confidence: 0.8, reason: "", error: null },
     { verdict: "loss" as const, scoreA: 90, scoreB: 50, scoreDelta: -40, confidence: 0.8, reason: "", error: null },
   ];
   const aggregated = aggregateJudgeRuns(runs);
-  assert.equal(aggregated.verdict, "win");
+  assert.equal(aggregated.verdict, "tie");
+});
+
+test("win/tie 或 loss/tie 并列时不会选出零票方向", () => {
+  const makeRun = (verdict: "win" | "tie" | "loss") => ({
+    verdict, scoreA: null, scoreB: null, scoreDelta: null,
+    confidence: null, reason: "", error: null,
+  });
+  for (const direction of ["win", "loss"] as const) {
+    assert.equal(aggregateJudgeRuns([makeRun(direction), makeRun("tie")]).verdict, "tie");
+    assert.equal(aggregateJudgeRuns([makeRun("tie"), makeRun(direction)]).verdict, "tie");
+  }
+});
+
+test("反向轮小分差 +5 同时翻转标签和分数", () => {
+  const parsed = parseJudgeResponse('{"verdict":"win","scoreA":70,"scoreB":75}', baseOptions);
+  const reversed = reconcileJudgeRun(parsed, true);
+  assert.equal(reversed.verdict, "loss");
+  assert.equal(reversed.scoreDelta, -5);
+  assert.equal(reversed.labelConflict, null);
+});
+
+test("正向轮 +5 维持 win，反向轮 -5 换算成同一个 win", () => {
+  const forward = reconcileJudgeRun(parseJudgeResponse('{"verdict":"win","scoreA":70,"scoreB":75}', baseOptions), false);
+  const reversed = reconcileJudgeRun(parseJudgeResponse('{"verdict":"loss","scoreA":75,"scoreB":70}', baseOptions), true);
+  assert.equal(forward.verdict, "win");
+  assert.equal(reversed.verdict, "win");
+  assert.equal(reversed.scoreDelta, 5);
 });
 
 test("全部轮次失败时保持 not_judged", () => {
@@ -77,6 +112,13 @@ test("全部轮次失败时保持 not_judged", () => {
   const aggregated = aggregateJudgeRuns(runs);
   assert.equal(aggregated.verdict, "not_judged");
   assert.equal(aggregated.error, "boom");
+});
+
+test("双轮缺一票不得恢复单票胜出；缺失票保留在聚合法定人数中", () => {
+  const vote = (verdict: JudgeResult["verdict"]): JudgeResult => ({ verdict, scoreA: 50, scoreB: 55, scoreDelta: 5, confidence: 1, reason: "fixture", error: verdict === "not_judged" ? "missing" : null });
+  assert.equal(aggregateJudgeRuns([vote("win"), vote("not_judged")]).verdict, "not_judged");
+  assert.equal(aggregateJudgeRuns([vote("not_judged"), vote("loss")]).verdict, "not_judged");
+  assert.equal(aggregateJudgeRuns([vote("win"), vote("win"), vote("not_judged")]).verdict, "win");
 });
 
 test("位置偏好检测识别正反翻转", () => {
@@ -244,17 +286,12 @@ test("聚合结果保留标签冲突计数", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 反向轮 A/B 换算：分数与标签的口径
-//
-// 评委的标签实际语义是「分数更高的那份更好」，而非提示词字面写的「B 更好」。
-// 实测反轮 A=skill(95)、B=baseline(58) 返回 win——按字面语义应是 loss，
-// 按「谁分高谁赢」则是 win。
-// 因此换算必须先翻分数、再按分差判方向，两步合起来才不会误判。
+// 反向轮遵守显式的 B 相对 A 协议；旧协议只在独立的历史诊断路径读取。
 // ---------------------------------------------------------------------------
 
 test("反向轮换算后分差方向代表 skill 相对 baseline 的优势", () => {
   const parsed = parseJudgeResponse(
-    '{"verdict":"win","scoreA":95,"scoreB":58,"confidence":0.8,"reason":"A 更好"}',
+    '{"verdict":"loss","scoreA":95,"scoreB":58,"confidence":0.8,"reason":"A 更好"}',
     baseOptions,
   );
   const flipped = reconcileJudgeRun(parsed, true);
@@ -268,7 +305,7 @@ test("反向轮换算后分差方向代表 skill 相对 baseline 的优势", () 
 
 test("反向轮标签方向写反时纠正为 loss（换算后 skill 更差）", () => {
   const parsed = parseJudgeResponse(
-    '{"verdict":"win","scoreA":58,"scoreB":95,"confidence":0.8,"reason":"A 更好"}',
+    '{"verdict":"loss","scoreA":58,"scoreB":95,"confidence":0.8,"reason":"A 更好"}',
     baseOptions,
   );
   const flipped = reconcileJudgeRun(parsed, true);
@@ -341,3 +378,113 @@ test("超长输出（> 24000 字符）采用头尾保留窗口，不截断报告
   assert.match(prompt, /中间省略/);
 });
 
+
+test("评委顺序由冻结 seed/taskKey 可复算且两方向平衡", () => {
+  const first = buildJudgeSchedule("frozen-run", "task-1", 5);
+  assert.deepEqual(first, buildJudgeSchedule("frozen-run", "task-1", 5));
+  assert.equal(first.length, 5);
+  assert.ok(Math.abs(first.filter((r) => r.swapped).length - first.filter((r) => !r.swapped).length) <= 1);
+  assert.ok(new Set(Array.from({ length: 20 }, (_, i) => buildJudgeSchedule("frozen-run", `task-${i}`, 2)[0]!.swapped)).size === 2);
+});
+
+test("提示词明确 B 相对 A，并拒绝未匿名的执行证据", () => {
+  const prompt = buildJudgePrompt({ ...baseOptions,
+    evidenceA: "read /Users/person/pending/data-analysis/SKILL.md",
+    evidenceB: "variant data-analysis python scripts/calc.py",
+  });
+  assert.match(prompt, /B 相对输出 A/);
+  assert.doesNotMatch(prompt, /data-analysis|calc\.py|SKILL\.md|pending|variant/);
+});
+
+test("默认双轮分歧全部保存并投票，重算和原判一致", async () => {
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-judge-rounds-"));
+  try {
+    const base: RunResult = { id: "baseline-t1-1", variantId: "baseline", taskId: "t1", attempt: 1,
+      status: "success", output: "base output", evidenceDir: "base", skillPaths: [], variantLabel: "Baseline",
+      startedAt: 0, endedAt: 1, durationSec: 0.001, totalTokens: 0, totalCost: 0, toolCalls: 0,
+      assertions: null, error: null,
+      activation: { status: "not_activated", activated: false, matchedKeywords: [], readSkillPaths: [], evidence: [] } };
+    const candidate = { ...base, id: "skill-t1-1", variantId: "skill", skillPaths: ["/private/data-analysis/SKILL.md"],
+      variantLabel: "Skill(data-analysis)", output: "candidate output", evidenceDir: "candidate" };
+    const options: RunnerOptions = { runRoot: root, runId: "frozen-seed", repeat: 1, model: "offline", tasks: [{ id: "t1", prompt: "compare" }],
+      variants: [{ id: "baseline", label: "Baseline", skillPaths: [] }, { id: "skill", label: "Skill(data-analysis)", skillPaths: candidate.skillPaths }] };
+    const called: JudgeOptions[] = [];
+    const offlineJudge = async (input: JudgeOptions): Promise<JudgeResult> => {
+      // 计划必须在第一个调用之前存在，不能观察结果后决定展示顺序。
+      assert.ok(readFileSync(join(root, "pairwise", candidate.id, "judge-plan.json"), "utf8"));
+      called.push(input);
+      const canonicalVerdict = input.roundIndex === 0 ? "win" : "loss";
+      const canonicalA = canonicalVerdict === "win" ? 70 : 75;
+      const canonicalB = canonicalVerdict === "win" ? 75 : 70;
+      const raw: JudgeResult = { verdict: input.swapped ? (canonicalVerdict === "win" ? "loss" : "win") : canonicalVerdict,
+        scoreA: input.swapped ? canonicalB : canonicalA, scoreB: input.swapped ? canonicalA : canonicalB,
+        scoreDelta: input.swapped ? canonicalA - canonicalB : canonicalB - canonicalA,
+        confidence: 0.8, reason: "offline comparison", error: null, labelConflict: null,
+        protocolVersion: JUDGE_PROTOCOL_VERSION, semanticsStatus: "explicit", swapped: input.swapped!, roundIndex: input.roundIndex! };
+      mkdirSync(input.judgeDir, { recursive: true });
+      writeFileSync(join(input.judgeDir, "judgment.json"), JSON.stringify(raw));
+      return raw;
+    };
+    const pairs = await judgeAll(options, [base, candidate], undefined, offlineJudge);
+    assert.equal(called.length, 2);
+    assert.notEqual(called[0]!.swapped, called[1]!.swapped);
+    assert.equal(pairs[0]!.verdict, "tie");
+    assert.equal(pairs[0]!.judgeRuns.length, 2);
+    assert.deepEqual(pairs[0]!.judgeRuns.map((r) => r.verdict), ["win", "loss"]);
+    const loaded = readJudgeDirs(join(root, "pairwise", candidate.id));
+    assert.deepEqual(loaded.judged, pairs[0]!.judgeRuns);
+    assert.equal(aggregateJudgeRuns(loaded.judged).verdict, "tie");
+    assert.equal(loaded.biasProbe?.biased, true);
+    const planPath = join(root, "pairwise", candidate.id, "judge-plan.json");
+    const originalPlan = readFileSync(planPath, "utf8");
+    const truncatedPlan = JSON.parse(originalPlan);
+    truncatedPlan.rounds = truncatedPlan.rounds.slice(0, 1);
+    writeFileSync(planPath, JSON.stringify(truncatedPlan));
+    const truncated = readJudgeDirs(join(root, "pairwise", candidate.id), { seed: options.runId, taskKey: candidate.id, repeat: 2 });
+    assert.equal(truncated.judged.length, 2, "本地计划不能自行缩减冻结轮数");
+    assert.equal(aggregateJudgeRuns(truncated.judged).verdict, "not_judged");
+    writeFileSync(planPath, originalPlan);
+    // 删除任何一轮也必须保留冻结轮数；缺失的那一票显式为未判定。
+    rmSync(join(called[1]!.judgeDir, "judgment.json"));
+    const missing = readJudgeDirs(join(root, "pairwise", candidate.id));
+    assert.equal(missing.judged.length, 2);
+    assert.equal(missing.judged[1]!.verdict, "not_judged");
+    assert.match(missing.judged[1]!.error!, /缺失/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("历史无协议评委仅作诊断且不修改原始判定文件", () => {
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-judge-legacy-"));
+  try {
+    mkdirSync(join(root, "reversed"));
+    const path = join(root, "reversed", "output.md");
+    const original = '{"verdict":"win","scoreA":75,"scoreB":70,"reason":"old ambiguous label"}';
+    writeFileSync(path, original);
+    const loaded = readJudgeDirs(root);
+    assert.equal(loaded.judged.length, 1);
+    assert.equal(loaded.judged[0]!.verdict, "not_judged");
+    assert.equal(loaded.judged[0]!.semanticsStatus, "legacy_ambiguous");
+    assert.match(loaded.judged[0]!.reason, /旧评委协议/);
+    assert.equal(readFileSync(path, "utf8"), original);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("任务、要点、评分规则与两份输出共享稳定匿名身份映射", () => {
+  const name = "data-analysis";
+  const script = "calc(v2)[x]+.py";
+  const sourcePath = `/private/pending/${name}/SKILL.md`;
+  const sourceIdentifiers = [sourcePath, name, script, "Skill(data-analysis)"];
+  const options = { ...baseOptions, sourceIdentifiers,
+    task: `必须使用 ${script} 验证 ${name}`,
+    expectedPoints: [`必须使用 ${script}`], rubric: `检查 ${script}`,
+    outputA: `使用 ${script}`, outputB: `Skill(data-analysis) 使用 ${script}，来自 ${sourcePath}`,
+  };
+  const prompt = buildJudgePrompt(options);
+  assert.doesNotMatch(prompt, /data-analysis|calc\(v2\)|SKILL\.md|\/private|Skill\(/);
+  const matches = prompt.match(/\[匿名材料\d+\]/g)!;
+  assert.ok(matches);
+  const mostUsed = matches.reduce<Record<string, number>>((counts, value) => { counts[value] = (counts[value] ?? 0) + 1; return counts; }, {});
+  assert.ok(Object.values(mostUsed).some((count) => count === 5), "脚本在任务、要点、规则和两份输出中应使用同一个标识");
+  assert.equal(prompt, buildJudgePrompt({ ...options, sourceIdentifiers: [...sourceIdentifiers].reverse() }));
+  assert.equal(options.outputB, `Skill(data-analysis) 使用 ${script}，来自 ${sourcePath}`);
+});

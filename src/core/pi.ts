@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { buildSandboxCommand, canonicalPath, preparePiIsolation, resolvePiRuntime, validateRuntimeRoots, verifySandboxCommand, type IsolationVerification, type PiIsolationOptions } from "./isolation.ts";
 
 export interface PiRunOptions {
   /** 运行工作目录，同时作为 pi 的 cwd。 */
@@ -31,6 +32,8 @@ export interface PiRunOptions {
   timeoutMs?: number;
   /** 隔离 HOME，避免污染用户全局 pi 配置与锁文件争用。 */
   home?: string | undefined;
+  /** Required filesystem isolation; absent options still use the fail-closed default. */
+  isolation?: PiIsolationOptions;
   /**
    * 允许子进程继承宿主 IDE 的 fs 删除保护注入。
    *
@@ -77,6 +80,7 @@ export interface PiRunResult {
   events: PiEvent[];
   stderr: string;
   timedOut: boolean;
+  isolation: IsolationVerification;
 }
 
 export function emptyMetrics(): PiRunMetrics {
@@ -155,6 +159,9 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
     // 关键：禁用 skill 自动发现，确保两侧唯一差异是显式 --skill。
     "--no-skills",
     "--no-context-files",
+    "--no-extensions",
+    "--no-prompt-templates",
+    "--no-themes",
     "--session-id",
     options.sessionId,
     "--session-dir",
@@ -165,13 +172,35 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
   for (const path of options.skillPaths ?? []) args.push("--skill", path);
   args.push(options.prompt);
 
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (options.home) env.HOME = options.home;
+  let command: { command: string; args: string[] };
+  let env: NodeJS.ProcessEnv;
+  let cleanup: (() => void) | undefined;
+  let isolation: IsolationVerification = { verified: false, issues: ["隔离尚未验证"] };
+  try {
+    const runtime = resolvePiRuntime();
+    const skillRoots = options.isolation?.skillRoots ?? (options.skillPaths ?? []).map((path) => resolve(path, ".."));
+    for (const path of options.skillPaths ?? []) {
+      const target = canonicalPath(path);
+      if (!skillRoots.some((root) => target === canonicalPath(root) || target.startsWith(`${canonicalPath(root)}/`))) {
+        throw new Error("目标 skill 不在隔离的候选快照目录内");
+      }
+    }
+    command = buildSandboxCommand({ command: runtime.command, args: [...runtime.args, ...args], workspaceRoot: options.workspaceRoot, readOnlyRoots: [...runtime.readOnlyRoots, ...skillRoots, ...validateRuntimeRoots(options.isolation?.runtimeRoots ?? [])] });
+    isolation = verifySandboxCommand(command, options.workspaceRoot);
+    if (!isolation.verified) throw new Error(isolation.issues.join("；"));
+    const config = preparePiIsolation({ workspaceRoot: options.workspaceRoot, home: options.home });
+    env = config.env;
+    cleanup = config.cleanup;
+  } catch (error) {
+    cleanup?.();
+    const message = `隔离启动被阻止：${error instanceof Error ? error.message : String(error)}`;
+    return Promise.resolve({ exitCode: null, metrics: emptyMetrics(), events: [], stderr: message, timedOut: false, isolation: { ...isolation, verified: false, issues: [message] } });
+  }
   if (!options.allowWeb) env.PX_ALLOW_WEB = "0";
   if (!options.inheritHostFsHooks) disableHostDeleteGuard(env);
 
   return new Promise<PiRunResult>((resolvePromise) => {
-    const child = spawn("pi", args, {
+    const child = spawn(command.command, command.args, {
       cwd: options.workspaceRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -193,7 +222,8 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolvePromise({ exitCode, metrics, events, stderr, timedOut });
+      cleanup?.();
+      resolvePromise({ exitCode, metrics, events, stderr, timedOut, isolation });
     };
 
     const rl = createInterface({ input: child.stdout });
@@ -207,7 +237,7 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
         return; // 非 JSON 行属于进程噪声，忽略。
       }
       events.push(event);
-      collectMetrics(metrics, event);
+      collectMetrics(metrics, event, options.workspaceRoot);
       options.onEvent?.(event);
     });
 
@@ -233,7 +263,9 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
  * pi 的 assistant 消息可能被拆成多轮（工具调用 → 工具结果 → 再生成），
  * 因此最终输出取**最后一条**带 text 的 assistant 消息，而不是最后一条事件。
  */
-export function collectMetrics(metrics: PiRunMetrics, event: PiEvent): void {
+export function collectMetrics(metrics: PiRunMetrics, event: PiEvent, workspaceRoot = process.cwd()): void {
+  let pending = pendingReads.get(metrics);
+  if (!pending) { pending = new Map(); pendingReads.set(metrics, pending); }
   if (event.type === "tool_execution_start") {
     metrics.toolCalls += 1;
     const toolName = typeof event.toolName === "string" ? event.toolName : "unknown";
@@ -241,9 +273,17 @@ export function collectMetrics(metrics: PiRunMetrics, event: PiEvent): void {
     if (toolName === "read") {
       const args = event.args;
       if (args && typeof args === "object" && typeof (args as { path?: unknown }).path === "string") {
-        metrics.readPaths.push((args as { path: string }).path);
+        if (typeof event.toolCallId === "string") pending.set(event.toolCallId, canonicalPath((args as { path: string }).path, workspaceRoot));
       }
     }
+    return;
+  }
+
+  if (event.type === "tool_execution_end") {
+    const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
+    const path = pending.get(id);
+    pending.delete(id);
+    if (path && event.isError === false) metrics.readPaths.push(path);
     return;
   }
 
@@ -268,6 +308,8 @@ export function collectMetrics(metrics: PiRunMetrics, event: PiEvent): void {
     if (text) metrics.output = text;
   }
 }
+
+const pendingReads = new WeakMap<PiRunMetrics, Map<string, string>>();
 
 /** 提取内容块中的文本，拼接多个 text block。 */
 export function extractText(content: unknown): string {

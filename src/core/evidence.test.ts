@@ -4,6 +4,16 @@ import { test } from "node:test";
 import { extractToolCalls, formatEvidence } from "./evidence.ts";
 import type { PiEvent } from "./pi.ts";
 
+test("评委执行证据去掉加载读取、候选名称路径、脚本名和输出来源信号", () => {
+  const text = formatEvidence([
+    { tool: "read", action: "/Users/person/pending/data-analysis/SKILL.md", exitCode: 0 },
+    { tool: "bash", action: "python /Users/person/data-analysis/scripts/calc.py", exitCode: 0,
+      outputExcerpt: "variant Skill(data-analysis) calc.py /Users/person/pending" },
+  ]);
+  assert.doesNotMatch(text, /read|SKILL\.md|data-analysis|calc\.py|variant|\/Users|pending/);
+  assert.match(text, /成功/);
+});
+
 test("提取 bash 调用并带上退出码与结果摘要", () => {
   const events: PiEvent[] = [
     {
@@ -105,15 +115,13 @@ test("无关事件类型被忽略", () => {
   assert.equal(formatEvidence([]), "");
 });
 
-test("格式化输出包含序号、工具名、退出码与结果摘要", () => {
+test("格式化输出只提供匿名执行结果计数", () => {
   const text = formatEvidence([
     { tool: "bash", action: "python3 scripts/calc.py period", exitCode: 0, outputExcerpt: "OK" },
     { tool: "read", action: "…/data-analysis/SKILL.md", exitCode: 0 },
   ]);
-  assert.match(text, /1\. \[bash\]/);
-  assert.match(text, /2\. \[read\]/);
-  assert.match(text, /退出码 0/);
-  assert.match(text, /结果：OK/);
+  assert.match(text, /成功 1 次；失败 0 次；结果未知 0 次/);
+  assert.doesNotMatch(text, /read|bash|calc\.py|SKILL\.md|data-analysis|OK/);
 });
 
 test("命令与结果里的绝对路径被压缩，不把运行机用户名带进评委提示词", () => {
@@ -138,8 +146,8 @@ test("命令与结果里的绝对路径被压缩，不把运行机用户名带�
   ];
   const text = formatEvidence(extractToolCalls(events));
   assert.doesNotMatch(text, /huangbo/);
-  assert.match(text, /…\/scripts\/calc\.py/);
-  assert.match(text, /…\/scripts\/out\.json/);
+  assert.doesNotMatch(text, /scripts|calc\.py|out\.json/);
+  assert.match(text, /成功 1 次/);
 });
 
 test("超过 maxCalls 时截断", () => {

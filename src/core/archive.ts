@@ -27,34 +27,15 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
-import { evaluateGain, type GainVerdict } from "./gain.ts";
+import { evaluateGain, evaluateGainFromResults, type GainVerdict } from "./gain.ts";
+import { isNoise } from "./skill-files.ts";
+export { ARCHIVE_EXCLUDES, ARCHIVE_EXCLUDE_FILES, isNoise } from "./skill-files.ts";
+import { assertSkillIdentity } from "./provenance.ts";
+import { frozenSkillPath, loadRunManifest } from "./run-manifest.ts";
+import type { EvaluationSummary } from "./runner.ts";
 
 /** 归档结论等级。与 CLI 的 decideVerdict 保持一致。 */
 export type ArchiveVerdict = "effective" | "ineffective" | "inconclusive";
-
-/** 复制时跳过的噪声文件与目录。 */
-export const ARCHIVE_EXCLUDES = new Set([
-  ".DS_Store",
-  "node_modules",
-  "__pycache__",
-  ".git",
-  ".venv",
-  "venv",
-  ".pytest_cache",
-  ".mypy_cache",
-  ".ruff_cache",
-]);
-
-/**
- * 复制时跳过的具体文件。
- *
- * 平台元数据描述的是 skill 在某个商店里的上架信息，不属于 skill 本身，
- * 归档进去会造成版本污染（同一 skill 在不同平台的元数据不同）。
- */
-export const ARCHIVE_EXCLUDE_FILES = new Set(["_skillhub_meta.json"]);
-
-/** 复制时跳过的文件后缀。 */
-const ARCHIVE_EXCLUDE_SUFFIXES = [".log", ".pyc", ".swp", ".tmp"];
 
 /** 归档元信息：来自一次评估的产物。 */
 export interface ArchiveInput {
@@ -200,13 +181,6 @@ export function buildVersion(skillPath: string, now: number): string {
   const stamp = formatTimestamp(now);
   const fm = readFrontmatterVersion(skillPath);
   return fm ? `${fm}__${stamp}` : stamp;
-}
-
-/** 判断条目是否属于应跳过的噪声。 */
-export function isNoise(name: string): boolean {
-  if (ARCHIVE_EXCLUDES.has(name)) return true;
-  if (ARCHIVE_EXCLUDE_FILES.has(name)) return true;
-  return ARCHIVE_EXCLUDE_SUFFIXES.some((suffix) => name.endsWith(suffix));
 }
 
 /**
@@ -368,7 +342,7 @@ export function renderArchiveCard(input: ArchiveInput, version: string): string 
   lines.push(`| 断言判定总数 | ${input.assertionTotal} |`);
   lines.push("");
   lines.push(
-    "> 两种断言口径都列出：条目累计口径用于增益比较，整轮全过口径是 `variantSummaries` 里的字段。",
+    "> 条目累计与整轮全过率仅描述成功输出；门禁使用计分任务等权的配对增益与任务级区间。",
   );
   lines.push("");
 
@@ -438,13 +412,18 @@ export function collectArchiveInput(options: {
   suiteHash?: string | undefined;
   skillVersion?: string | undefined;
   now?: number | undefined;
+  summary?: EvaluationSummary;
 }): ArchiveInput {
-  const summary = loadSummary(options.runDir);
+  const summary = (options.summary ?? loadSummary(options.runDir)) as unknown as Record<string, unknown>;
+  const manifest = loadRunManifest(options.runDir);
+  if (!manifest) throw new Error("历史运行缺少冻结候选身份清单，拒绝将当前文件归档为已测候选；原始记录保留不变");
+  assertSkillIdentity(options.skillPath, manifest.candidate.identity);
+  assertSkillIdentity(frozenSkillPath(options.runDir, manifest), manifest.candidate.identity);
   const variants = (summary.variantSummaries ?? []) as Array<Record<string, unknown>>;
   const variant = variants.find((v) => v.variantId !== "baseline");
 
   const now = options.now ?? Date.now();
-  const skillHash = hashSkillFile(options.skillPath);
+  const skillHash = manifest.candidate.identity.hash;
   const frontmatterVersion = readFrontmatterVersion(options.skillPath);
   const reportPath = join(options.runDir, "REPORT.md");
 
@@ -457,9 +436,7 @@ export function collectArchiveInput(options: {
   // 2. 整轮全过率 = 断言全过的运行次数 / 运行次数（variantSummaries 用此口径）
   const results = (summary.results ?? []) as Array<Record<string, unknown>>;
   const sumAssertions = (variantId: string | null) => {
-    const rows = variantId
-      ? results.filter((r) => r.variantId === variantId)
-      : results.filter((r) => r.variantId !== "baseline");
+    const rows = scoredResults.filter((r) => variantId ? r.variantId === variantId : r.variantId !== "baseline");
     let total = 0;
     let passed = 0;
     let allPassedRuns = 0;
@@ -480,6 +457,10 @@ export function collectArchiveInput(options: {
     };
   };
 
+  const taskDefinitions = (summary.tasks ?? manifest.tasks) as EvaluationSummary["tasks"];
+  const scoredIds = new Set(taskDefinitions?.filter((task) => (task.kind ?? "scored") === "scored" && task.shouldActivate !== false).map((task) => task.id));
+  const scoredResults = results.filter((row) => scoredIds.has(String(row.taskId)));
+  const gain = evaluateGainFromResults(scoredResults as unknown as EvaluationSummary["results"], String(variant?.variantId ?? "skill"), manifest.settings?.gainThresholdPp, taskDefinitions, manifest.repeat);
   const base = sumAssertions("baseline");
   const skillSide = sumAssertions(null);
 
@@ -497,7 +478,7 @@ export function collectArchiveInput(options: {
   return {
     runDir: options.runDir,
     runId: String(summary.runId ?? "未标注"),
-    skillPath: options.skillPath,
+    skillPath: manifest.candidate.originalSkillPath,
     skillHash,
     verdict: options.verdict,
     verdictReason: options.verdictReason,
@@ -522,7 +503,7 @@ export function collectArchiveInput(options: {
     reportPath,
     archivedAt: new Date(now).toISOString(),
     reproduceCommand,
-    gainCheck: evaluateGain(base.rate, skillSide.rate),
+    gainCheck: gain,
   };
 }
 
@@ -541,12 +522,24 @@ export function archiveSkill(
   // 增益判定由调用方传入（与 CLI 门控共用同一套规则），
   // 未传入时按输入里的两侧通过率现算，保证直接调用本函数也不漏判。
   const gainCheck =
-    options.gainCheck ??
-    evaluateGain(input.baselineAssertionRate, input.variantAssertionRate);
+    options.gainCheck ?? input.gainCheck;
 
-  const skillDir = dirname(resolve(options.skillPath));
-  const skillName = basename(skillDir);
-  const baseVersion = options.version ?? buildVersion(options.skillPath, now);
+  const manifest = loadRunManifest(options.runDir);
+  if (!manifest) throw new Error("缺少冻结候选身份清单，拒绝归档未验证候选");
+  assertSkillIdentity(options.skillPath, manifest.candidate.identity);
+  const snapshotPath = frozenSkillPath(options.runDir, manifest);
+  assertSkillIdentity(snapshotPath, manifest.candidate.identity);
+  if (input.skillHash !== manifest.candidate.identity.hash || input.runId !== manifest.runId) throw new Error("归档身份与冻结运行不匹配");
+  const skillDir = dirname(snapshotPath);
+  const skillName = basename(dirname(manifest.candidate.originalSkillPath));
+  const baseVersion = options.version ?? buildVersion(snapshotPath, now);
+  // 包自带的同名文档也是被测内容；归档元信息必须避开，不能覆盖它们。
+  const topLevelNames = new Set(manifest.candidate.identity.files.map((file) => file.path.split("/")[0]));
+  let metadataSubdir = "";
+  if (topLevelNames.has("REPORT.md") || topLevelNames.has("ARCHIVE.md")) {
+    metadataSubdir = ".skill-eval-archive";
+    for (let suffix = 2; topLevelNames.has(metadataSubdir); suffix++) metadataSubdir = `.skill-eval-archive-${suffix}`;
+  }
 
   const skillArchiveRoot = join(archiveRoot, skillName);
 
@@ -558,8 +551,8 @@ export function archiveSkill(
   let versionDir = join(skillArchiveRoot, version);
   let skipped = false;
 
-  if (existsSync(join(versionDir, "ARCHIVE.md"))) {
-    const existing = readFileSync(join(versionDir, "ARCHIVE.md"), "utf8");
+  if (existsSync(join(versionDir, metadataSubdir, "ARCHIVE.md"))) {
+    const existing = readFileSync(join(versionDir, metadataSubdir, "ARCHIVE.md"), "utf8");
     if (existing.includes(input.skillHash)) {
       skipped = true;
     } else {
@@ -607,16 +600,19 @@ export function archiveSkill(
   mkdirSync(versionDir, { recursive: true });
 
   const { fileCount, skippedNoise } = copySkillTree(skillDir, versionDir);
+  assertSkillIdentity(join(versionDir, manifest.candidate.identity.entry), manifest.candidate.identity);
+  const metadataDir = join(versionDir, metadataSubdir);
+  mkdirSync(metadataDir, { recursive: true });
 
   // 复制评估报告，让归档目录自包含（运行目录常在 .gitignore 内）。
   // 同时脱敏用户目录、改写证据目录——归档可能进公开仓库。
   if (existsSync(input.reportPath)) {
     const reportText = readFileSync(input.reportPath, "utf8");
-    writeFileSync(join(versionDir, "REPORT.md"), renderArchivedReport(reportText), "utf8");
+    writeFileSync(join(metadataDir, "REPORT.md"), renderArchivedReport(reportText), { encoding: "utf8", flag: "wx" });
   }
 
-  const cardInput: ArchiveInput = { ...input, suiteDrift };
-  writeFileSync(join(versionDir, "ARCHIVE.md"), renderArchiveCard(cardInput, version), "utf8");
+  const cardInput: ArchiveInput = { ...input, suiteDrift, gainCheck };
+  writeFileSync(join(metadataDir, "ARCHIVE.md"), renderArchiveCard(cardInput, version), { encoding: "utf8", flag: "wx" });
 
   // 写 latest 索引（纯文本，避免符号链接的跨平台问题）。
   writeFileSync(
@@ -637,6 +633,7 @@ export function archiveSkill(
         archivedAt: input.archivedAt,
         runId: input.runId,
         path: relative(archiveRoot, versionDir),
+        metadataPath: relative(archiveRoot, metadataDir),
       },
       null,
       2,

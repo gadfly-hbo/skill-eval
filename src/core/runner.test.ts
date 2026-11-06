@@ -5,6 +5,7 @@ import {
   summarizeVariants,
   findDisagreements,
   parseResultId,
+  type RunnerOptions,
   type EvalTask,
   type Variant,
   type RunResult,
@@ -427,4 +428,21 @@ test("shouldActivate=false 分离召回率与误触发率，并识别零激活�
   assert.equal(skill.falseActivationRate, 1);
   // 零激活正向用例告警列表
   assert.deepEqual(skill.zeroActivationTasks, ["pos-zero"]);
+});
+
+test("诊断任务的断言与成本不能改变计分任务的成本门禁", () => {
+  const assertions = Array.from({ length: 1000 }, () => ({ kind: "mustMatch" as const, pattern: "x" }));
+  const scoredTasks: EvalTask[] = [{ id: "t1", prompt: "p", assertions }];
+  const report = (passed: number) => ({ total: 1000, passed, failed: 1000 - passed, allPassed: passed === 1000,
+    outcomes: Array.from({ length: 1000 }, (_, i) => ({ kind: "mustMatch" as const, passed: i < passed, detail: "fixture" })) });
+  const base = { ...makeResult("baseline", 1), totalTokens: 100, assertions: report(999) };
+  const skill = { ...makeResult("skill", 1), totalTokens: 31000, assertions: report(1000) };
+  const before = summarizeVariants({ variants, tasks: scoredTasks, repeat: 1 } as RunnerOptions, [base, skill], []);
+  const mixedTasks: EvalTask[] = [...scoredTasks, { id: "diagnostic", prompt: "d", kind: "diagnostic", assertions }];
+  const after = summarizeVariants({ variants, tasks: mixedTasks, repeat: 1 } as RunnerOptions, [base, skill,
+    { ...base, id: "baseline-diagnostic-1", taskId: "diagnostic", assertions: report(0) },
+    { ...skill, id: "skill-diagnostic-1", taskId: "diagnostic", totalTokens: 100, assertions: report(1000) },
+  ], []);
+  assert.equal(before[1]!.costEfficiency?.grade, "runaway");
+  assert.deepEqual(after[1]!.costEfficiency, before[1]!.costEfficiency);
 });

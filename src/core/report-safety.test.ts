@@ -68,3 +68,9 @@ test("有记录时不给提示", () => {
   });
   assert.equal(verdict.hint, null);
 });
+
+test("部分记录缺失也不能缩小历史分母", () => {
+  const result = evaluateRecomputeGuard({ resultCount: 10, storedResultCount: 12, hasStored: true });
+  assert.equal(result.blocked, true);
+  assert.match(result.reason ?? "", /10\/12/);
+});

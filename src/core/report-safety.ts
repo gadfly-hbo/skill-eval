@@ -39,6 +39,13 @@ export interface RecomputeGuardVerdict {
 export function evaluateRecomputeGuard(outcome: RecomputeOutcome): RecomputeGuardVerdict {
   const { resultCount, storedResultCount, hasStored } = outcome;
 
+  if (hasStored && resultCount > 0 && resultCount < storedResultCount) {
+    return {
+      blocked: true,
+      reason: `原始产物不完整：仅找到 ${resultCount}/${storedResultCount} 条运行记录，不能缩小历史分母。`,
+      hint: "保留原始报告；恢复缺失 cases/ 后重算，或另存标明缺失的派生复核。",
+    };
+  }
   if (resultCount > 0) {
     return { blocked: false, reason: null, hint: null };
   }

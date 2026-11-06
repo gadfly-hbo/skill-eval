@@ -15,14 +15,17 @@
  */
 
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runPi } from "./pi.ts";
-import { detectActivation, summarizeActivation, type ActivationResult } from "./activation.ts";
+import { detectActivation, summarizeActivation, parseFrontmatter, type ActivationResult } from "./activation.ts";
 import { detectContamination, type ContaminationReport } from "./contamination.ts";
 import { evaluateAssertions, type Assertion, type AssertionReport } from "./assertions.ts";
 import {
   runPairwiseJudge,
+  buildJudgeSchedule,
+  JUDGE_PROTOCOL_VERSION,
+  type JudgeRoundPlan,
   aggregateJudgeRuns,
   detectPositionBias,
   parseJudgeResponse,
@@ -33,8 +36,10 @@ import {
 } from "./judge.ts";
 import { evaluateCostEfficiency, type CostEfficiency } from "./cost.ts";
 import { loadEvidenceFromDir } from "./evidence.ts";
-import { computeAssertionItemRate, computeGainPp } from "./gain.ts";
+import { evaluateGainFromResults } from "./gain.ts";
 import { wilsonInterval } from "./stats.ts";
+import { DEFAULT_JUDGE_REPEAT } from "./thresholds.ts";
+import { checkRunIntegrity, loadRunManifest, hashEvidenceFile, type VerificationState, type RunManifest } from "./run-manifest.ts";
 
 export interface EvalTask {
   id: string;
@@ -82,6 +87,8 @@ export interface RunnerOptions {
   repeat: number;
   /** 评委重复轮数。默认 1。 */
   judgeRepeat?: number;
+  judgeSeed?: string;
+  manifest?: RunManifest;
   /** 每次运行附加的上下文前缀。 */
   contextPrefix?: string;
   /** 隔离 HOME。 */
@@ -139,6 +146,8 @@ export interface RunResult {
   error: string | null;
   /** 是否因运行超时而失败。 */
   timedOut?: boolean;
+  isolation?: VerificationState;
+  evidenceHashes?: Record<string, string>;
 }
 
 export interface PairwiseResult {
@@ -167,6 +176,7 @@ export interface VariantSummary {
   total: number;
   success: number;
   failed: number;
+  missing?: number;
   /** 超时次数与超时率。 */
   timedOut?: number;
   timeoutRate?: number;
@@ -223,6 +233,13 @@ export interface EvaluationSummary {
   model: string;
   judgeModel: string;
   repeat: number;
+  tasks?: EvalTask[];
+  integrity?: VerificationState;
+  isolation?: VerificationState;
+  policyVersion?: string;
+  evidenceLevel?: "real-model" | "replay" | "offline-fixture";
+  manifest?: RunManifest;
+  analysisOf?: { runId: string; originalSuiteHash?: string; suiteHash?: string; createdAt: string };
   judgeRepeat: number;
   startedAt: number;
   endedAt: number;
@@ -270,9 +287,13 @@ export interface Disagreement {
  */
 export async function runEvaluation(options: RunnerOptions): Promise<EvaluationSummary> {
   const startedAt = Date.now();
-  const judgeRepeat = options.judgeRepeat ?? 1;
+  const judgeRepeat = options.judgeRepeat ?? DEFAULT_JUDGE_REPEAT;
 
   mkdirSync(options.runRoot, { recursive: true });
+  for (const variant of options.variants) for (const task of options.tasks) for (let attempt = 1; attempt <= options.repeat; attempt++) {
+    const path = join(options.runRoot, "cases", variant.id, task.id, String(attempt));
+    if (existsSync(path) && readdirSync(path).length > 0) throw new Error("运行产物已存在，禁止覆盖历史记录；请新建运行目录");
+  }
 
   const results: RunResult[] = [];
 
@@ -306,6 +327,15 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
     model: options.model,
     judgeModel: options.judgeModel ?? options.model,
     repeat: options.repeat,
+    tasks: options.tasks,
+    manifest: options.manifest,
+    policyVersion: options.manifest?.policyVersion,
+    evidenceLevel: "real-model",
+    integrity: checkRunIntegrity(options.runRoot, options.manifest ?? null, results),
+    isolation: {
+      verified: results.length > 0 && results.every((result) => result.isolation?.verified === true),
+      issues: [...new Set(results.flatMap((result) => result.isolation?.issues ?? ["运行缺少访问隔离验证记录"]))],
+    },
     judgeRepeat,
     startedAt,
     endedAt,
@@ -343,6 +373,7 @@ async function runCase(
     skillPaths: variant.skillPaths,
     home: options.home,
     timeoutMs: options.timeoutMs,
+    isolation: { skillRoots: variant.skillPaths.map((path) => dirname(resolve(path))) },
   });
 
   const endedAt = Date.now();
@@ -393,6 +424,7 @@ async function runCase(
         contamination,
         stderr: run.stderr.slice(0, 2000),
         timedOut: run.timedOut,
+        isolation: run.isolation,
       },
       null,
       2,
@@ -425,6 +457,8 @@ async function runCase(
         : `退出码 ${String(run.exitCode)}，${run.stderr.slice(0, 300)}`
       : null,
     timedOut: run.timedOut,
+    isolation: run.isolation,
+    evidenceHashes: Object.fromEntries(["events.json", "output.md", "result.json"].map((name) => [name, hashEvidenceFile(join(caseDir, name))])),
   };
 }
 
@@ -433,14 +467,14 @@ async function runCase(
  *
  * judgeRepeat ≥ 2 时额外跑一次反向顺序，用于探测评委的位置偏差。
  */
-async function judgeAll(
+export async function judgeAll(
   options: RunnerOptions,
   results: RunResult[],
-  judgeRepeat: number,
+  judgeRepeat: number = DEFAULT_JUDGE_REPEAT,
+  runJudge: typeof runPairwiseJudge = runPairwiseJudge,
 ): Promise<PairwiseResult[]> {
   const baseline = options.variants.find((variant) => variant.skillPaths.length === 0);
   if (!baseline) return [];
-
   const outputs: PairwiseResult[] = [];
   const baselineByKey = new Map(results.filter((r) => r.variantId === baseline.id).map((r) => [pairwiseKey(r.taskId, r.attempt), r]));
 
@@ -448,137 +482,73 @@ async function judgeAll(
     if (result.variantId === baseline.id) continue;
     const base = baselineByKey.get(pairwiseKey(result.taskId, result.attempt));
     const task = options.tasks.find((t) => t.id === result.taskId);
-
     if (!base || !task) continue;
-
     if (base.status !== "success" || result.status !== "success") {
       outputs.push({
-        baselineResultId: base.id,
-        variantResultId: result.id,
-        variantId: result.variantId,
-        taskId: result.taskId,
-        attempt: result.attempt,
-        verdict: "not_judged",
-        scoreDelta: null,
-        baselineScore: null,
-        variantScore: null,
-        confidence: null,
-        reason: "baseline 或 variant 运行失败，未评判",
-        error: null,
-        judgeRuns: [],
-        biasProbe: null,
+        baselineResultId: base.id, variantResultId: result.id, variantId: result.variantId,
+        taskId: result.taskId, attempt: result.attempt, verdict: "not_judged",
+        scoreDelta: null, baselineScore: null, variantScore: null, confidence: null,
+        reason: "baseline 或 variant 运行失败，未评判", error: null, judgeRuns: [], biasProbe: null,
       });
       continue;
     }
 
     const judgeDir = join(options.runRoot, "pairwise", result.id);
     mkdirSync(judgeDir, { recursive: true });
-
-    // 执行证据：评委只看到两份输出，看不到工具调用记录，
-    // 于是把「确实跑过脚本」误判成「无依据断言」（实测 2026-11-05 data-analysis）。
-    // 这里从两端的 events.json 提取摘要注入评委提示词。
-    const evidenceA = loadEvidenceFromDir(join(options.runRoot, base.evidenceDir));
-    const evidenceB = loadEvidenceFromDir(join(options.runRoot, result.evidenceDir));
-
+    const seed = options.judgeSeed ?? options.runId;
+    const taskKey = result.id;
+    const rounds = buildJudgeSchedule(seed, taskKey, judgeRepeat);
+    // 在任何评委调用前冻结全部轮次；重算按计划补缺失，不按落盘数缩减轮次。
+    writeFileSync(join(judgeDir, "judge-plan.json"), JSON.stringify({
+      protocolVersion: JUDGE_PROTOCOL_VERSION, seed, taskKey, rounds,
+    }, null, 2), { encoding: "utf8", flag: "wx" });
+    const baseEvidence = loadEvidenceFromDir(join(options.runRoot, base.evidenceDir));
+    const candidateEvidence = loadEvidenceFromDir(join(options.runRoot, result.evidenceDir));
     const runs: JudgeResult[] = [];
-    const forward = await runPairwiseJudge({
-      judgeDir: join(judgeDir, "forward"),
-      runId: `${options.runId}-${result.id}-fwd`,
-      task: task.prompt,
-      expectedPoints: task.expectedPoints,
-      rubric: task.rubric,
-      outputA: base.output,
-      outputB: result.output,
-      evidenceA,
-      evidenceB,
-      model: options.judgeModel,
-      home: options.home,
-      timeoutMs: options.judgeTimeoutMs,
-    });
-    const reconciledForward = reconcileJudgeRun(forward, false);
-    runs.push(reconciledForward);
-
-    let biasProbe: BiasProbe | null = null;
-    let flippedRun: JudgeResult | null = null;
-    if (judgeRepeat >= 2) {
-      const reversed = await runPairwiseJudge({
-        judgeDir: join(judgeDir, "reversed"),
-        runId: `${options.runId}-${result.id}-rev`,
-        task: task.prompt,
-        expectedPoints: task.expectedPoints,
-        rubric: task.rubric,
-        outputA: result.output,
-        outputB: base.output,
-        evidenceA: evidenceB,
-        evidenceB: evidenceA,
-        model: options.judgeModel,
-        home: options.home,
-        timeoutMs: options.judgeTimeoutMs,
+    for (const round of rounds) {
+      const raw = await runJudge({
+        judgeDir: join(judgeDir, round.dirName),
+        runId: `${options.runId}-${result.id}-${round.roundIndex}`,
+        task: task.prompt, expectedPoints: task.expectedPoints, rubric: task.rubric,
+        outputA: round.swapped ? result.output : base.output,
+        outputB: round.swapped ? base.output : result.output,
+        evidenceA: round.swapped ? candidateEvidence : baseEvidence,
+        evidenceB: round.swapped ? baseEvidence : candidateEvidence,
+        model: options.judgeModel, home: options.home, timeoutMs: options.judgeTimeoutMs,
+        swapped: round.swapped, roundIndex: round.roundIndex,
+        sourceIdentifiers: [
+          options.skillPathForContamination ?? "",
+          options.skillDirForContamination ?? "",
+          ...(options.manifest ? [
+            basename(dirname(options.manifest.candidate.originalSkillPath)),
+            ...options.manifest.candidate.identity.files.map((file) => basename(file.path)),
+          ] : []),
+          ...result.skillPaths,
+          ...result.skillPaths.map((path) => dirname(path)),
+          ...(result.skillPaths.flatMap((path) => {
+            try { return [parseFrontmatter(readFileSync(path, "utf8")).name ?? ""]; } catch { return []; }
+          })),
+          base.variantLabel, result.variantLabel,
+        ].filter((value) => value.length >= 4),
       });
-      const flipped: JudgeResult = reconcileJudgeRun(reversed, true);
-      flippedRun = flipped;
-      biasProbe = detectPositionBias(reconciledForward.verdict, flipped.verdict);
+      runs.push(reconcileJudgeRun(raw, round.swapped));
     }
-
-    // 补齐剩余轮次（正向）。
-    for (let round = 2; round < judgeRepeat; round += 1) {
-      const extra = await runPairwiseJudge({
-        judgeDir: join(judgeDir, `round-${round}`),
-        runId: `${options.runId}-${result.id}-r${round}`,
-        task: task.prompt,
-        expectedPoints: task.expectedPoints,
-        rubric: task.rubric,
-        outputA: base.output,
-        outputB: result.output,
-        evidenceA,
-        evidenceB,
-        model: options.judgeModel,
-        home: options.home,
-        timeoutMs: options.judgeTimeoutMs,
-      });
-      runs.push(reconcileJudgeRun(extra, false));
-    }
-
-    // 主判定轮（forward + round-N）全部失败时，降级使用反向轮，避免丢失整条判定。
-    const usableForward = runs.filter((run) => run.verdict !== "not_judged");
-    const aggregated = aggregateJudgeRuns(
-      usableForward.length > 0 || !flippedRun
-        ? runs
-        : [
-            ...runs,
-            {
-              ...flippedRun,
-              reason: `${flippedRun.reason}（主判定轮失败，降级采用反向轮）`,
-            },
-          ],
-    );
-
+    const forward = runs.find((run) => run.swapped === false);
+    const reversed = runs.find((run) => run.swapped === true);
+    const biasProbe = forward && reversed ? detectPositionBias(forward.verdict, reversed.verdict) : null;
+    const aggregated = aggregateJudgeRuns(runs);
     outputs.push({
-      baselineResultId: base.id,
-      variantResultId: result.id,
-      variantId: result.variantId,
-      taskId: result.taskId,
-      attempt: result.attempt,
-      verdict: aggregated.verdict,
-      scoreDelta: aggregated.scoreDelta,
-      baselineScore: aggregated.scoreA,
-      variantScore: aggregated.scoreB,
-      confidence: aggregated.confidence,
-      reason: aggregated.reason,
-      error: aggregated.error,
-      judgeRuns: runs,
-      biasProbe,
+      baselineResultId: base.id, variantResultId: result.id, variantId: result.variantId,
+      taskId: result.taskId, attempt: result.attempt, verdict: aggregated.verdict,
+      scoreDelta: aggregated.scoreDelta, baselineScore: aggregated.scoreA,
+      variantScore: aggregated.scoreB, confidence: aggregated.confidence,
+      reason: aggregated.reason, error: aggregated.error, judgeRuns: runs, biasProbe,
     });
-
     options.onProgress?.({
-      phase: "judge",
-      variantId: result.variantId,
-      taskId: result.taskId,
-      attempt: result.attempt,
+      phase: "judge", variantId: result.variantId, taskId: result.taskId, attempt: result.attempt,
       message: `${result.variantLabel} / ${result.taskId} / 第 ${result.attempt} 次评判：${aggregated.verdict}`,
     });
   }
-
   return outputs;
 }
 
@@ -619,10 +589,9 @@ export function summarizeVariants(
   const resultById = new Map(results.map((r) => [r.id, r]));
   const baselineVariant = options.variants.find((v) => v.skillPaths.length === 0 || v.id === "baseline");
   const baselineRows = baselineVariant ? results.filter((r) => r.variantId === baselineVariant.id) : [];
-  const baselineSuccessful = baselineRows.filter((r) => r.status === "success");
+  const baselineSuccessful = baselineRows.filter((r) => r.status === "success" && scoredTaskIds.has(r.taskId));
   const baselineAvgTokens = average(baselineSuccessful.map((r) => r.totalTokens));
   const baselineAvgDurationSec = average(baselineSuccessful.map((r) => r.durationSec));
-  const baselineItemRate = baselineVariant ? computeAssertionItemRate(results, baselineVariant.id) : null;
 
   return options.variants.map((variant) => {
     const isBaseline = variant.skillPaths.length === 0 || variant.id === "baseline";
@@ -668,6 +637,7 @@ export function summarizeVariants(
     const scoredDecided = scoredWin + scoredTie + scoredLoss;
 
     const expectedScoredPairs =
+      !isBaseline && options.repeat > 0 ? scoredTaskIds.size * options.repeat :
       scoredPairs.length > 0
         ? scoredPairs.length
         : !isBaseline
@@ -724,15 +694,15 @@ export function summarizeVariants(
     const avgDurationSec = average(successful.map((row) => row.durationSec));
     const avgToolCalls = average(successful.map((row) => row.toolCalls));
 
-    const variantItemRate = !isBaseline ? computeAssertionItemRate(results, variant.id) : null;
-    const gainPp = !isBaseline ? computeGainPp(baselineItemRate, variantItemRate) : null;
+    const scoredSuccessful = successful.filter((row) => scoredTaskIds.has(row.taskId));
+    const gainPp = !isBaseline ? evaluateGainFromResults(results, variant.id, undefined, options.tasks, options.repeat).gainPp : null;
     const costEfficiency =
-      !isBaseline && successful.length > 0 && baselineSuccessful.length > 0
+      !isBaseline && scoredSuccessful.length > 0 && baselineSuccessful.length > 0
         ? evaluateCostEfficiency({
             baselineAvgTokens,
-            variantAvgTokens: avgTokens,
+            variantAvgTokens: average(scoredSuccessful.map((row) => row.totalTokens)),
             baselineAvgDurationSec,
-            variantAvgDurationSec: avgDurationSec,
+            variantAvgDurationSec: average(scoredSuccessful.map((row) => row.durationSec)),
             gainPp,
           })
         : null;
@@ -740,9 +710,10 @@ export function summarizeVariants(
     return {
       variantId: variant.id,
       variantLabel: variant.label,
-      total: rows.length,
+      total: options.repeat > 0 ? Math.max(rows.length, options.tasks.length * options.repeat) : rows.length,
       success: successful.length,
       failed: rows.length - successful.length,
+      missing: options.repeat > 0 ? Math.max(0, options.tasks.length * options.repeat - rows.length) : 0,
       timedOut: timedOutCount,
       timeoutRate,
       activationRate: activation.activationRate,
@@ -898,115 +869,116 @@ export function newRunId(): string {
  */
 export async function recomputeSummary(
   runRoot: string,
-  options: { variants: Variant[]; tasks: EvalTask[] },
+  options: { variants: Variant[]; tasks: EvalTask[]; repeat?: number },
 ): Promise<EvaluationSummary> {
-  const casesDir = join(runRoot, "cases");
-  const results: RunResult[] = [];
-
-  if (existsSync(casesDir)) {
-    for (const variant of options.variants) {
-      const variantDir = join(casesDir, variant.id);
-      if (!existsSync(variantDir)) continue;
-
-      for (const task of options.tasks) {
-        const taskDir = join(variantDir, task.id);
-        if (!existsSync(taskDir)) continue;
-
-        for (const attemptDir of readdirSync(taskDir)) {
-          const resultPath = join(taskDir, attemptDir, "result.json");
-          if (!existsSync(resultPath)) continue;
-
-          const raw = JSON.parse(readFileSync(resultPath, "utf8")) as {
-            id: string;
-            variantId: string;
-            taskId: string;
-            attempt: number;
-            status: "success" | "failed";
-            durationSec: number;
-            totalTokens: number;
-            totalCost: number;
-            toolCalls: number;
-            activation: ActivationResult;
-            assertions: AssertionReport | null;
-            stderr?: string;
-            timedOut?: boolean;
-          };
-
-          const output = readOutput(join(taskDir, attemptDir, "output.md"));
-          const isFailed = raw.status === "failed";
-          const taskAssertions = options.tasks.find((t) => t.id === raw.taskId)?.assertions;
-          // 失败用例一律清空断言（含清除旧版本在空输出上残留的 mustNotMatch 假通过）。
-          const assertions = isFailed
-            ? null
-            : taskAssertions?.length
-              ? evaluateAssertions(output, taskAssertions)
-              : raw.assertions;
-
-          const timedOut =
-            raw.timedOut === true ||
-            Boolean(isFailed && raw.stderr && /timeout|超时/i.test(raw.stderr));
-
-          results.push({
-            id: raw.id,
-            variantId: raw.variantId,
-            variantLabel: options.variants.find((v) => v.id === raw.variantId)?.label ?? raw.variantId,
-            taskId: raw.taskId,
-            attempt: raw.attempt,
-            status: raw.status,
-            startedAt: 0,
-            endedAt: 0,
-            durationSec: raw.durationSec,
-            skillPaths: options.variants.find((v) => v.id === raw.variantId)?.skillPaths ?? [],
-            totalTokens: raw.totalTokens,
-            totalCost: raw.totalCost,
-            toolCalls: raw.toolCalls,
-            output,
-            activation: raw.activation,
-            assertions,
-            evidenceDir: join("cases", raw.variantId, raw.taskId, String(raw.attempt)),
-            error: isFailed ? (timedOut ? "运行超时" : raw.stderr?.slice(0, 300) ?? "未知错误") : null,
-            timedOut,
-          });
-        }
-      }
-    }
-  }
-
-  const pairwise = recomputePairwise(runRoot, options, results);
-
   const summaryPath = join(runRoot, "summary.json");
   const stored = existsSync(summaryPath)
-    ? (JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary)
-    : undefined;
-
+    ? JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary : undefined;
+  const manifest = loadRunManifest(runRoot);
+  const frozen = manifest ?? stored?.manifest;
+  const repeat = frozen?.repeat ?? options.repeat ?? stored?.repeat ?? 0;
+  const variants = frozen?.variants ?? options.variants;
+  const collectionTasks = [...new Map([
+    ...(frozen?.tasks ?? stored?.tasks ?? []), ...options.tasks,
+  ].map((task) => [task.id, task])).values()];
+  const results: RunResult[] = [];
+  const issues: string[] = [];
+  for (const variant of variants) for (const task of collectionTasks) {
+    const taskDir = join(runRoot, "cases", variant.id, task.id);
+    const attempts = repeat > 0 ? Array.from({ length: repeat }, (_, i) => String(i + 1))
+      : existsSync(taskDir) ? readdirSync(taskDir).filter((name) => /^\d+$/.test(name)) : [];
+    for (const attemptDir of attempts) {
+      const resultPath = join(taskDir, attemptDir, "result.json");
+      if (!existsSync(resultPath)) { issues.push(`缺失运行记录：cases/${variant.id}/${task.id}/${attemptDir}/result.json`); continue; }
+      let raw: RunResult & { stderr?: string; readPaths?: string[] };
+      try { raw = JSON.parse(readFileSync(resultPath, "utf8")); }
+      catch { issues.push(`运行记录无法解析：cases/${variant.id}/${task.id}/${attemptDir}/result.json`); continue; }
+      if (raw.variantId !== variant.id || raw.taskId !== task.id || raw.attempt !== Number(attemptDir)) {
+        issues.push(`运行记录身份与冻结矩阵不匹配：${variant.id}/${task.id}/${attemptDir}`); continue;
+      }
+      const outputPath = join(taskDir, attemptDir, "output.md");
+      const output = readOutput(outputPath);
+      const isFailed = raw.status !== "success" || !existsSync(outputPath) || !output.trim();
+      if (raw.status === "success" && isFailed) issues.push(`成功运行缺少有效输出：${raw.id}`);
+      const taskAssertions = options.tasks.find((t) => t.id === raw.taskId)?.assertions;
+      const assertions = isFailed ? null : taskAssertions !== undefined
+        ? taskAssertions.length ? evaluateAssertions(output, taskAssertions) : null : raw.assertions;
+      const timedOut = raw.timedOut === true || Boolean(isFailed && /timeout|超时/i.test(raw.stderr ?? ""));
+      const prior = stored?.results.find((r) => r.variantId === variant.id && r.taskId === task.id && r.attempt === raw.attempt);
+      results.push({
+        ...raw,
+        variantLabel: variant.label,
+        status: isFailed ? "failed" : "success",
+        startedAt: raw.startedAt ?? prior?.startedAt ?? 0,
+        endedAt: raw.endedAt ?? prior?.endedAt ?? 0,
+        skillPaths: variant.skillPaths,
+        output, assertions, timedOut,
+        contamination: raw.contamination ?? prior?.contamination ?? (variant.id === "baseline"
+          ? detectContamination(raw.readPaths ?? [], frozen?.candidate.originalSkillPath ?? "", frozen ? dirname(frozen.candidate.originalSkillPath) : "") : null),
+        isolation: raw.isolation ?? prior?.isolation,
+        evidenceHashes: prior?.evidenceHashes,
+        evidenceDir: join("cases", variant.id, task.id, attemptDir),
+        error: isFailed ? (timedOut ? "运行超时" : raw.stderr?.slice(0, 300) || "运行失败或输出缺失") : null,
+      });
+    }
+  }
+  const effectiveOptions = { variants, tasks: options.tasks, repeat, judgeRepeat: frozen?.judgeRepeat ?? stored?.judgeRepeat, judgeSeed: frozen?.judgeSeed, runId: stored?.runId ?? frozen?.runId };
+  const pairwise = recomputePairwise(runRoot, effectiveOptions, results);
+  // 预定 pair 从冻结矩阵恢复，不能通过删除失败运行来缩小分母。
+  const baseline = variants.find((variant) => variant.id === "baseline" || variant.skillPaths.length === 0);
+  if (baseline && repeat > 0) for (const variant of variants) {
+    if (variant.id === baseline.id) continue;
+    for (const task of collectionTasks) for (let attempt = 1; attempt <= repeat; attempt++) {
+      if (pairwise.some((pair) => pair.variantId === variant.id && pair.taskId === task.id && pair.attempt === attempt)) continue;
+      pairwise.push({
+        baselineResultId: `${sanitizeId(baseline.id)}-${sanitizeId(task.id)}-${attempt}`,
+        variantResultId: `${sanitizeId(variant.id)}-${sanitizeId(task.id)}-${attempt}`,
+        variantId: variant.id, taskId: task.id, attempt, verdict: "not_judged",
+        scoreDelta: null, baselineScore: null, variantScore: null, confidence: null,
+        reason: "冻结矩阵中的运行或评委产物缺失，保留为未评判", error: null, judgeRuns: [], biasProbe: null,
+      });
+    }
+  }
+  const actualResults = new Map(results.map((result) => [result.id, result]));
+  for (const pair of pairwise) {
+    const base = actualResults.get(pair.baselineResultId);
+    const candidate = actualResults.get(pair.variantResultId);
+    if (!base || !candidate || base.status !== "success" || candidate.status !== "success") {
+      pair.verdict = "not_judged";
+      pair.scoreDelta = null;
+      pair.baselineScore = null;
+      pair.variantScore = null;
+      pair.confidence = null;
+      pair.reason = "配对原始运行缺失或失败；旧评委轮次仅作诊断保留";
+    }
+  }
+  const integrity = checkRunIntegrity(runRoot, manifest, stored?.results ?? []);
+  integrity.issues.push(...issues);
+  integrity.verified = integrity.verified && issues.length === 0;
+  const missing = repeat > 0 && results.length < variants.length * collectionTasks.length * repeat;
   const failedCount = results.filter((r) => r.status === "failed").length;
-  const computedStatus: EvaluationSummary["status"] =
-    results.length === 0
-      ? (stored?.status ?? "failed")
-      : failedCount === 0
-        ? "success"
-        : failedCount === results.length
-          ? "failed"
-          : "partial";
-
+  const status: EvaluationSummary["status"] = missing || issues.length > 0 ? "partial"
+    : results.length === 0 ? stored?.status ?? "failed"
+    : failedCount === 0 ? "success" : failedCount === results.length ? "failed" : "partial";
   return {
-    runId: stored?.runId ?? basename(runRoot),
-    model: stored?.model ?? "（未记录）",
-    judgeModel: stored?.judgeModel ?? "（未记录）",
-    repeat: stored?.repeat ?? 0,
-    judgeRepeat: stored?.judgeRepeat ?? 0,
-    startedAt: stored?.startedAt ?? 0,
-    endedAt: stored?.endedAt ?? 0,
-    durationSec: stored?.durationSec ?? 0,
-    status: computedStatus,
-    results,
-    pairwise,
-    variantSummaries: summarizeVariants(options as never, results, pairwise),
-    taskSummaries: summarizeTasks(options as never, results, pairwise),
-    disagreements: findDisagreements(options as never, results, pairwise),
-    totalCost: results.reduce((acc, result) => acc + result.totalCost, 0),
-    totalTokens: results.reduce((acc, result) => acc + result.totalTokens, 0),
-    suiteMeta: stored?.suiteMeta,
+    runId: stored?.runId ?? frozen?.runId ?? basename(runRoot),
+    model: frozen?.model ?? stored?.model ?? "（未记录）",
+    judgeModel: frozen?.judgeModel ?? stored?.judgeModel ?? "（未记录）",
+    repeat, judgeRepeat: frozen?.judgeRepeat ?? stored?.judgeRepeat ?? 0,
+    tasks: options.tasks, manifest: frozen,
+    policyVersion: "paired-task-v2", integrity,
+    isolation: {
+      verified: !missing && results.length > 0 && results.every((r) => r.isolation?.verified === true),
+      issues: [...new Set(results.flatMap((r) => r.isolation?.issues ?? ["历史运行缺少访问隔离验证记录"]).concat(missing ? ["存在未验证的缺失运行"] : []))],
+    },
+    startedAt: stored?.startedAt ?? 0, endedAt: stored?.endedAt ?? 0, durationSec: stored?.durationSec ?? 0,
+    status, results, pairwise,
+    variantSummaries: summarizeVariants(effectiveOptions as RunnerOptions, results, pairwise),
+    taskSummaries: summarizeTasks(effectiveOptions as RunnerOptions, results, pairwise),
+    disagreements: findDisagreements(effectiveOptions as RunnerOptions, results, pairwise),
+    totalCost: results.reduce((acc, r) => acc + r.totalCost, 0),
+    totalTokens: results.reduce((acc, r) => acc + r.totalTokens, 0),
+    suiteMeta: stored?.suiteMeta ?? frozen?.suiteMeta,
   };
 }
 
@@ -1018,7 +990,7 @@ export async function recomputeSummary(
  */
 function recomputePairwise(
   runRoot: string,
-  options: { variants: Variant[]; tasks: EvalTask[] },
+  options: { variants: Variant[]; tasks: EvalTask[]; judgeRepeat?: number; judgeSeed?: string; runId?: string },
   results: RunResult[],
 ): PairwiseResult[] {
   const pairwiseDir = join(runRoot, "pairwise");
@@ -1064,7 +1036,7 @@ function recomputePairwise(
         continue;
       }
 
-      const { judged, biasProbe } = readJudgeDirs(caseDir);
+      const { judged, biasProbe } = readJudgeDirs(caseDir, options.judgeSeed && options.judgeRepeat ? { seed: options.judgeSeed, taskKey: basename(caseDir), repeat: options.judgeRepeat } : undefined);
       if (judged.length === 0) {
         output.push({
           baselineResultId: base.id,
@@ -1117,7 +1089,7 @@ function recomputePairwise(
       if (!parsedId) continue;
       const { variantId, taskId, attempt } = parsedId;
 
-      const { judged, biasProbe } = readJudgeDirs(caseDir);
+      const { judged, biasProbe } = readJudgeDirs(caseDir, options.judgeSeed && options.judgeRepeat ? { seed: options.judgeSeed, taskKey: basename(caseDir), repeat: options.judgeRepeat } : undefined);
       if (judged.length === 0) continue;
 
       const aggregated = aggregateJudgeRuns(judged);
@@ -1172,45 +1144,70 @@ export function parseResultId(
 /**
  * 读取一个 pairwise case 目录下的评委轮次，同时恢复位置偏好探测结果。
  */
-function readJudgeDirs(caseDir: string): { judged: JudgeResult[]; biasProbe: BiasProbe | null } {
-  const forwardRuns: JudgeResult[] = [];
-  const reversedRuns: JudgeResult[] = [];
-
-  for (const roundDir of readdirSync(caseDir)) {
-    const roundPath = join(caseDir, roundDir);
-    if (!existsSync(roundPath)) continue;
-
-    const outputPath = join(roundPath, "output.md");
-    if (!existsSync(outputPath)) continue;
-
-    const text = readFileSync(outputPath, "utf8");
-    const parsed = parseJudgeResponse(text, {
-      judgeDir: roundPath,
-      task: "",
-      outputA: "",
-      outputB: "",
-      runId: basename(caseDir),
-    });
-
-    if (roundDir === "reversed") {
-      reversedRuns.push(reconcileJudgeRun(parsed, true));
-    } else {
-      forwardRuns.push(reconcileJudgeRun(parsed, false));
+export function readJudgeDirs(caseDir: string, frozen?: { seed: string; taskKey: string; repeat: number }): { judged: JudgeResult[]; biasProbe: BiasProbe | null } {
+  const unknown = (reason: string, round?: JudgeRoundPlan): JudgeResult => ({
+    verdict: "not_judged", scoreA: null, scoreB: null, scoreDelta: null, confidence: null,
+    reason, error: reason,
+    ...(round ? { roundIndex: round.roundIndex, swapped: round.swapped } : {}),
+  });
+  const frozenRounds = frozen ? buildJudgeSchedule(frozen.seed, frozen.taskKey, frozen.repeat) : null;
+  const invalidPlan = (reason: string) => ({ judged: frozenRounds ? frozenRounds.map((round) => unknown(reason, round)) : [unknown(reason)], biasProbe: null });
+  const planPath = join(caseDir, "judge-plan.json");
+  if (frozenRounds && !existsSync(planPath)) return invalidPlan("冻结的评委计划缺失");
+  let rounds: JudgeRoundPlan[] | null = null;
+  if (existsSync(planPath)) {
+    try {
+      const plan = JSON.parse(readFileSync(planPath, "utf8")) as {
+        protocolVersion?: string; seed?: string; taskKey?: string; rounds?: JudgeRoundPlan[];
+      };
+      const expected = frozenRounds ?? (typeof plan.seed === "string" && typeof plan.taskKey === "string" && plan.rounds?.length
+        ? buildJudgeSchedule(plan.seed, plan.taskKey, plan.rounds.length) : null);
+      if (plan.protocolVersion !== JUDGE_PROTOCOL_VERSION || !expected ||
+          (frozen && (plan.seed !== frozen.seed || plan.taskKey !== frozen.taskKey)) || JSON.stringify(expected) !== JSON.stringify(plan.rounds)) {
+        return invalidPlan("评委计划无效或与独立冻结的轮数、种子和顺序不一致");
+      }
+      rounds = expected;
+    } catch {
+      return invalidPlan("评委计划无法读取");
     }
   }
-
-  const biasProbe =
-    forwardRuns[0] && reversedRuns[0]
-      ? detectPositionBias(forwardRuns[0].verdict, reversedRuns[0].verdict)
-      : null;
-
-  const usableForward = forwardRuns.filter((run) => run.verdict !== "not_judged");
-  if (usableForward.length > 0) return { judged: forwardRuns, biasProbe };
-
-  return {
-    judged: reversedRuns.map((run) => ({ ...run, reason: `${run.reason}（主判定轮失败，降级采用反向轮）` })),
-    biasProbe,
-  };
+  const judged: JudgeResult[] = [];
+  if (rounds) {
+    for (const round of rounds) {
+      const resultPath = join(caseDir, round.dirName, "judgment.json");
+      if (!existsSync(resultPath)) {
+        judged.push(unknown("冻结的评委轮次产物缺失", round));
+        continue;
+      }
+      try {
+        const raw = JSON.parse(readFileSync(resultPath, "utf8")) as JudgeResult;
+        if (raw.protocolVersion !== JUDGE_PROTOCOL_VERSION || raw.swapped !== round.swapped || raw.roundIndex !== round.roundIndex) {
+          judged.push(unknown("评委轮次协议或方向与冻结计划不一致", round));
+          continue;
+        }
+        judged.push(reconcileJudgeRun(raw, round.swapped));
+      } catch {
+        judged.push(unknown("评委轮次产物无法读取", round));
+      }
+    }
+  } else {
+    // 历史轮次没有明确语义/顺序协议，保留原始证据供诊断，不猜标签方向并重写旧结论。
+    for (const roundDir of readdirSync(caseDir).sort()) {
+      const outputPath = join(caseDir, roundDir, "output.md");
+      if (!existsSync(outputPath)) continue;
+      const parsed = parseJudgeResponse(readFileSync(outputPath, "utf8"), {
+        judgeDir: join(caseDir, roundDir), task: "", outputA: "", outputB: "", runId: basename(caseDir),
+      });
+      judged.push({
+        ...parsed, verdict: "not_judged", semanticsStatus: "legacy_ambiguous",
+        reason: `旧评委协议未冻结标签方向，仅作诊断：${parsed.reason}`,
+        error: "legacy judge semantics are ambiguous",
+      });
+    }
+  }
+  const forward = judged.find((run) => run.swapped === false);
+  const reversed = judged.find((run) => run.swapped === true);
+  return { judged, biasProbe: forward && reversed ? detectPositionBias(forward.verdict, reversed.verdict) : null };
 }
 
 function readOutput(path: string): string {

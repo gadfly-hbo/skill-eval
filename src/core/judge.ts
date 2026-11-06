@@ -12,10 +12,30 @@
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { runPi, type PiRunResult } from "./pi.ts";
 
 export type Verdict = "win" | "tie" | "loss" | "not_judged";
+
+export const JUDGE_PROTOCOL_VERSION = "b-relative-a-v2";
+
+export interface JudgeRoundPlan {
+  roundIndex: number;
+  swapped: boolean;
+  dirName: string;
+}
+
+/** 先由冻结的 seed/taskKey 决定首轮顺序，再交替展示，保证两方向数量最多差一。 */
+export function buildJudgeSchedule(seed: string, taskKey: string, repeat: number): JudgeRoundPlan[] {
+  if (!Number.isInteger(repeat) || repeat < 1) throw new Error("judge repeat must be a positive integer");
+  const swappedFirst = (createHash("sha256").update(`${seed}::${taskKey}`).digest()[0]! % 2) === 1;
+  return Array.from({ length: repeat }, (_, roundIndex) => ({
+    roundIndex,
+    swapped: roundIndex % 2 === 0 ? swappedFirst : !swappedFirst,
+    dirName: `round-${String(roundIndex + 1).padStart(3, "0")}`,
+  }));
+}
 
 export interface JudgeOptions {
   /** 评委运行的工作目录。 */
@@ -30,11 +50,7 @@ export interface JudgeOptions {
   outputA: string;
   /** 输出 B。 */
   outputB: string;
-  /**
-   * 输出 A 的执行证据摘要（工具调用、脚本执行等）。
-   * 让评委能核实输出里的过程性声明（如「已用 calc.py 复算」）——
-   * 没有它，评委只能凭输出自述判断，把真实执行误判成「无依据断言」。
-   */
+  /** 输出 A 的匿名执行状态计数，不传入动作、文件身份或原始执行输出。 */
   evidenceA?: string | undefined;
   /** 输出 B 的执行证据摘要。 */
   evidenceB?: string | undefined;
@@ -46,6 +62,11 @@ export interface JudgeOptions {
   runId: string;
   /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
   timeoutMs?: number;
+  /** 当前展示顺序是否与规范口径（A=对照、B=候选）相反。 */
+  swapped?: boolean;
+  roundIndex?: number;
+  /** 仅用于构造盲审提示词的身份词表；替换表本身不得发送给评委。 */
+  sourceIdentifiers?: string[];
 }
 
 export interface JudgeResult {
@@ -70,6 +91,12 @@ export interface JudgeResult {
    * 因此工具必须自己校验，不能全盘采信模型标签。
    */
   labelConflict?: LabelConflict | null;
+  protocolVersion?: string;
+  semanticsStatus?: "explicit" | "legacy_ambiguous";
+  swapped?: boolean;
+  roundIndex?: number;
+  /** 展示口径的原始标签；规范方向换算不覆盖它。 */
+  rawVerdict?: Verdict;
 }
 
 export interface LabelConflict {
@@ -137,9 +164,17 @@ export function formatJudgeOutputWindow(
  * 注意提示词里只有「输出 A / 输出 B」中性称呼，不含任何来源暗示。
  */
 export function buildJudgePrompt(options: JudgeOptions): string {
-  const rubric = options.rubric?.trim() || DEFAULT_RUBRIC;
+  // 全部评判材料共享同一个映射，任务明确要求的文件名也同步替换，避免评分不对称。
+  const identifiers = [...new Set((options.sourceIdentifiers ?? []).filter((value) => value.length > 0))]
+    .sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+  const anonymousIds = new Map(identifiers.map((value, index) => [value, `[匿名材料${index + 1}]`]));
+  const pattern = identifiers.length
+    ? new RegExp(identifiers.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g")
+    : null;
+  const anonymous = (text: string): string => pattern ? text.replace(pattern, (value) => anonymousIds.get(value)!) : text;
+  const rubric = anonymous(options.rubric?.trim() || DEFAULT_RUBRIC);
   const expectedPoints =
-    options.expectedPoints?.filter((point) => point.trim()).map((point) => `- ${point.trim()}`).join("\n") ||
+    options.expectedPoints?.filter((point) => point.trim()).map((point) => `- ${anonymous(point.trim())}`).join("\n") ||
     "- 未提供显式预期要点，按任务本身的质量标准判断。";
 
   return `你是严格的输出质量评估员。请比较两份输出对同一任务的完成质量。
@@ -148,13 +183,14 @@ export function buildJudgePrompt(options: JudgeOptions): string {
 - 只根据「原始任务」「预期要点」「评分标准」和两份输出判断，不考虑输出来源。
 - 不要因为某份输出更长、格式更复杂、排版更花哨就给它高分。
 - 两份都满足或都不满足关键要求且差异很小时，返回 tie。
+- verdict 始终表示输出 B 相对输出 A 的优劣：B 更好返回 win，A 更好返回 loss，相当返回 tie。
 - 输出 B 遗漏关键要点、引入错误、偏离任务或降低可执行性时，返回 loss。
 - scoreA 与 scoreB 必须是 0 到 100 的数字。
 - confidence 必须是 0 到 1 的数字，表示你对 verdict 的置信度；证据不足或差异很小时用较低置信度。
 - reason 必须引用具体差异点，不要复述任务。
 
 # 原始任务
-${options.task}
+${anonymous(options.task)}
 
 # 预期要点
 ${expectedPoints}
@@ -163,12 +199,12 @@ ${expectedPoints}
 ${rubric}
 
 # 输出 A
-${formatJudgeOutputWindow(options.outputA)}
+${formatJudgeOutputWindow(anonymous(options.outputA))}
 
 # 输出 B
-${formatJudgeOutputWindow(options.outputB)}
+${formatJudgeOutputWindow(anonymous(options.outputB))}
 
-${formatExecutionEvidence(options.evidenceA, options.evidenceB)}
+${anonymous(formatExecutionEvidence(options.evidenceA, options.evidenceB))}
 
 只输出 JSON 对象，不要输出 Markdown，不要用代码块包裹：
 {"verdict":"win|tie|loss","scoreA":0,"scoreB":0,"confidence":0.8,"reason":"一句话说明关键差异"}`;
@@ -211,8 +247,7 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
   writeFileSync(join(options.judgeDir, "prompt.md"), prompt, "utf8");
   writeFileSync(join(options.judgeDir, "events.json"), JSON.stringify(run.events, null, 2), "utf8");
 
-  if (run.exitCode !== 0) {
-    return {
+  const result: JudgeResult = run.exitCode !== 0 ? {
       verdict: "not_judged",
       scoreA: null,
       scoreB: null,
@@ -220,10 +255,16 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
       confidence: null,
       reason: `评委运行失败（退出码 ${String(run.exitCode)}）`,
       error: run.stderr.slice(0, 500) || `exit code ${String(run.exitCode)}`,
-    };
-  }
-
-  return parseJudgeResponse(run.metrics.output, options);
+    } : parseJudgeResponse(run.metrics.output, options);
+  const recorded: JudgeResult = {
+    ...result,
+    protocolVersion: JUDGE_PROTOCOL_VERSION,
+    semanticsStatus: "explicit",
+    swapped: options.swapped ?? false,
+    ...(options.roundIndex !== undefined ? { roundIndex: options.roundIndex } : {}),
+  };
+  writeFileSync(join(options.judgeDir, "judgment.json"), JSON.stringify(recorded, null, 2), "utf8");
+  return recorded;
 }
 
 /** 解析评委输出。JSON 解析失败视为评委失败，而非判定为 tie。 */
@@ -246,15 +287,7 @@ export function parseJudgeResponse(text: string, options: JudgeOptions): JudgeRe
     const scoreB = typeof parsed.scoreB === "number" ? clamp(parsed.scoreB, 0, 100) : null;
     const confidence = typeof parsed.confidence === "number" ? clamp(parsed.confidence, 0, 1) : null;
 
-    // 这里**不做**标签与分差的一致性校验——解析层只负责忠实记录评委说了什么。
-    //
-    // 校验必须在「统一口径」下进行，否则正反轮会得出互相矛盾的结论：
-    // 评委的标签实际语义是「分数更高的那份更好」，而不是提示词字面写的
-    // 「B 更好」。前向轮恰好 A=baseline、B=skill 两者重合；
-    // 反向轮 A=skill、B=baseline 就分道扬镳——若在解析层按字面语义校验，
-    // 反向轮会被误判成「评委自相矛盾」。
-    //
-    // 正确做法见 reconcileJudgeRun()：先把 A/B 换算回正轮口径，再校验。
+    // 解析层忠实保留展示口径；方向换算和矛盾检查统一由 reconcileJudgeRun 完成。
     return {
       verdict,
       scoreA,
@@ -294,12 +327,6 @@ function extractJsonObject(text: string): string {
  * 标签却说 A 胜，reason 文字也明确支持 B。
  * 这类矛盾在多轮聚合里会被当成一票实票，直接决定最终 verdict。
  *
- * **校验锚点是「分差方向」，不是提示词字面语义**：
- * 提示词写「输出 B 遗漏关键要点…时返回 loss」（字面即 win=B 更好），
- * 但实测评委实际按「分数更高的那份更好」打标签。两种语义在前向轮
- * （A=baseline、B=skill）恰好重合，在反向轮就分道扬镳。
- * 因此校验必须在**统一口径**下做——见 reconcileJudgeRun()。
- *
  * **纠正规则**：
  * - 分差绝对值 < `LABEL_CONFLICT_MIN_DELTA` → 不动。评委说 tie 而分差只差 1~2 分
  *   是「差异很小」的合理表达，不是矛盾。
@@ -338,47 +365,17 @@ export function reconcileVerdictWithScores(
   };
 }
 
-/**
- * 把一次判定换算到「A=baseline、B=skill」的正轮口径，并做标签一致性校验。
- *
- * 这是判定链路上唯一做标签校验的地方——正反轮都走它，口径统一。
- *
- * **为什么校验必须放在换算之后**：
- * 评委的标签实际语义是「分数更高的那份更好」（实测反轮 A=skill(95) B=baseline(58)
- * 返回 `win` 可证），而非提示词字面写的「B 更好」。
- * 前向轮 A=baseline、B=skill 时两种语义重合；
- * 反向轮 A=skill、B=baseline 时分道扬镳——
- * 若在换算前按字面语义校验，反向轮会被误判成「评委自相矛盾」，
- * 位置偏好探测也会跟着误报。
- *
- * 换算后 `scoreDelta` 恒为「skill 相对 baseline 的优势」，
- * 标签方向与它一致即自洽，不一致才是真矛盾。
- *
- * @param run 解析出的原始判定
- * @param swapped 该判定是否来自反向轮（A/B 与正轮相反）
- */
+/** 同时翻转标签和分数到规范口径，再记录大分差矛盾；不猜测模型的标签语义。 */
 export function reconcileJudgeRun(run: JudgeResult, swapped: boolean): JudgeResult {
-  // 1) 先换算 A/B 口径。
-  const oriented: JudgeResult = swapped ? flipScores(run) : run;
-
-  // 2) 再用换算后的分差校验标签方向。
-  const { verdict, conflict } = reconcileVerdictWithScores(oriented.verdict, oriented.scoreDelta);
-
-  return {
-    ...oriented,
-    verdict,
-    labelConflict: conflict,
-  };
-}
-
-/** 只翻转 A/B 分数，不动标签（标签方向由后续校验决定）。 */
-function flipScores(run: JudgeResult): JudgeResult {
-  return {
+  const oriented: JudgeResult = swapped ? {
     ...run,
+    verdict: run.verdict === "win" ? "loss" : run.verdict === "loss" ? "win" : run.verdict,
     scoreA: run.scoreB,
     scoreB: run.scoreA,
     scoreDelta: run.scoreDelta !== null ? -run.scoreDelta : null,
-  };
+  } : run;
+  const { verdict, conflict } = reconcileVerdictWithScores(oriented.verdict, oriented.scoreDelta);
+  return { ...oriented, verdict, labelConflict: conflict, rawVerdict: run.rawVerdict ?? run.verdict };
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -388,12 +385,12 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * 多轮评委聚合。
  *
- * 多数票；票数并列时按平均分差绝对值大的方向裁决；全失败则保持 not_judged。
+ * 多数票；最高票并列时保持 tie；全失败则保持 not_judged。
  * 单次判定全部保留在 `judgeRuns`。
  */
 export function aggregateJudgeRuns(runs: JudgeResult[]): JudgeResult {
   const judged = runs.filter((run) => run.verdict !== "not_judged");
-  if (judged.length === 0) {
+  if (judged.length <= runs.length / 2) {
     const first = runs[0];
     return {
       verdict: "not_judged",
@@ -401,7 +398,7 @@ export function aggregateJudgeRuns(runs: JudgeResult[]): JudgeResult {
       scoreB: null,
       scoreDelta: null,
       confidence: null,
-      reason: "所有评委轮次均失败",
+      reason: judged.length === 0 ? "所有评委轮次均失败" : "成功评委轮次未超过预定轮数的一半，不能降为单票判定",
       error: first?.error ?? "no successful judge runs",
     };
   }
@@ -414,20 +411,7 @@ export function aggregateJudgeRuns(runs: JudgeResult[]): JudgeResult {
   const maxCount = Math.max(counts.win, counts.tie, counts.loss);
   const tied = (["win", "tie", "loss"] as const).filter((verdict) => counts[verdict] === maxCount);
 
-  let verdict: Verdict;
-  if (tied.length === 1) {
-    verdict = tied[0]!;
-  } else {
-    const avgDelta = (candidate: "win" | "loss"): number => {
-      const deltas = judged
-        .filter((run) => run.verdict === candidate)
-        .map((run) => run.scoreDelta)
-        .filter((value): value is number => typeof value === "number");
-      return deltas.length ? deltas.reduce((acc, value) => acc + value, 0) / deltas.length : 0;
-    };
-    verdict =
-      Math.abs(avgDelta("win")) >= Math.abs(avgDelta("loss")) ? "win" : "loss";
-  }
+  const verdict: Verdict = tied.length === 1 && maxCount > runs.length / 2 ? tied[0]! : "tie";
 
   const conflicted = judged.filter((run) => run.labelConflict);
 
@@ -492,26 +476,20 @@ export function detectPositionBias(forward: Verdict, reversed: Verdict): BiasPro
   };
 }
 
-/**
- * 渲染执行证据摘要。
- *
- * 为什么需要：有些 skill 的核心机制是「用脚本复算」（如 data-analysis 的
- * `scripts/calc.py`），输出里会写「全部经 calc.py 复算」。但评委只看得到
- * 两份输出，看不到工具执行记录——于是把**真实执行过的脚本**判成
- * 「无依据断言」。
- *
- * 实测（2026-11-05 data-analysis）：skill 侧确实执行了
- * `calc.py period` 与 `quality_check.py --data/--report`（events.json 有据），
- * 评委却写「目录中并无任何脚本」并判 loss，直接压低了整体胜率。
- */
+/** 渲染匿名执行状态；原始调用详情不进入盲审提示词。 */
 function formatExecutionEvidence(evidenceA?: string, evidenceB?: string): string {
-  const a = evidenceA?.trim();
-  const b = evidenceB?.trim();
+  // 只接受固定的匿名计数格式，直接调用本接口也不能把原始命令/文件身份泄露给评委。
+  const anonymous = (value?: string): string => {
+    const text = value?.trim() ?? "";
+    return /^匿名执行结果：成功 \d+ 次；失败 \d+ 次；结果未知 \d+ 次。$/.test(text) ? text : "";
+  };
+  const a = anonymous(evidenceA);
+  const b = anonymous(evidenceB);
   if (!a && !b) return "";
   return `
-# 执行证据（工具调用记录摘要）
-> 下面是两份输出在生成过程中的实际工具调用记录，用于核实输出里对执行过程的声明。
-> 只依据本节判断「某份输出声称做过的事是否真的做过」，不要用本节判断内容质量。
+# 匿名执行证据
+> 以下仅表示已记录的执行状态，不能证明使用了某个具体工具，也不能证明计算或内容正确。
+> 不要因为执行次数多而给输出更高的质量评分。
 
 ## 输出 A 的执行记录
 ${a || "（无工具调用记录）"}

@@ -1,19 +1,7 @@
 /**
- * 执行证据摘要提取。
- *
- * 为什么需要这个模块：评委的输入只有两份输出文本，看不到工具执行记录。
- * 有些 skill 的核心机制是「用脚本复算」（如 data-analysis 的 `scripts/calc.py`），
- * 输出里会写「全部经 calc.py 复算」——但评委无法核实这句话，
- * 于是把**真实执行过的脚本**判成「无依据断言」。
- *
- * 实测（2026-11-05 data-analysis，trap-incomplete-period #1）：
- * skill 侧确实执行了 `calc.py period`、`calc.py compare`、
- * `quality_check.py --data`、`quality_check.py --report`（events.json 有据），
- * 评委却写「目录中并无任何脚本」并判 loss，直接压低了整体胜率。
- *
- * 解法：把工具执行记录压成一段可读的摘要，注入评委提示词，
- * 并明确告知评委——该节只用于核实「声称做过的事是否真的做过」，
- * 不用于判断内容质量（否则会让评委改用「执行次数多」当质量信号）。
+ * 执行证据摘要：完整动作与结果留在原始事件中用于复核；
+ * 评委只接收匿名执行成功/失败/未知计数，不接收加载读取、文件名、命令或路径。
+ * 计数只能证明发生过执行，不能证明某个具体脚本、计算或结论正确。
  */
 
 import { readFileSync } from "node:fs";
@@ -187,19 +175,14 @@ export function extractToolCalls(events: PiEvent[], options: EvidenceOptions = {
  * 避免「（无工具调用记录）」这种空提示干扰评委。
  */
 export function formatEvidence(calls: ToolCallSummary[]): string {
-  if (!calls.length) return "";
-  const lines = calls.map((call, index) => {
-    const head = `${index + 1}. [${call.tool}] ${call.action}`;
-    const tail: string[] = [];
-    if (typeof call.exitCode === "number") tail.push(`退出码 ${call.exitCode}`);
-    if (call.isError) tail.push("报错");
-    const meta = tail.length ? `（${tail.join("，")}）` : "";
-    const out = call.outputExcerpt
-      ? `\n   结果：${shortenPathsInText(call.outputExcerpt).replace(/\s+/g, " ").slice(0, 220)}`
-      : "";
-    return `${head}${meta}${out}`;
-  });
-  return lines.join("\n");
+  // 原始动作/路径/命令/输出保留在事件证据内，盲审只传执行结果计数。
+  // 加载与资料读取不参与质量证据，避免其成为候选身份信号。
+  const execution = calls.filter((call) => call.tool === "bash");
+  if (!execution.length) return "";
+  const failed = execution.filter((call) => call.isError || (typeof call.exitCode === "number" && call.exitCode !== 0)).length;
+  const succeeded = execution.filter((call) => !call.isError && call.exitCode === 0).length;
+  const unknown = execution.length - failed - succeeded;
+  return `匿名执行结果：成功 ${succeeded} 次；失败 ${failed} 次；结果未知 ${unknown} 次。`;
 }
 
 /**

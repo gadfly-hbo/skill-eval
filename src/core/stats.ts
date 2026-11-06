@@ -24,6 +24,34 @@ export interface DiffIntervalPp {
   lowPp: number;
   /** 95% Newcombe-Wilson 上界（百分点）。 */
   highPp: number;
+  /** 推断方法及独立样本单位；旧独立比例区间不提供这些字段。 */
+  method?: "task-hoeffding";
+  independentTasks?: number;
+  confidenceLevel?: number;
+}
+
+/**
+ * 等权配对任务增益的保守 Hoeffding 区间。
+ *
+ * 每个输入是一个任务内所有预定 attempt 的平均通过率差，范围 [-1, 1]。
+ * 只把任务视作独立单位，断言数量和任务内重复数均不增加 n。
+ * P(|mean-E mean| >= e) <= 2 exp(-n e²/2)。假定各任务簇独立；
+ * 不假定正态性，不用同一输出上的相关断言制造显著性。小套件区间会很宽。
+ */
+export function taskGainInterval(differences: readonly number[], alpha = 0.05): DiffIntervalPp | null {
+  if (differences.length === 0 || !(alpha > 0 && alpha < 1) ||
+      differences.some(d => !Number.isFinite(d) || d < -1 || d > 1)) return null;
+  const point = differences.reduce((sum, d) => sum + d, 0) / differences.length;
+  const radius = Math.sqrt(2 * Math.log(2 / alpha) / differences.length);
+  const pp = (v: number) => Math.round(v * 100 * 1e6) / 1e6;
+  return {
+    diffPp: pp(point),
+    lowPp: pp(Math.max(-1, point - radius)),
+    highPp: pp(Math.min(1, point + radius)),
+    method: "task-hoeffding",
+    independentTasks: differences.length,
+    confidenceLevel: 1 - alpha,
+  };
 }
 
 /**

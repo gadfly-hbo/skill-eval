@@ -26,6 +26,8 @@
  * 与激活判定同一口径（证据优先于文本匹配）。
  */
 
+import { canonicalPath } from "./isolation.ts";
+
 /** 一次运行的污染判定结果。 */
 export interface ContaminationReport {
   /** 是否检出污染。 */
@@ -104,13 +106,11 @@ export function detectContamination(
   };
 }
 
-/** 去掉路径末尾斜杠，保证目录前缀判断不受写法影响。 */
+/** 解析 ..、符号链接与 macOS /tmp 别名，保证按实际目标比较。 */
 function normalizePath(path: string): string {
-  let p = path.trim();
+  const p = path.trim();
   if (!p) return "";
-  // 去掉末尾的斜杠（但保留根目录）
-  while (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
-  return p;
+  return canonicalPath(p);
 }
 
 /** 取路径最后一段。 */

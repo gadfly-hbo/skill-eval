@@ -92,3 +92,8 @@ test("detectContamination 去重命中路径", () => {
   );
   assert.equal(report.hits.length, 1);
 });
+
+test("detectContamination 归一化含 .. 的等价路径", () => {
+  const report = detectContamination([`${SKILL_DIR}/../data-analysis/SKILL.md`], SKILL_MD, SKILL_DIR);
+  assert.equal(report.contaminated, true);
+});

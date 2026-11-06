@@ -7,7 +7,7 @@
  */
 
 import { ACTIVATION_THRESHOLD, GAIN_THRESHOLD_PP, INSENSITIVE_BASELINE_PASS_RATE } from "./thresholds.ts";
-import { evaluateGainFromResults } from "./gain.ts";
+import { evaluateGainFromResults, isScoredTask } from "./gain.ts";
 import type { EvaluationSummary } from "./runner.ts";
 
 export interface StrippedSkillResult {
@@ -28,13 +28,14 @@ export interface NegativeControlAssertionLadder {
 
 export interface NegativeControlReport {
   passed: boolean;
+  status: "passed" | "failed" | "inconclusive";
   thresholdPp: number;
   originalGainPp: number | null;
   brokenGainPp: number | null;
-  originalActivationRate: number;
-  brokenActivationRate: number;
-  originalTimeouts: number;
-  brokenTimeouts: number;
+  originalActivationRate: number | null;
+  brokenActivationRate: number | null;
+  originalTimeouts: number | null;
+  brokenTimeouts: number | null;
   trueContractAssertions: NegativeControlAssertionLadder[];
   insensitiveAssertions: NegativeControlAssertionLadder[];
   falsePositiveAssertions: NegativeControlAssertionLadder[];
@@ -77,19 +78,22 @@ export function stripBehavioralContract(skillMdContent: string): StrippedSkillRe
   };
 }
 
-function extractVariantStats(summary: EvaluationSummary) {
+function extractVariantStats(summary: EvaluationSummary, thresholdPp: number) {
   const variantId =
     summary.results.find((r) => r.variantId !== "baseline")?.variantId ??
     summary.variantSummaries.find((v) => v.variantId !== "baseline")?.variantId ??
     "skill";
 
   const variantRows = summary.results.filter((r) => r.variantId === variantId);
-  const activatedCount = variantRows.filter((r) => r.activation?.activated).length;
-  const activationRate = variantRows.length > 0 ? activatedCount / variantRows.length : 0;
-  const timeouts = variantRows.filter(
+  const positiveIds = new Set(summary.tasks?.filter(t => t.shouldActivate !== false).map(t => t.id));
+  const positiveRows = variantRows.filter(r => positiveIds.has(r.taskId));
+  const activatedCount = positiveRows.filter((r) => r.activation?.activated).length;
+  const activationRate = positiveRows.length > 0 ? activatedCount / positiveRows.length : null;
+  const timeouts = variantRows.length === 0 ? null : variantRows.filter(
     (r) => r.timedOut === true || (r.error ?? "").includes("超时"),
   ).length;
-  const gain = evaluateGainFromResults(summary.results, variantId);
+  const gain = evaluateGainFromResults(summary.results, variantId, thresholdPp, summary.tasks, summary.repeat);
+  const scoredIds = new Set(summary.tasks?.filter(isScoredTask).map(t => t.id));
 
   // 按 (taskId, assertionIndex) 统计 baseline 与 variant 通过率
   const perAssertion = new Map<
@@ -106,7 +110,8 @@ function extractVariantStats(summary: EvaluationSummary) {
   >();
 
   for (const row of summary.results) {
-    if (row.status === "failed" || !row.assertions) continue;
+    if (row.status === "failed" || !row.assertions || !scoredIds.has(row.taskId) ||
+        (row.variantId !== "baseline" && row.variantId !== variantId)) continue;
     const isBase = row.variantId === "baseline";
     row.assertions.outcomes.forEach((outcome, idx) => {
       const key = `${row.taskId}::${idx}`;
@@ -136,6 +141,51 @@ function extractVariantStats(summary: EvaluationSummary) {
   return { variantId, activationRate, timeouts, gain, perAssertion };
 }
 
+/** 未知和不可比的运行不能成为「破坏版已经测得低增益」的证据。 */
+function comparabilityIssues(original: EvaluationSummary, broken: EvaluationSummary): string[] {
+  const issues: string[] = [];
+  for (const key of ["model", "judgeModel", "repeat", "judgeRepeat"] as const) {
+    const left = original[key];
+    const right = broken[key];
+    const valid = (v: unknown) => typeof v === "string" ? v.trim().length > 0 : Number.isInteger(v) && Number(v) > 0;
+    if (!valid(left) || !valid(right) || left !== right) issues.push(`${key} 缺失或不一致，实验不可比较`);
+  }
+  const leftHash = original.suiteMeta?.suiteHash;
+  const rightHash = broken.suiteMeta?.suiteHash;
+  if (!leftHash || !rightHash || leftHash !== rightHash) issues.push("冻结套件 suiteHash 缺失或不一致");
+  const taskIds = (s: EvaluationSummary) => s.tasks?.map(t => [t.id, t.kind ?? "scored", t.shouldActivate ?? true]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  if (!original.tasks?.length || !broken.tasks?.length || JSON.stringify(taskIds(original)) !== JSON.stringify(taskIds(broken))) {
+    issues.push("冻结任务 ID/计分范围缺失或不一致");
+  }
+  for (const [name, summary] of [["原版", original], ["破坏版", broken]] as const) {
+    if (!summary.integrity?.verified || summary.integrity.issues.length) issues.push(`${name}身份完整性未通过核验`);
+    if (!summary.isolation?.verified || summary.isolation.issues.length) issues.push(`${name}实验隔离未通过核验`);
+    if (summary.results.some(r => r.contamination?.contaminated)) issues.push(`${name}存在实验污染`);
+    if (summary.status !== "success" || summary.results.some(r => r.status !== "success" || !r.output?.trim())) {
+      issues.push(`${name}存在失败/空输出或跑批未完整成功`);
+    }
+    if (summary.tasks && Number.isInteger(summary.repeat) && summary.repeat > 0) {
+      const variantIds = new Set(summary.results.filter(r => r.variantId !== "baseline").map(r => r.variantId));
+      if (variantIds.size !== 1) issues.push(`${name}缺少唯一被测 variant`);
+      const variantId = [...variantIds][0];
+      const validIds = new Set(summary.tasks.map(t => t.id));
+      if (summary.results.some(r => !validIds.has(r.taskId) || !Number.isInteger(r.attempt) || r.attempt < 1 || r.attempt > summary.repeat)) {
+        issues.push(`${name}存在冻结任务/重复范围外的运行`);
+      }
+      for (const task of summary.tasks) for (let attempt = 1; attempt <= summary.repeat; attempt++) {
+        for (const id of ["baseline", variantId]) {
+          const rows = summary.results.filter(r => r.taskId === task.id && r.attempt === attempt && r.variantId === id);
+          if (rows.length !== 1) issues.push(`${name} ${task.id}/${attempt} 配对缺失或重复`);
+          else if (task.assertions?.length && (rows[0]!.assertions?.total !== task.assertions.length || rows[0]!.assertions?.outcomes.length !== task.assertions.length)) {
+            issues.push(`${name} ${task.id}/${attempt} 断言覆盖不完整`);
+          }
+        }
+      }
+    }
+  }
+  return issues;
+}
+
 /**
  * 对比原版跑批与破坏版跑批，验证评估套件与评估器是否具备真实区分能力。
  */
@@ -145,22 +195,27 @@ export function evaluateNegativeControl(
   options: { thresholdPp?: number } = {},
 ): NegativeControlReport {
   const thresholdPp = options.thresholdPp ?? GAIN_THRESHOLD_PP;
-  const orig = extractVariantStats(originalSummary);
-  const broken = extractVariantStats(brokenSummary);
+  const orig = extractVariantStats(originalSummary, thresholdPp);
+  const broken = extractVariantStats(brokenSummary, thresholdPp);
 
-  const issues: string[] = [];
+  const evidenceIssues = comparabilityIssues(originalSummary, brokenSummary);
+  if (!orig.gain.complete || orig.gain.gainPp === null) evidenceIssues.push(`原版配对增益未验证：${orig.gain.issues.join("；")}`);
+  if (!broken.gain.complete || broken.gain.gainPp === null) evidenceIssues.push(`破坏版配对增益未验证：${broken.gain.issues.join("；")}`);
+  if (orig.activationRate === null || broken.activationRate === null) evidenceIssues.push("缺少正向触发运行，激活率未验证");
+  const issues: string[] = [...evidenceIssues];
 
-  if (orig.timeouts > 0 || broken.timeouts > 0) {
+  if ((orig.timeouts ?? 0) > 0 || (broken.timeouts ?? 0) > 0) {
     issues.push(
-      `存在运行超时污染（原版超时 ${orig.timeouts} 次 / 破坏版超时 ${broken.timeouts} 次），请提高 --timeout 重跑`,
+      `存在运行超时（原版 ${orig.timeouts ?? "未验证"} 次 / 破坏版 ${broken.timeouts ?? "未验证"} 次），当前批次不能证明区分能力`,
     );
   }
 
-  if (broken.activationRate < ACTIVATION_THRESHOLD - 1e-9) {
+  if (broken.activationRate !== null && broken.activationRate < ACTIVATION_THRESHOLD - 1e-9) {
     issues.push(
       `破坏版激活率仅 ${(broken.activationRate * 100).toFixed(1)}%（低于 ${(ACTIVATION_THRESHOLD * 100).toFixed(0)}%），连触发契约也被破坏，阴性对照变量控制不成立`,
     );
   }
+  if (orig.activationRate !== null && orig.activationRate < ACTIVATION_THRESHOLD - 1e-9) issues.push("原版激活率未达触发门槛");
 
   if (orig.gain.gainPp === null || orig.gain.gainPp < thresholdPp - 1e-9) {
     issues.push(
@@ -178,7 +233,8 @@ export function evaluateNegativeControl(
   const insensitiveAssertions: NegativeControlAssertionLadder[] = [];
   const falsePositiveAssertions: NegativeControlAssertionLadder[] = [];
 
-  for (const [key, origItem] of orig.perAssertion) {
+  // 不完整覆盖时不生成貌似完整的逐断言层级，更不能把缺失项计为假阳性 0。
+  for (const [key, origItem] of evidenceIssues.length ? [] : orig.perAssertion) {
     const brokenItem = broken.perAssertion.get(key);
     if (!brokenItem || origItem.baseTotal === 0 || origItem.varTotal === 0 || brokenItem.varTotal === 0) {
       continue;
@@ -214,13 +270,15 @@ export function evaluateNegativeControl(
     issues.push(`发现 ${falsePositiveAssertions.length} 条假阳性断言（破坏版通过而原版全部失败）`);
   }
 
-  const passed = issues.length === 0;
+  const status = evidenceIssues.length > 0 ? "inconclusive" : issues.length > 0 ? "failed" : "passed";
+  const passed = status === "passed";
   const reason = passed
-    ? `工具与套件具备区分能力：原版增益 +${(orig.gain.gainPp ?? 0).toFixed(1)}pp（≥ ${thresholdPp}pp），破坏版激活率 ${(broken.activationRate * 100).toFixed(1)}% 且增益回落至 ${(broken.gain.gainPp ?? 0) >= 0 ? "+" : ""}${(broken.gain.gainPp ?? 0).toFixed(1)}pp（< ${thresholdPp}pp），假阳性 0 条。`
-    : `阴性对照验证未通过：${issues.join("；")}。`;
+    ? `当前可比完整样本中具备区分能力：原版任务等权增益 +${orig.gain.gainPp!.toFixed(1)}pp（≥ ${thresholdPp}pp），破坏版激活率 ${(broken.activationRate! * 100).toFixed(1)}% 且增益 ${broken.gain.gainPp! >= 0 ? "+" : ""}${broken.gain.gainPp!.toFixed(1)}pp（< ${thresholdPp}pp），未检出假阳性。此为冻结套件内的描述性对照检验，不替代独立任务区间的有效性判定。`
+    : `阴性对照${status === "inconclusive" ? "未验证（证据不足）" : "验证未通过"}：${issues.join("；")}。`;
 
   return {
     passed,
+    status,
     thresholdPp,
     originalGainPp: orig.gain.gainPp,
     brokenGainPp: broken.gain.gainPp,
@@ -240,17 +298,17 @@ export function formatNegativeControlReport(report: NegativeControlReport): stri
   const lines: string[] = [];
   lines.push("阴性对照元评估报告（Negative Control Verification）");
   lines.push("=".repeat(64));
-  lines.push(`结论：${report.passed ? "✅ 具备区分能力（通过）" : "❌ 未通过"}`);
+  lines.push(`结论：${report.passed ? "✅ 具备区分能力（通过）" : report.status === "inconclusive" ? "— 未验证（证据不足）" : "❌ 未通过"}`);
   lines.push(`说明：${report.reason}`);
   lines.push("");
   lines.push(
-    `  原版 skill：激活率 ${(report.originalActivationRate * 100).toFixed(1)}% · 断言增益 ${report.originalGainPp === null ? "—" : `${report.originalGainPp >= 0 ? "+" : ""}${report.originalGainPp.toFixed(1)}pp`} · 超时 ${report.originalTimeouts} 次`,
+    `  原版 skill：激活率 ${report.originalActivationRate === null ? "未验证" : `${(report.originalActivationRate * 100).toFixed(1)}%`} · 任务等权增益 ${report.originalGainPp === null ? "未验证" : `${report.originalGainPp >= 0 ? "+" : ""}${report.originalGainPp.toFixed(1)}pp`} · 超时 ${report.originalTimeouts ?? "未验证"} 次`,
   );
   lines.push(
-    `  破坏版 skill：激活率 ${(report.brokenActivationRate * 100).toFixed(1)}% · 断言增益 ${report.brokenGainPp === null ? "—" : `${report.brokenGainPp >= 0 ? "+" : ""}${report.brokenGainPp.toFixed(1)}pp`} · 超时 ${report.brokenTimeouts} 次`,
+    `  破坏版 skill：激活率 ${report.brokenActivationRate === null ? "未验证" : `${(report.brokenActivationRate * 100).toFixed(1)}%`} · 任务等权增益 ${report.brokenGainPp === null ? "未验证" : `${report.brokenGainPp >= 0 ? "+" : ""}${report.brokenGainPp.toFixed(1)}pp`} · 超时 ${report.brokenTimeouts ?? "未验证"} 次`,
   );
   lines.push(
-    `  逐断言分层：真契约断言 ${report.trueContractAssertions.length} 条 · 白送无区分断言 ${report.insensitiveAssertions.length} 条 · 假阳性 ${report.falsePositiveAssertions.length} 条`,
+    report.status === "inconclusive" ? "  逐断言分层：未验证（覆盖或可比性不足）" : `  逐断言分层：真契约断言 ${report.trueContractAssertions.length} 条 · 白送无区分断言 ${report.insensitiveAssertions.length} 条 · 假阳性 ${report.falsePositiveAssertions.length} 条`,
   );
   if (report.issues.length > 0) {
     lines.push("");

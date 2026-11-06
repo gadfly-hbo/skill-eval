@@ -24,8 +24,6 @@ import type { CalibrationResult } from "../core/calibration.ts";
 import {
   ACTIVATION_STRONG_THRESHOLD,
   ACTIVATION_THRESHOLD,
-  GAIN_STRONG_THRESHOLD_PP,
-  GAIN_THRESHOLD_PP,
   MAX_FALSE_ACTIVATION_RATE,
   MAX_VARIANT_TIMEOUT_RATE,
   MIN_PAIR_COVERAGE,
@@ -129,7 +127,7 @@ export function renderReport(options: ReportOptions): string {
   }
 
   if (variant) {
-    const gainFromResults = evaluateGainFromResults(summary.results, variant.variantId);
+    const gainFromResults = evaluateGainFromResults(summary.results, variant.variantId, undefined, summary.tasks ?? options.tasks, summary.repeat);
     const baselineItemRate = gainFromResults.baselineCounts.rate;
     const variantItemRate = gainFromResults.variantCounts.rate;
     const gainCiText = gainFromResults.ciPp
@@ -162,12 +160,11 @@ export function renderReport(options: ReportOptions): string {
     }
     if (variant.timeoutRate !== undefined && variant.timeoutRate > 0) {
       lines.push(
-        `| 运行超时率 | — | ${percent(variant.timeoutRate)}（${variant.timedOut ?? 0}/${variant.total} 次） | ${variant.timeoutRate > MAX_VARIANT_TIMEOUT_RATE ? "⚠️ 超时率超标" : "偶发超时"} |`,
+        `| 运行超时率 | — | ${(variant.missing ?? 0) > 0 ? "未知（产物缺失）" : percent(variant.timeoutRate)}（已知 ${variant.timedOut ?? 0}/${variant.total} 次） | ${variant.timeoutRate > MAX_VARIANT_TIMEOUT_RATE ? "⚠️ 超时率超标" : "偶发超时"} |`,
       );
     }
-    lines.push(
-      `| 断言通过率（条目累计） | ${percent(baselineItemRate)} | ${percent(variantItemRate)}${gainFromResults.gainPp !== null ? `（${signedPp(gainFromResults.gainPp)}）${gainCiText}` : ""} | ${judgeAssertion(baselineItemRate, variantItemRate, gainFromResults.ciPp?.lowPp ?? null)} |`,
-    );
+    lines.push(`| 断言通过率（条目累计，仅描述） | ${percent(baselineItemRate)} | ${percent(variantItemRate)} | 不将断言条目当作独立运行 |`);
+    lines.push(`| 任务等权配对增益 | — | ${gainFromResults.gainPp === null ? "不可判定" : signedPp(gainFromResults.gainPp)}${gainCiText} | ${gainFromResults.pairedTaskCount} 个任务簇；${gainFromResults.complete ? "完整配对" : "配对证据不足"} |`);
     lines.push(
       `| 平均耗时 | ${baseline ? `${baseline.avgDurationSec.toFixed(1)}s` : "—"} | ${variant.avgDurationSec.toFixed(1)}s | ${variant.avgDurationSec > (baseline?.avgDurationSec ?? 0) * 1.1 ? "变慢，需关注延迟" : "未明显变慢"} |`,
     );
@@ -177,6 +174,13 @@ export function renderReport(options: ReportOptions): string {
       `| 平均 token | ${baseline ? String(Math.round(baseline.avgTokens)) : "—"} | ${String(Math.round(variant.avgTokens))} | ${costDesc} |`,
     );
     lines.push("");
+  }
+
+  for (const [label, state] of [["原始证据完整性", summary.integrity], ["文件访问隔离", summary.isolation]] as const) {
+    if (state?.verified !== true || state.issues.length > 0) {
+      lines.push(`> ${label}：未验证。${state?.issues.join("；") || "缺少验证记录"}`);
+      lines.push("");
+    }
   }
 
   // ---- 1. 候选身份 ----
@@ -201,10 +205,12 @@ export function renderReport(options: ReportOptions): string {
   lines.push(`| 每用例重复 | ${summary.repeat} 次 |`);
   lines.push(`| 评委轮数 | ${summary.judgeRepeat} 轮${summary.judgeRepeat >= 2 ? "（含位置偏好探测）" : ""} |`);
   lines.push(`| 用例数 | ${options.tasks.length} |`);
-  lines.push(`| 总运行次数 | ${summary.results.length} |`);
+  lines.push(`| 已有运行记录 / 预定运行数 | ${summary.results.length} / ${summary.manifest ? summary.manifest.tasks.length * summary.manifest.variants.length * summary.manifest.repeat : summary.variantSummaries.reduce((total, row) => total + row.total, 0)} |`);
+  if (summary.analysisOf) lines.push(`| 派生复核 | 来源 ${summary.analysisOf.runId}；策略 ${summary.policyVersion ?? "未记录"}；原报告保留 |`);
   lines.push(`| 总耗时 | ${summary.durationSec.toFixed(1)}s |`);
-  lines.push(`| 总 token | ${summary.totalTokens.toLocaleString()} |`);
-  lines.push(`| 总成本 | $${summary.totalCost.toFixed(4)} |`);
+  const hasMissing = summary.variantSummaries.some((row) => (row.missing ?? 0) > 0);
+  lines.push(`| 总 token | ${hasMissing ? "未知（部分运行产物缺失）" : summary.totalTokens.toLocaleString()} |`);
+  lines.push(`| 总成本 | ${hasMissing ? "未知（部分运行产物缺失）" : `$${summary.totalCost.toFixed(4)}`} |`);
   if (meta.piHome) lines.push(`| pi 隔离 HOME | \`${meta.piHome}\` |`);
   lines.push(`| 证据目录 | \`${meta.runRoot}\` |`);
   lines.push("");
@@ -212,10 +218,15 @@ export function renderReport(options: ReportOptions): string {
   // ---- 3. 证据层级 ----
   lines.push("## 3. 证据层级");
   lines.push("");
-  lines.push("- **真实模型运行**：本报告全部数字来自真实 pi 模型调用，非回放、非静态检查。");
+  lines.push(summary.evidenceLevel === "real-model"
+    ? "- **真实模型运行记录**：来源为本次 pi 调用；原始产物完整性与隔离验证单列。"
+    : summary.evidenceLevel === "offline-fixture"
+      ? "- **离线夹具验证**：仅验证评估器代码行为，不代表真实模型能力。"
+      : "- **已有产物复核/回放**：未进行新的模型调用；历史记录未追溯覆盖，缺少的证据保持未验证。");
   lines.push("- **事件流取证**：每次运行保存完整 pi 事件流，可回放核对（含附属文件读取取证）。");
-  lines.push("- **规则断言**：由代码判定，客观可复算，优先级高于模型评委；失败或超时的空输出运行不计入断言分母。");
+  lines.push("- **规则断言**：条目累计率只描述成功输出；推断使用完整计分配对，失败或缺失不产生负向断言假通过。95% 区间以任务为独立簇，采用保守 Hoeffding 界；增加断言或重复次数不会增加独立任务数。");
   lines.push("- **成对评委**：模型评委判定相对优劣；已匿名化（A/B 无来源暗示），长输出采用头尾保留采样。");
+  lines.push("- **计分范围**：增益、显著性与成本门禁仅使用 scored 且应触发的任务；diagnostic 与负向触发任务单列，不参与这些门禁。执行摘要只提供匿名状态计数，不向评委泄露脚本或 skill 身份。");
   lines.push("");
   if (summary.judgeModel === summary.model) {
     lines.push("> ⚠️ 评委模型与被评模型相同，存在自我偏好风险，相关判定可信度需打折。");
@@ -620,24 +631,6 @@ function judgeWinRate(rate: number | null): string {
   if (rate >= WIN_RATE_MARGINAL_THRESHOLD - 1e-9) return "提升不显著";
   if (rate > 0) return "无提升甚至倒退";
   return "完全无提升";
-}
-
-function judgeAssertion(
-  baseline: number | null,
-  variant: number | null,
-  ciLowPp: number | null,
-): string {
-  if (baseline === null || variant === null) return "未设断言";
-  const deltaPp = (variant - baseline) * 100;
-  if (deltaPp >= GAIN_STRONG_THRESHOLD_PP - 1e-9) {
-    return ciLowPp !== null && ciLowPp <= 0 ? "点估计改善但置信区间跨零" : "显著改善";
-  }
-  if (deltaPp >= GAIN_THRESHOLD_PP - 1e-9) {
-    return ciLowPp !== null && ciLowPp <= 0 ? "压线改善但统计不显著（CI 跨零）" : "压线改善（10pp–20pp）";
-  }
-  if (deltaPp > 0) return "微弱改善（未达 10pp 门槛）";
-  if (deltaPp === 0) return "无差异";
-  return "反而变差";
 }
 
 function signedPp(value: number): string {
