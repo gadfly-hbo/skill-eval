@@ -1,13 +1,16 @@
 {
   "skill": "data-analysis",
-  "version": "1.8.0__20261105-1346",
-  "skillHash": "sha256:25e72e3e5b5ec3ca",
+  "version": "1.9.0",
+  "skillHash": "sha256:63adebbaf67fdfde",
+  "suiteHash": "sha256:7e7ff00adca64355",
+  "suiteDrift": false,
   "verdict": "effective",
-  "provisional": false,
+  "expensive": true,
+  "provisional": true,
   "lowGain": false,
-  "gainPp": 73.529411765,
+  "gainPp": 60.660820268,
   "gainThresholdPp": 10,
-  "archivedAt": "2026-11-05T05:46:51.189Z",
-  "runId": "run-20261105-034418-362c94b9",
-  "path": "data-analysis/1.8.0__20261105-1346"
+  "archivedAt": "2026-11-06T02:27:20.818Z",
+  "runId": "run-20261105-142602-e4d3863f",
+  "path": "data-analysis/1.9.0"
 }
