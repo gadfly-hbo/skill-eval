@@ -4,6 +4,7 @@
  *
  * 子命令：
  *   eval       执行对照评估（支持单模型或 --models 多模型矩阵）并生成报告
+ *   preflight  只读核验 Pi 完整本地目录中的精确模型身份
  *   check      静态校验套件质量（可选结合 --run 做实证灵敏度体检）
  *   report     从已有运行产物重新生成报告
  *   archive    归档通过测评的 skill 快照
@@ -101,6 +102,7 @@ import {
 
 import { freezeSkill } from "../core/provenance.ts";
 import { assertFreshRunRoot, saveRunManifest, loadRunManifest, frozenSkillPath, relativeSnapshotDir, EVALUATION_POLICY_VERSION, type RunManifest } from "../core/run-manifest.ts";
+import { preflightModels } from "../core/model-preflight.ts";
 
 interface CliArgs {
   command: string;
@@ -147,11 +149,32 @@ function flagNumber(flags: Record<string, string | boolean>, key: string): numbe
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/** eval 与只读预检共享选型优先级，不依赖交互式 Pi 的默认模型。 */
+function modelSelection(flags: Record<string, string | boolean>) {
+  for (const key of ["model", "models", "judge-model", "home"]) {
+    if (flags[key] !== undefined && (typeof flags[key] !== "string" || !String(flags[key]).trim())) {
+      throw new Error(`参数 --${key} 缺少非空值；不会回退到其他模型或配置`);
+    }
+  }
+  const modelsFlag = flagString(flags, "models");
+  const modelList = modelsFlag ? modelsFlag.split(",").map((model) => model.trim()).filter(Boolean) : [];
+  if (modelsFlag !== undefined && modelList.length === 0) throw new Error("参数 --models 必须包含模型");
+  const singleModel = flagString(flags, "model") ?? process.env.SKILL_EVAL_MODEL;
+  return {
+    modelList,
+    singleModel,
+    models: modelList.length ? modelList : singleModel ? [singleModel] : [],
+    judgeOverride: flagString(flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL,
+    piHome: flagString(flags, "home") ?? process.env.SKILL_EVAL_PI_HOME ?? undefined,
+  };
+}
+
 function printHelp(): void {
   process.stdout.write(`skill-eval — 独立评估 Agent Skill 的激活率与实际增益
 
 用法：
   skill-eval eval --suite <套件.json> --skill <SKILL.md> [选项]
+  skill-eval preflight --model <provider/model> [--judge-model <provider/model>] [--home <dir>]
   skill-eval check --suite <套件.json> [--run <运行目录>] [--strict]
   skill-eval report --run <运行目录> [--suite-file <套件.json>] [--llm-advice]
   skill-eval archive --run <运行目录> --skill <SKILL.md> [选项]
@@ -185,6 +208,11 @@ eval 选项：
   --allow-low-gain        允许归档断言增益未达标的评估（标记 lowGain=true）
   --gain-threshold <pp>   增益门槛（百分点，默认 ${GAIN_THRESHOLD_PP}）
 
+preflight 选项：
+  --model / --models     被评模型；选型与 eval 相同，要求精确 provider/model
+  --judge-model <id>      评委模型；未指定时使用环境变量或被评模型
+  --home <dir>            模型配置来源 HOME；只读核验合并目录，输出 JSON，不调用 Provider
+
 check 选项：
   --suite <path>          校验套件结构、正则合法性、恒真断言与负向断言覆盖
   --run <dir>             结合历史跑批结果诊断「白送断言」（baseline ≥ 80%）与零区分度用例
@@ -213,6 +241,8 @@ async function main(): Promise<number> {
   switch (args.command) {
     case "eval":
       return await commandEval(args);
+    case "preflight":
+      return await commandPreflight(args);
     case "check":
       return commandCheck(args);
     case "report":
@@ -237,6 +267,13 @@ async function main(): Promise<number> {
       printHelp();
       return 1;
   }
+}
+
+async function commandPreflight(args: CliArgs): Promise<number> {
+  const selection = modelSelection(args.flags);
+  const result = await preflightModels({ models: selection.models, judgeModel: selection.judgeOverride, home: selection.piHome });
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  return result.valid ? 0 : 1;
 }
 
 /** 收集 SKILL.md 与包内附属文档内容，供优化建议定位规则是在主文件、未读附属文件还是完全缺失。 */
@@ -519,11 +556,7 @@ async function commandEval(args: CliArgs): Promise<number> {
     return 1;
   }
 
-  const modelsFlag = flagString(args.flags, "models");
-  const modelList = modelsFlag
-    ? modelsFlag.split(",").map((m) => m.trim()).filter(Boolean)
-    : [];
-  const singleModel = flagString(args.flags, "model") ?? process.env.SKILL_EVAL_MODEL;
+  const { modelList, singleModel, models, judgeOverride, piHome } = modelSelection(args.flags);
 
   if (modelList.length === 0 && !singleModel) {
     process.stderr.write("缺少被评模型：用 --model 或 --models 指定，或设置 SKILL_EVAL_MODEL 环境变量\n");
@@ -536,9 +569,20 @@ async function commandEval(args: CliArgs): Promise<number> {
   const judgeTimeoutMs = flagNumber(args.flags, "judge-timeout");
   const keywordSignal = args.flags["no-keyword-signal"] !== true;
   const contextPrefix = flagString(args.flags, "context") ?? suite.contextPrefix;
-  const piHome = flagString(args.flags, "home") ?? process.env.SKILL_EVAL_PI_HOME ?? undefined;
   const gainThresholdPp = flagNumber(args.flags, "gain-threshold");
   const wantLlmAdvice = args.flags["llm-advice"] === true;
+
+  // Keep historical-output protection ahead of SDK discovery without creating a directory.
+  const requestedOut = flagString(args.flags, "out");
+  if (requestedOut && existsSync(resolve(requestedOut)) && readdirSync(resolve(requestedOut)).length > 0) {
+    throw new Error("运行目录非空，禁止覆盖历史评测记录；请使用新的 --out");
+  }
+  // 全部矩阵模型及评委先核验，缺失时不创建运行目录或启动任何模型会话。
+  const modelCheck = await preflightModels({ models, judgeModel: judgeOverride, home: piHome });
+  if (!modelCheck.valid) {
+    process.stderr.write(`模型预检未通过（未调用 Provider）：\n  ${modelCheck.errors.join("\n  ")}\n`);
+    return 1;
+  }
 
   // 多模型矩阵模式（--models m1,m2,...）
   if (modelList.length > 1) {
@@ -549,8 +593,6 @@ async function commandEval(args: CliArgs): Promise<number> {
     assertFreshRunRoot(matrixRoot);
 
     const cells: ModelMatrixCell[] = [];
-    const judgeOverride = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL;
-
     for (const m of modelList) {
       const safeName = m.replace(/[^a-zA-Z0-9._-]+/g, "_");
       const subOut = join(matrixRoot, safeName);
@@ -595,7 +637,7 @@ async function commandEval(args: CliArgs): Promise<number> {
 
   // 单模型标准模式
   const model = (modelList[0] ?? singleModel)!;
-  const judgeModel = flagString(args.flags, "judge-model") ?? process.env.SKILL_EVAL_JUDGE_MODEL ?? model;
+  const judgeModel = judgeOverride ?? model;
   const runId = newRunId();
   const outDir = flagString(args.flags, "out") ? resolve(flagString(args.flags, "out")!) : resolve("runs", runId);
 

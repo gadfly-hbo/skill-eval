@@ -59,6 +59,21 @@ npm run eval -- eval \
   --out runs/exp-001
 ```
 
+### 离线模型预检
+
+```bash
+npm run eval -- preflight \
+  --model minimax-cn/MiniMax-M3.1-Flash \
+  --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash \
+  --home ~/.skill-eval/pi-home
+```
+
+预检在禁止网络与文件写入的进程中复用 Pi SDK，将内置目录、动态缓存和 `models.json` 合并后，精确查询 `provider/id`。它不运行 pi CLI，不读取认证文件，不刷新鉴权或模型缓存，也不接受模糊匹配/备用型号。`eval` 在建立运行目录前执行同样的检查。
+
+`LOCAL_MODEL_IDENTITIES_CONFIRMED` 仅表示本地模型身份可解析，远端权限、模型修订、计费配额与真实调用授权仍未验证。端点摘要会移除 URL 凭证、查询串和片段，并以 `baseUrlRedacted` 标明；它不构成远端路由验证。
+
+本次内置目录漏检的修正与离线验证见 [模型预检更正记录](docs/模型预检更正-2026-11-06.md)；原冻结包及历史判定保留。
+
 ### pi 配置隔离
 
 pi CLI 会用 `~/.pi/agent/` 下的锁文件，且并发运行会争用。评估时建议用隔离 HOME：

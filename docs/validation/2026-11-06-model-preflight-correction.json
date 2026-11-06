@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-06",
+  "status": "LOCAL_CATALOG_BLOCKER_CLEARED_REAL_EXECUTION_HOLD",
+  "relation": "append-only-correction-outside-frozen-package",
+  "parentFreeze": {
+    "path": ".local/retest-data-analysis-1.9.0-20261106/frozen/FREEZE.json",
+    "sha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloads": 67,
+    "preserved": true,
+    "publicRecord": "docs/validation/2026-11-06-data-analysis-freeze.json",
+    "recordCommit": "8bfcb9faedb36b83a6c07e80725aeaa211ce7998"
+  },
+  "correction": {
+    "previousObservation": "models.json and models-store.json did not explicitly list the subject model",
+    "previousInference": "Exact subject model missing locally, blocking execution",
+    "correctedInference": "The installed SDK already contained the exact builtin. Complete native catalog merge resolves both selected models.",
+    "cause": "Preparation inventory scanned only two JSON files and omitted the SDK builtin catalog",
+    "oldFieldSubjectFoundInLocalConfiguration": false,
+    "newFieldSubjectFoundInMergedCatalog": true,
+    "supersedesOnly": "Local model definition absence as an execution blocker; old observations and entire frozen receipt remain unchanged"
+  },
+  "sourceIdentity": {
+    "baseCommit": "8bfcb9faedb36b83a6c07e80725aeaa211ce7998",
+    "currentWorktreeChanges": [
+      {
+        "path": "README.md",
+        "sha256": "beb4305ca672dbfb8eae225edcd77d703467912db4b8ac75121e4784b7f9f15f"
+      },
+      {
+        "path": "skills/skill-eval-flow/scripts/preflight.sh",
+        "sha256": "af21a2e79f155e6bc72d034ded396313cb08e333b1b30487b58ce89571f23596"
+      },
+      {
+        "path": "src/cli/main.ts",
+        "sha256": "df6ddc759dd33d0ac919a3268c41fda23336339b63d69bcf9dd319d94cc5569c"
+      },
+      {
+        "path": "src/cli/preflight.test.ts",
+        "sha256": "3c1db1faf17f5737486c9dbcec39369d302e6c92e0938bf6b040bb7ddd07d099"
+      },
+      {
+        "path": "src/core/model-preflight.ts",
+        "sha256": "b36ad2d7470c97980d1fb74d4201533bd4784671c3fd406a93f2274cc80b50ca"
+      },
+      {
+        "path": "src/core/model-preflight-worker.ts",
+        "sha256": "ab0d1530cfd99b9a583fe11eab40ddf6fef0b5c60707aab7e9a66d1e18303d80"
+      },
+      {
+        "path": "src/core/model-preflight.test.ts",
+        "sha256": "df62cd4966d36ce11f9176dde619f22054a20d85dd1994de31d24849f0b5c4e4"
+      }
+    ],
+    "originalEvaluatorManifestRewritten": false
+  },
+  "implementation": {
+    "entry": "skill-eval preflight",
+    "core": "src/core/model-preflight.ts",
+    "worker": "src/core/model-preflight-worker.ts",
+    "catalogComposition": "Pi ModelRuntime + provider refreshModels in memory",
+    "exactLookup": "Pi getModel(provider,id), then strict provider/id equality; no CLI fallback",
+    "sideEffectBoundary": [
+      "macOS sandbox denies network and all file writes",
+      "Source/global auth.json read denied",
+      "Empty credential/store implementations throw on access",
+      "No runtime.refresh/getAvailable/checkAuth or pi CLI invocation"
+    ],
+    "urlSummary": "userinfo/query/fragment omitted and baseUrlRedacted explicitly records redaction",
+    "evalBeforeRunDirectoryAndProvider": true,
+    "flowFailureClosed": true
+  },
+  "resolution": [
+    {
+      "profile": "global",
+      "valid": true,
+      "status": "LOCAL_MODEL_IDENTITIES_CONFIRMED",
+      "models": [
+        {
+          "role": "subject",
+          "requested": "minimax-cn/MiniMax-M3.1-Flash",
+          "model": {
+            "provider": "minimax-cn",
+            "id": "MiniMax-M3.1-Flash",
+            "api": "anthropic-messages",
+            "baseUrl": "https://api.minimaxi.com/anthropic",
+            "baseUrlRedacted": false,
+            "contextWindow": 1000000,
+            "maxTokens": 524288,
+            "reasoning": true
+          },
+          "error": null
+        },
+        {
+          "role": "judge",
+          "requested": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+          "model": {
+            "provider": "xiaomi-token-plan-cn",
+            "id": "mimo-v2.6-flash",
+            "api": "openai-completions",
+            "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+            "baseUrlRedacted": false,
+            "contextWindow": 1048576,
+            "maxTokens": 131072,
+            "reasoning": true
+          },
+          "error": null
+        }
+      ]
+    },
+    {
+      "profile": "isolated",
+      "valid": true,
+      "status": "LOCAL_MODEL_IDENTITIES_CONFIRMED",
+      "models": [
+        {
+          "role": "subject",
+          "requested": "minimax-cn/MiniMax-M3.1-Flash",
+          "model": {
+            "provider": "minimax-cn",
+            "id": "MiniMax-M3.1-Flash",
+            "api": "anthropic-messages",
+            "baseUrl": "https://api.minimaxi.com/anthropic",
+            "baseUrlRedacted": false,
+            "contextWindow": 1000000,
+            "maxTokens": 524288,
+            "reasoning": true
+          },
+          "error": null
+        },
+        {
+          "role": "judge",
+          "requested": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+          "model": {
+            "provider": "xiaomi-token-plan-cn",
+            "id": "mimo-v2.6-flash",
+            "api": "openai-completions",
+            "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+            "baseUrlRedacted": false,
+            "contextWindow": 1048576,
+            "maxTokens": 131072,
+            "reasoning": true
+          },
+          "error": null
+        }
+      ]
+    }
+  ],
+  "sdk": {
+    "package": "@earendil-works/pi-coding-agent",
+    "version": "1.4.0",
+    "frozenFileIdentityChecks": [
+      {
+        "path": "node_modules/@earendil-works/pi-ai/dist/providers/data/minimax-cn.json",
+        "sha256": "fa15d1f67a07046d38e191af9bd97ed922ba45a99a11af4ad281151cc6b762aa",
+        "matchedOriginalFrozenInventory": true
+      },
+      {
+        "path": "dist/bundle/cli.js",
+        "sha256": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+        "matchedOriginalFrozenInventory": true
+      },
+      {
+        "path": "dist/core/model-runtime.js",
+        "sha256": "44d8017928eff6721d5a56b4e71f98bcafb124f5aa6e7d3f016491e11fcf6461",
+        "matchedOriginalFrozenInventory": true
+      },
+      {
+        "path": "dist/core/provider-composer.js",
+        "sha256": "7ec4af06726158fa34377bed34fbb378d2d39c5c9d51ae5640ac459a4c78bec4",
+        "matchedOriginalFrozenInventory": true
+      },
+      {
+        "path": "dist/core/remote-catalog-provider.js",
+        "sha256": "17e8f3482422aed20ba638b99a8862405f7d3be51c4ffc9eb7ffff1b030a421b",
+        "matchedOriginalFrozenInventory": true
+      }
+    ]
+  },
+  "validation": {
+    "typecheck": "PASS",
+    "tests": {
+      "passed": 378,
+      "failed": 0,
+      "skipped": 0,
+      "newCore": 11,
+      "newCliAndFlow": 8
+    },
+    "shellSyntax": "PASS",
+    "diffWhitespace": "PASS",
+    "exactMissingModelRejected": true,
+    "independentReadOnlyReview": {
+      "reviewer": "/root/preflight_safety_review",
+      "result": "No blocking findings",
+      "testsRunByReviewer": false
+    },
+    "firstFullCheck": {
+      "passed": 376,
+      "failed": 1,
+      "total": 377,
+      "retained": true,
+      "reason": "Existing nonempty-run-directory guard must precede model catalog errors; fixed without changing old assertions"
+    },
+    "logs": {
+      "finalCheckSha256": "c5fd2d00b5d8a2adaec14cf318d878c7ec822417b31bdae6fab32c37488c2a7d",
+      "initialCheckSha256": "dbc6e16cc5dec160204991292fac2fd7aee798fe44de2cafdf38a46cd2d4e054",
+      "missingFlagRedSha256": "d46920fc8da15b28c8eb63caba947fb000d9ebb8a2950398b0b6df7a07fecf9a"
+    },
+    "preservation": {
+      "status": "PASS",
+      "protectedFiles": 777,
+      "unchangedFiles": 777,
+      "changes": [],
+      "originalFreezeSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+      "providerCalls": "NOT_RUN"
+    }
+  },
+  "providerCalls": "NOT_RUN",
+  "remoteAvailability": "NOT_RUN",
+  "authValidity": "UNKNOWN",
+  "billing": "UNKNOWN",
+  "executionAuthorized": false,
+  "executionReady": false,
+  "modelReplacement": false,
+  "remainingHold": [
+    "Explicit real-call authorization absent",
+    "Remote model revision/permission and effective parameters unverified",
+    "Account billing/quota and accepted budget controls unverified"
+  ],
+  "privateTruthAndHiddenAssertionsPublished": false,
+  "commitOrPush": "NOT_RUN"
+}
