@@ -12,6 +12,7 @@ interface WorkerConfig {
   sessionId: string;
   prompt: string;
   model: string;
+  role: "subject" | "judge";
   skillPaths: string[];
   maxOutputTokens: number;
   contextWindow: number;
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
   const config = JSON.parse(readFileSync(0, "utf8")) as WorkerConfig;
   if (!config || !Number.isSafeInteger(config.maxOutputTokens) || config.maxOutputTokens < 1 ||
       !Number.isSafeInteger(config.contextWindow) || config.contextWindow < 1 ||
+      (config.role !== "subject" && config.role !== "judge") ||
       typeof config.model !== "string" || !config.model.includes("/") || !Array.isArray(config.skillPaths) ||
       typeof config.sessionId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(config.sessionId)) {
     throw new Error("WORKER_CONFIG_INVALID");
@@ -131,6 +133,7 @@ async function main(): Promise<void> {
       ? { api: "openai-completions", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" }
       : undefined;
   if (!allowed) throw new Error("WORKER_MODEL_INVALID");
+  const parseJudgeJson = config.role === "judge" ? (await import("./judge-json.mts")).parseJudgeJson : undefined;
   // Apple's /usr/bin/python3 shim otherwise writes xcrun_db outside the sandbox
   // and mixes denied-cache warnings into the native bash tool's combined output.
   process.env.xcrun_db = join(config.workspaceRoot, ".xcrun_db");
@@ -199,7 +202,22 @@ async function main(): Promise<void> {
       if (message.provider !== provider || message.model !== id || (message.responseModel && message.responseModel !== id)) stop("WORKER_RESPONSE_MODEL_CHANGED");
     }
   });
-  try { await session.prompt(config.prompt); }
+  const assistantText = (): string => (finalAssistant?.content ?? [])
+    .filter((block: { type: string }) => block.type === "text")
+    .map((block: { text: string }) => block.text).join("\n").trim();
+  try {
+    await session.prompt(config.prompt);
+    if (!stopped && parseJudgeJson && finalAssistant?.stopReason === "stop") {
+      let invalidJson = false;
+      try { parseJudgeJson(assistantText()); }
+      catch { invalidJson = true; }
+      if (invalidJson) {
+        emit({ type: "judge_json_repair_requested" });
+        finalAssistant = undefined;
+        await session.prompt("上一条评委答复无法解析为 JSON。请保留同一份 A/B 展示顺序、原判定、分数、置信度和理由，重新输出为一个合法 JSON 对象。正确转义字符串中的引号和反斜杠。只输出该对象。");
+      }
+    }
+  }
   catch {
     process.exitCode = 1;
     emit({ type: "native_session_failed", stopReason: "error" });
@@ -207,9 +225,10 @@ async function main(): Promise<void> {
   }
   // Only evaluate the terminal result after the SDK has completed its own
   // retry/compaction/recovery path; intermediate errors remain raw events.
-  if (!finalAssistant || finalAssistant.stopReason !== "stop") {
+  const stopReason = finalAssistant?.stopReason ?? "missing";
+  if (stopReason !== "stop" || parseJudgeJson && !assistantText()) {
     process.exitCode = 1;
-    emit({ type: "native_session_failed", stopReason: finalAssistant?.stopReason ?? "missing" });
+    emit({ type: "native_session_failed", stopReason: stopReason === "stop" ? "empty" : stopReason });
   }
 }
 

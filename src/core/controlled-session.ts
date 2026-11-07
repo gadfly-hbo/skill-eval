@@ -252,6 +252,10 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
     // .mts carries ESM identity itself; Node need not read the repository package.json.
     const workerCopy = join(options.workspaceRoot, ".controlled-worker.mts");
     writeFileSync(workerCopy, readFileSync(worker), { flag: "wx", mode: 0o400 });
+    if (options.role === "judge") {
+      const judgeDecoder = new URL("./judge-json.mts", import.meta.url);
+      writeFileSync(join(options.workspaceRoot, "judge-json.mts"), readFileSync(judgeDecoder), { flag: "wx", mode: 0o400 });
+    }
     const command = buildSandboxCommand({ command: runtime.command, args: ["--experimental-strip-types", workerCopy], workspaceRoot: options.workspaceRoot, readOnlyRoots: [...runtime.readOnlyRoots, ...options.skillPaths.map(dirname)] });
     command.args[1] += "\n(deny network*)";
     isolation = { ...verifySandboxCommand(command, options.workspaceRoot), backend: "macos-sandbox-exec-network-denied" };
@@ -322,7 +326,7 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
         }
         finish(code);
       });
-      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.budget.getModelLimits(options.role).maxOutputTokens, contextWindow: options.budget.getModelLimits(options.role).contextWindow }));
+      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, role: options.role, skillPaths: options.skillPaths, maxOutputTokens: options.budget.getModelLimits(options.role).maxOutputTokens, contextWindow: options.budget.getModelLimits(options.role).contextWindow }));
     });
     // Native SDK background work may still be aborting when the worker closes.
     // Finish its observed accounting before the matrix can open another sample.
