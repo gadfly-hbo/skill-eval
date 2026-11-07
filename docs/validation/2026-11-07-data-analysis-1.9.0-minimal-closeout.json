@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "timezone": "Asia/Shanghai",
+  "status": "MINIMAL_REAL_COMPLETE_MAIN_STOPPED_BY_USER",
+  "sourceCommit": "9f9ac1450cc5139b8c20f04401a4e8b4559ce4ca",
+  "baseEvaluatorVersion": "0.3.2",
+  "policyVersion": "paired-task-v2",
+  "sdkVersion": "1.4.0",
+  "models": {
+    "subject": "minimax-cn/MiniMax-M3.1-Flash",
+    "judge": "xiaomi-token-plan-cn/mimo-v2.6-flash"
+  },
+  "nativeLimits": {
+    "subject": {
+      "contextWindow": 1000000,
+      "maxOutputTokens": 524288
+    },
+    "judge": {
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072
+    }
+  },
+  "budgetCapNanoUsd": null,
+  "freeze": {
+    "sha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "payloads": 67,
+    "originalCandidateHash": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc"
+  },
+  "offline": {
+    "typecheck": "PASS",
+    "passed": 504,
+    "failed": 0,
+    "skipped": 0,
+    "realProviderCalls": 0
+  },
+  "fullPlan": {
+    "plannedSessions": 520,
+    "scoredTasks": 60,
+    "falseTriggerTasks": 4,
+    "positiveTasks": 2,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "positive": {
+      "status": "PASS",
+      "sessionsSucceeded": 8,
+      "contentPassed": 2,
+      "bareJsonPassed": 2
+    },
+    "original": {
+      "status": "USER_STOPPED",
+      "stoppedAt": "2026-11-07T06:51:28.088414+00:00",
+      "matrixAtStop": {
+        "subject": {
+          "NOT_RUN": 0,
+          "RUNNING": 0,
+          "SUCCESS": 127,
+          "FAILED": 1
+        },
+        "judge": {
+          "NOT_RUN": 41,
+          "RUNNING": 1,
+          "SUCCESS": 86,
+          "FAILED": 0
+        }
+      },
+      "interruptedJudge": 1,
+      "terminalSummaryPresent": false,
+      "workerCopiesMatchingSource": 215
+    },
+    "ablation": {
+      "status": "NOT_RUN_BY_USER",
+      "plannedSessions": 256
+    },
+    "candidateVerdict": null,
+    "negativeControlVerdict": null
+  },
+  "minimal": {
+    "status": "SUCCESS",
+    "runId": "run-20261107-065242-82c6d9b8",
+    "runDirectory": "da190-minimal-20261107T065242Z-297ae3",
+    "suiteHash": "sha256:5e8e6b1864704dc5",
+    "plannedSessions": 3,
+    "successfulSessions": 3,
+    "tasks": 1,
+    "repeat": 1,
+    "judgeRepeat": 1,
+    "timeoutsMs": {
+      "subject": 90000,
+      "judge": 120000
+    },
+    "elapsedSec": 17.405,
+    "sides": [
+      {
+        "side": "baseline",
+        "status": "success",
+        "activated": false,
+        "contentPassed": true,
+        "formatPassed": false,
+        "assertions": {
+          "passed": 1,
+          "total": 1
+        },
+        "elapsedSec": 2.947
+      },
+      {
+        "side": "skill",
+        "status": "success",
+        "activated": true,
+        "contentPassed": true,
+        "formatPassed": true,
+        "assertions": {
+          "passed": 1,
+          "total": 1
+        },
+        "elapsedSec": 9.09
+      }
+    ],
+    "singleJudgeVerdict": "win",
+    "jsonCorrectionTriggers": 0,
+    "usageByRole": {
+      "subject": {
+        "reportedRequests": 6,
+        "tokens": {
+          "input": 6734,
+          "output": 924,
+          "cacheRead": 15530,
+          "cacheWrite": 0
+        }
+      },
+      "judge": {
+        "reportedRequests": 1,
+        "tokens": {
+          "input": 1162,
+          "output": 151,
+          "cacheRead": 1024,
+          "cacheWrite": 0
+        }
+      }
+    },
+    "wireUsageMatches": 7,
+    "eventJournalsMatched": 3,
+    "ledgerExactReplay": true,
+    "workerCopiesMatchingSource": 3,
+    "authorGate": {
+      "passed": 0,
+      "failed": 2,
+      "callErrors": 0
+    },
+    "candidateEfficacyConclusion": null
+  },
+  "accounting": {
+    "attempts": [
+      {
+        "stage": "初次阳性",
+        "runId": "da190-json-recovery-20261107T032839Z-8c8ff7-positive",
+        "requests": 39,
+        "knownEquivalentNanoUsd": 33079340,
+        "unknownRequests": 0,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "修订后阳性",
+        "runId": "da190-json-recovery-20261107T033954Z-defb3d-positive",
+        "requests": 37,
+        "knownEquivalentNanoUsd": 28477120,
+        "unknownRequests": 0,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "源码漂移原版",
+        "runId": "da190-json-recovery-20261107T033954Z-defb3d-original",
+        "requests": 1036,
+        "knownEquivalentNanoUsd": 1281817050,
+        "unknownRequests": 17,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "只读工作区阳性",
+        "runId": "da190-json-recovery-20261107T044945Z-ef2999-positive",
+        "requests": 38,
+        "knownEquivalentNanoUsd": 28869380,
+        "unknownRequests": 0,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "最终阳性",
+        "runId": "da190-json-recovery-20261107T050919Z-cb9105-positive",
+        "requests": 34,
+        "knownEquivalentNanoUsd": 24228850,
+        "unknownRequests": 0,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "清理误停原版",
+        "runId": "da190-json-recovery-20261107T044945Z-ef2999-original",
+        "requests": 5,
+        "knownEquivalentNanoUsd": 1013400,
+        "unknownRequests": 3,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "用户停止原版",
+        "runId": "da190-json-recovery-20261107T050919Z-cb9105-original",
+        "requests": 1207,
+        "knownEquivalentNanoUsd": 1618945510,
+        "unknownRequests": 27,
+        "pendingRequests": 0
+      },
+      {
+        "stage": "极简真实测试",
+        "runId": "run-20261107-065242-82c6d9b8",
+        "requests": 7,
+        "knownEquivalentNanoUsd": 4242320,
+        "unknownRequests": 0,
+        "pendingRequests": 0
+      }
+    ],
+    "totalRequests": 2403,
+    "knownEquivalentNanoUsd": 3020672970,
+    "unknownRequests": 47,
+    "pendingRequests": 0,
+    "cashInvoice": "UNKNOWN"
+  },
+  "retention": {
+    "protectedHistoricalFilesUnchanged": 13752,
+    "evaluatorSourceFilesUnchanged": 102,
+    "originalFrozenPayloadsUnchanged": 67,
+    "sdkInventoryEntriesUnchanged": 15138,
+    "ablationStarted": false
+  },
+  "evidenceSha256": {
+    "sourcePlan": "b61efbed28663165a208436f9015331d8c7fe5dad8caac77967bc49cfe71443f",
+    "offlineLog": "234d121c52e1422dbd2028f91e6f0e7910fe6615e673f3c93d27fe36c0afead3",
+    "scopeStop": "194f9cff2ead75a003b870514814ba67123345e5b6beeff648f132f619089b5e",
+    "scopeDefer": "b53e4e4feb90bcc613141b0578efc2318fa9948a810ae97ce7bbe0d8674713b1",
+    "stoppedMainAudit": "b77c1a26efc90a7d0fc4dc56686bccf19779fece787e5558753ecc9b01a346b1",
+    "positiveGate": "dfaf88b67d8b498a8ce1787fd85465e9a715383277015a31b03fda95fa631d5f",
+    "minimalPlan": "6216196b305877ebfac8f3a88029e97df4a5b655f1da611b73daf76c8093bf10",
+    "minimalSummary": "a9f52883816b0fe8adad1326a5d1fa16518ba50771b1e0fe1a4a5c31128dcf48",
+    "minimalManifest": "f261d47df11276e3ba51c48d3791ca0e3ae32982a18f5f946f6342ddd32dfe03",
+    "minimalAudit": "7cba396c586eca1a8ed4d87df5983095fdf94704b4e4559b706ecf1defa309ea",
+    "minimalFacts": "4b9782f73c3820f62e3965ede9daa919d073337bace4a63455c281f4d4ef4059",
+    "preservation": "2ae2a8ac83224f3eb02207db37cd94bc3e075f6901e647d4fe05f62bc6f8d316",
+    "initialHold": "e90a47a4e084d16828b87d9ed0c091ef5c0964d51e2f8a9f016eeb9545201c0e",
+    "sourceDrift": "66237835748e35db3100ebb86bc205d63b00f535a3a326846ac8b60a6f0866c7",
+    "timeoutCleanup": "3ac368f8ff1eed0e9fd23a3edb539f66990e6df3949684af6a43db01d0c72ea2"
+  }
+}

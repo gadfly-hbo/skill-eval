@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { PiRunResult } from "./pi.ts";
 import type { EvaluationExecution } from "./execution.ts";
+import { parseJudgeJson } from "./judge-json.mts";
 
 export type Verdict = "win" | "tie" | "loss" | "not_judged";
 
@@ -233,11 +234,8 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
 
 /** 解析评委输出。JSON 解析失败视为评委失败，而非判定为 tie。 */
 export function parseJudgeResponse(text: string, options: JudgeOptions): JudgeResult {
-  const cleaned = text.replace(/```json|```/g, "").trim();
-  const candidate = extractJsonObject(cleaned);
-
   try {
-    const parsed = JSON.parse(candidate) as {
+    const parsed = parseJudgeJson(text) as {
       verdict?: unknown;
       scoreA?: unknown;
       scoreB?: unknown;
@@ -273,14 +271,6 @@ export function parseJudgeResponse(text: string, options: JudgeOptions): JudgeRe
       error: text.slice(0, 500),
     };
   }
-}
-
-function extractJsonObject(text: string): string {
-  if (text.startsWith("{") && text.endsWith("}")) return text;
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) return text.slice(start, end + 1);
-  return text;
 }
 
 /**

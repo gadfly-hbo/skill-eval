@@ -55,7 +55,7 @@ function responseBody(model: string, fixture: Fixture, resourcePath?: string): s
     return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
   }
   const chunks = [
-    { id: "offline-fixture", object: "chat.completion.chunk", created: 1, model: id, choices: [{ index: 0, delta: { role: "assistant", content: "OFFLINE FIXTURE" }, finish_reason: null }] },
+    { id: "offline-fixture", object: "chat.completion.chunk", created: 1, model: id, choices: [{ index: 0, delta: { role: "assistant", content: '{"verdict":"tie","scoreA":80,"scoreB":80,"confidence":0.8,"reason":"Offline fixture"}' }, finish_reason: null }] },
     { id: "offline-fixture", object: "chat.completion.chunk", created: 1, model: id, choices: [{ index: 0, delta: {}, finish_reason: fixture === "length" ? "length" : "stop" }] },
     { id: "offline-fixture", object: "chat.completion.chunk", created: 1, model: id, choices: [], usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 } },
   ];
@@ -74,6 +74,8 @@ async function runFixture(model: string, fixture: Fixture, changes: { maxOutputT
   const worker = join(root, "controlled-worker.mts");
   // A standalone .mts needs no permission to read the repository package.json.
   copyFileSync(fileURLToPath(new URL("./controlled-worker.ts", import.meta.url)), worker);
+  const role = model === judge ? "judge" : "subject";
+  if (role === "judge") copyFileSync(fileURLToPath(new URL("./judge-json.mts", import.meta.url)), join(root, "judge-json.mts"));
   const configDir = join(root, ".pi", "agent");
   mkdirSync(configDir, { recursive: true });
   if (changes.model) {
@@ -108,7 +110,7 @@ async function runFixture(model: string, fixture: Fixture, changes: { maxOutputT
       child.send({ type: "response", requestId: request.requestId, status: 200, headers: { "content-type": "text/event-stream" }, body: responseBody(model, ["tool-error", "bash-error", "write-error", "edit-error", "python", "read-skill", "outside-read"].includes(fixture) && requests.length > 1 ? "normal" : fixture, fixture === "read-skill" ? skillPath : ["outside-read", "write-error", "edit-error"].includes(fixture) ? privatePath : undefined) });
     }
   });
-  child.stdin!.end(JSON.stringify({ sdkRoot: runtime!.readOnlyRoots[0], workspaceRoot: root, home: root, sessionId: "offline-fixture-session", prompt: fixture === "length" ? "Historical offline context. ".repeat(5000) : "Reply to this offline fixture.", model, skillPaths: changes.skill ? [skillPath] : [], contextWindow: model === subject ? 1_000_000 : 1_048_576, maxOutputTokens: changes.maxOutputTokens ?? (model === subject ? 524288 : 131072) }));
+  child.stdin!.end(JSON.stringify({ sdkRoot: runtime!.readOnlyRoots[0], workspaceRoot: root, home: root, sessionId: "offline-fixture-session", prompt: fixture === "length" ? "Historical offline context. ".repeat(5000) : "Reply to this offline fixture.", model, role, skillPaths: changes.skill ? [skillPath] : [], contextWindow: model === subject ? 1_000_000 : 1_048_576, maxOutputTokens: changes.maxOutputTokens ?? (model === subject ? 524288 : 131072) }));
   const timeout = setTimeout(() => child.kill("SIGKILL"), 20_000);
   try {
     const code = await new Promise<number | null>((resolve, reject) => {

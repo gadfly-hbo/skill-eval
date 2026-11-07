@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { ControlledBudget } from "./controlled-budget.ts";
 import { resolvePiRuntime } from "./isolation.ts";
 import { dispatchControlledRequest, parseProviderUsage, simulateControlledSession } from "./controlled-session.ts";
+import { parseJudgeResponse } from "./judge.ts";
 
 // Parent-side test guard: every HTTP response must come from an explicit fixture.
 globalThis.fetch = async () => { throw new Error("REAL_PROVIDER_FORBIDDEN_IN_OFFLINE_TEST"); };
@@ -189,6 +190,76 @@ test("an explicit timeout fails only its sample and preserves any unknown dispat
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+for (const response of ["response", "response-error"] as const) test(`timeout cleanup preserves a ${response} IPC failure without stopping the batch`, { skip: !nativeAvailable, timeout: 15_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-timeout-ipc-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new ControlledBudget();
+  const originalSpawn = childProcess.spawn;
+  let injected = 0;
+  t.mock.method(childProcess, "spawn", (...args: unknown[]) => {
+    const child = Reflect.apply(originalSpawn, childProcess, args) as ReturnType<typeof childProcess.spawn>;
+    const originalSend = child.send;
+    t.mock.method(child, "send", (...sendArgs: unknown[]) => {
+      const message = sendArgs[0] as { type?: string };
+      if (message.type === response) {
+        injected++;
+        const callback = sendArgs[1] as (error: Error) => void;
+        queueMicrotask(() => callback(new Error("OFFLINE_CLOSED_IPC_AFTER_TIMEOUT")));
+        return false;
+      }
+      return Reflect.apply(originalSend, child, sendArgs);
+    });
+    return child;
+  });
+  syncBuiltinESMExports();
+  try {
+    const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: `offline-timeout-ipc-${response}`, prompt: "Offline timeout cleanup fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 3000 }, async (_url, init) => {
+      await new Promise<void>(resolve => init?.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      if (response === "response-error") throw new Error("OFFLINE_ABORT");
+      return new Response(nativeResponse("Late original response"), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(injected, 1, "the closed-channel callback must be observed during timeout cleanup");
+    assert.equal(run.timedOut, true);
+    assert.equal(run.stderr, "SESSION_TIMEOUT");
+    assert.equal(run.failureEvidence.firstCause?.code, "SESSION_TIMEOUT");
+    assert.equal(budget.snapshot().state, "open");
+    assert(run.failureEvidence.secondary.some(cause => cause.code === "WORKER_IPC_CLOSED_DURING_CLEANUP"));
+    assert.equal(budget.snapshot().sessions[0]?.state, "failed");
+    budget.beginSession("next-independent-sample", "subject", subject);
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an active native session IPC failure still stops the batch", { skip: !nativeAvailable, timeout: 15_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-active-ipc-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new ControlledBudget();
+  const originalSpawn = childProcess.spawn;
+  let injected = 0;
+  t.mock.method(childProcess, "spawn", (...args: unknown[]) => {
+    const child = Reflect.apply(originalSpawn, childProcess, args) as ReturnType<typeof childProcess.spawn>;
+    t.mock.method(child, "send", (_message: unknown, callback: (error: Error) => void) => {
+      injected++;
+      queueMicrotask(() => callback(new Error("OFFLINE_ACTIVE_IPC_FAILURE")));
+      return false;
+    });
+    return child;
+  });
+  syncBuiltinESMExports();
+  try {
+    const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-active-ipc", prompt: "Offline active IPC fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => new Response(nativeResponse("Original response"), { headers: { "content-type": "text/event-stream" } }));
+    assert.equal(injected, 1);
+    assert.equal(run.timedOut, false);
+    assert.equal(run.failureEvidence.firstCause?.code, "WORKER_IPC_FAILURE");
+    assert.equal(budget.snapshot().state, "stopped");
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("native parent stops and cleans the worker even when ledger persistence fails after HTTP", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "controlled-parent-persistence-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
@@ -219,6 +290,14 @@ function nativeResponse(content: string, tool?: { id: string; name: string; inpu
   ].map(data => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 }
 
+function nativeJudgeResponse(output: string): string {
+  return [
+    { model: "mimo-v2.6-flash", choices: [{ index: 0, delta: { role: "assistant", content: output }, finish_reason: null }] },
+    { model: "mimo-v2.6-flash", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+    { model: "mimo-v2.6-flash", choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } },
+  ].map(data => `data: ${JSON.stringify(data)}\n\n`).join("") + "data: [DONE]\n\n";
+}
+
 test("native sessions retain thinking and request their model-native maximum output", { skip: !nativeAvailable, timeout: 20_000 }, async () => {
   for (const spec of [
     { role: "judge" as const, model: judge, thinking: "enabled", cap: 131072 },
@@ -229,15 +308,10 @@ test("native sessions retain thinking and request their model-native maximum out
     const budget = new ControlledBudget(); let calls = 0;
     let payload: { model: string; thinking?: { type?: string }; max_tokens?: number; max_completion_tokens?: number } | undefined;
     const output = '{"verdict":"tie","scoreA":80,"scoreB":80,"confidence":0.8,"reason":"Same fixture quality."}';
-    const judgeResponse = [
-      { model: "mimo-v2.6-flash", choices: [{ index: 0, delta: { role: "assistant", content: output }, finish_reason: null }] },
-      { model: "mimo-v2.6-flash", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
-      { model: "mimo-v2.6-flash", choices: [], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } },
-    ].map(data => `data: ${JSON.stringify(data)}\n\n`).join("") + "data: [DONE]\n\n";
     try {
       const result = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: `offline-thinking-${spec.role}`, prompt: "Return the fixture comparison result.", model: spec.model, role: spec.role, skillPaths: [], budget, timeoutMs: 10_000 }, async (_url, init) => {
         calls++; payload = JSON.parse(String(init?.body));
-        return new Response(spec.role === "judge" ? judgeResponse : nativeResponse(output), { headers: { "content-type": "text/event-stream" } });
+        return new Response(spec.role === "judge" ? nativeJudgeResponse(output) : nativeResponse(output), { headers: { "content-type": "text/event-stream" } });
       });
       assert.equal(calls, 1);
       assert.equal(result.exitCode, 0);
@@ -249,6 +323,34 @@ test("native sessions retain thinking and request their model-native maximum out
       assert.equal(budget.snapshot().requests[0]?.state, "settled");
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
+});
+
+for (const outcome of ["corrected", "invalid", "empty"] as const) test(`native judge keeps one session and both replies when JSON correction is ${outcome}`, { skip: !nativeAvailable, timeout: 20_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-judge-json-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const invalid = '{"verdict":"win","scoreA":45,"scoreB":95,"confidence":0.9,"reason":"B included "required-field"."}';
+  const fixed = JSON.stringify({ verdict: "win", scoreA: 45, scoreB: 95, confidence: 0.9, reason: 'B included "required-field".' });
+  const final = outcome === "corrected" ? fixed : outcome === "empty" ? "" : invalid;
+  const payloads: Array<{ messages: Array<{ role: string; content: unknown }> }> = [];
+  const budget = new ControlledBudget();
+  try {
+    const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "judge-json-fixture", prompt: "Compare anonymous A and B.", model: judge, role: "judge", skillPaths: [], budget }, async (_url, init) => {
+      payloads.push(JSON.parse(String(init?.body)));
+      return new Response(nativeJudgeResponse(payloads.length === 1 ? invalid : final), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(payloads.length, 2);
+    assert(payloads[1]!.messages.some(message => message.role === "assistant" && (typeof message.content === "string" ? message.content === invalid : JSON.stringify(message.content).includes(JSON.stringify(invalid)))));
+    assert(payloads[1]!.messages.some(message => message.role === "user" && JSON.stringify(message.content).includes("Compare anonymous A and B.")));
+    const journal = readFileSync(join(root, "events.partial.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(journal, run.events);
+    assert.equal(journal.filter(event => event.type === "judge_json_repair_requested").length, 1);
+    assert.equal(run.exitCode, outcome === "empty" ? 1 : 0);
+    assert.equal(run.metrics.output, final || invalid);
+    assert.equal(parseJudgeResponse(run.metrics.output, { judgeDir: root, task: "", outputA: "", outputB: "", runId: "judge-json-fixture" }).verdict, outcome === "corrected" ? "win" : "not_judged");
+    assert.equal(budget.snapshot().sessions.length, 1);
+    assert.deepEqual(budget.snapshot().requests.map(request => request.usageStatus), ["reported", "reported"]);
+    assert.equal(budget.snapshot().state, "open");
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 for (const { deltaCount, text } of [{ deltaCount: 128, text: "" }, { deltaCount: 10_001, text: "" }, { deltaCount: 1024, text: "汉字" }]) test(`native event journal keeps ${deltaCount} ${text ? "growing CJK" : "empty"} streamed records with linear filesystem bytes`, { skip: !nativeAvailable, timeout: 20_000 }, async (t) => {

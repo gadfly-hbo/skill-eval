@@ -252,6 +252,10 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
     // .mts carries ESM identity itself; Node need not read the repository package.json.
     const workerCopy = join(options.workspaceRoot, ".controlled-worker.mts");
     writeFileSync(workerCopy, readFileSync(worker), { flag: "wx", mode: 0o400 });
+    if (options.role === "judge") {
+      const judgeDecoder = new URL("./judge-json.mts", import.meta.url);
+      writeFileSync(join(options.workspaceRoot, "judge-json.mts"), readFileSync(judgeDecoder), { flag: "wx", mode: 0o400 });
+    }
     const command = buildSandboxCommand({ command: runtime.command, args: ["--experimental-strip-types", workerCopy], workspaceRoot: options.workspaceRoot, readOnlyRoots: [...runtime.readOnlyRoots, ...options.skillPaths.map(dirname)] });
     command.args[1] += "\n(deny network*)";
     isolation = { ...verifySandboxCommand(command, options.workspaceRoot), backend: "macos-sandbox-exec-network-denied" };
@@ -275,6 +279,11 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
         if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ } }
         killing ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 1000);
       }, options.timeoutMs);
+      const onSendError = (error: Error | null) => {
+        if (!error || done) return;
+        if (timedOut) recordFailure("WORKER_IPC_CLOSED_DURING_CLEANUP", "worker_error");
+        else stop("WORKER_IPC_FAILURE");
+      };
       child.on("message", (value) => {
         const msg = value as { type?: string } & ControlledRequest;
         if (msg.type !== "request") { stop("INVALID_WORKER_IPC"); return; }
@@ -282,11 +291,11 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
           onRequest: request => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.request.json`), JSON.stringify({ url: request.url, body: request.body }), { flag: "wx", mode: 0o600 }),
           onWire: (request, response) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.json`), JSON.stringify({ request: { url: request.url, body: request.body }, response }), { flag: "wx", mode: 0o600 }),
           onChunk: (request, chunk) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.partial.sse`), chunk, { flag: "a", mode: 0o600 }),
-        }).then((response) => { if (child.connected) child.send({ type: "response", requestId: msg.requestId, ...response }, (error) => { if (error && !done) stop("WORKER_IPC_FAILURE"); }); }).catch((error) => {
+        }).then((response) => { if (child.connected) child.send({ type: "response", requestId: msg.requestId, ...response }, onSendError); }).catch((error) => {
           if (error instanceof HostRequestError) {
             recordFailure(error.message, error.message.includes("PERSISTENCE") || error.message.endsWith("WRITE_FAILED") ? "persistence_error" : "worker_error");
             stop(error.message);
-          } else if (child.connected) child.send({ type: "response-error", requestId: msg.requestId }, sendError => { if (sendError && !done) stop("WORKER_IPC_FAILURE"); });
+          } else if (child.connected) child.send({ type: "response-error", requestId: msg.requestId }, onSendError);
         }).finally(() => { inflight.delete(pending); });
         inflight.add(pending);
       });
@@ -322,7 +331,7 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
         }
         finish(code);
       });
-      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.budget.getModelLimits(options.role).maxOutputTokens, contextWindow: options.budget.getModelLimits(options.role).contextWindow }));
+      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, role: options.role, skillPaths: options.skillPaths, maxOutputTokens: options.budget.getModelLimits(options.role).maxOutputTokens, contextWindow: options.budget.getModelLimits(options.role).contextWindow }));
     });
     // Native SDK background work may still be aborting when the worker closes.
     // Finish its observed accounting before the matrix can open another sample.
