@@ -1,11 +1,11 @@
 /** Read-only local catalog checks. A successful lookup is never execution authorization. */
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalPath, resolvePiRuntime } from "./isolation.ts";
+import { readPiRuntimeIdentity, type PiRuntimeIdentity } from "./runtime-identity.ts";
 
 export interface ModelIdentity {
   provider: string;
@@ -38,7 +38,7 @@ export interface ModelPreflightReport {
   billing: "UNKNOWN";
   executionAuthorized: false;
   configHome: string;
-  runtime?: { package: string; version: string; entrySha256: string };
+  runtime?: PiRuntimeIdentity;
 }
 
 export interface ModelPreflightOptions {
@@ -71,12 +71,7 @@ export async function preflightModels(options: ModelPreflightOptions): Promise<M
   try {
     const runtime = resolvePiRuntime(options.pathEnv);
     const packageRoot = runtime.readOnlyRoots[0]!;
-    const manifest = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
-    const entry = runtime.args[0] ?? runtime.command;
-    report.runtime = {
-      package: String(manifest.name), version: String(manifest.version),
-      entrySha256: createHash("sha256").update(readFileSync(entry)).digest("hex"),
-    };
+    report.runtime = readPiRuntimeIdentity(runtime);
     if (process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-exec")) {
       report.errors.push("只读离线模型预检需要 macOS sandbox-exec；未回退到未隔离查询");
       return report;

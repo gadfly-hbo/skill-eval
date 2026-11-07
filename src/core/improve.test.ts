@@ -416,8 +416,8 @@ test("0% 激活用例上的断言失败归因为 activation-missing（而非怪�
 
 test("shouldActivate=false 的负向用例误触发时产生 over-trigger 归因", () => {
   const rows = makeRows([
-    { variantId: "baseline", taskId: "neg-1", attempt: 1, passes: [] },
-    { variantId: "skill", taskId: "neg-1", attempt: 1, passes: [], activated: true },
+    { variantId: "baseline", taskId: "neg-1", attempt: 1, passes: [true] },
+    { variantId: "skill", taskId: "neg-1", attempt: 1, passes: [false], activated: true },
   ]);
 
   const advice = buildImprovementAdvice(rows, 1.0, {
@@ -426,6 +426,22 @@ test("shouldActivate=false 的负向用例误触发时产生 over-trigger 归因
   });
   assert.equal(advice.diagnoses.length, 1);
   assert.equal(advice.diagnoses[0]!.mode, "over-trigger");
+});
+
+test("不应触发的查数题断言失败不建议扩大 skill 的触发范围", () => {
+  const rows = makeRows([
+    { variantId: "baseline", taskId: "pure-data-query-misfire", attempt: 1, passes: [false], kinds: ["numeric"] },
+    { variantId: "skill", taskId: "pure-data-query-misfire", attempt: 1, passes: [false], kinds: ["numeric"], activated: false },
+  ]);
+  const advice = buildImprovementAdvice(rows, 0, {
+    verdict: "inconclusive",
+    tasks: [{ id: "pure-data-query-misfire", shouldActivate: false }],
+  });
+  assert.deepEqual(advice.diagnoses, []);
+  assert.equal(advice.activationIssue, null);
+  assert.equal(advice.skillIssueCount, 0);
+  assert.match(advice.summary, /不应触发用例的断言失败/);
+  assert.doesNotMatch(advice.summary, /漏触发|description/);
 });
 
 test("跨用例相同契约合并为 groupedDiagnoses，计算 expectedGainPp 并识别未读附属文件", async () => {

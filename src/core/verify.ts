@@ -6,6 +6,7 @@
  * 2. `evaluateNegativeControl`：对比原版跑批与破坏版跑批，检验「触发控制成立 + 原版越过门槛 + 破坏版回落门槛以下 + 0 假阳性」
  */
 
+import { isDeepStrictEqual } from "node:util";
 import { ACTIVATION_THRESHOLD, GAIN_THRESHOLD_PP, INSENSITIVE_BASELINE_PASS_RATE } from "./thresholds.ts";
 import { evaluateGainFromResults, isScoredTask } from "./gain.ts";
 import type { EvaluationSummary } from "./runner.ts";
@@ -153,6 +154,9 @@ function comparabilityIssues(original: EvaluationSummary, broken: EvaluationSumm
   const leftHash = original.suiteMeta?.suiteHash;
   const rightHash = broken.suiteMeta?.suiteHash;
   if (!leftHash || !rightHash || leftHash !== rightHash) issues.push("冻结套件 suiteHash 缺失或不一致");
+  if (!isDeepStrictEqual(original.manifest?.runtimeIdentity, broken.manifest?.runtimeIdentity)) {
+    issues.push("测评器源码或 Pi SDK 冻结身份缺失或不一致");
+  }
   const taskIds = (s: EvaluationSummary) => s.tasks?.map(t => [t.id, t.kind ?? "scored", t.shouldActivate ?? true]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
   if (!original.tasks?.length || !broken.tasks?.length || JSON.stringify(taskIds(original)) !== JSON.stringify(taskIds(broken))) {
     issues.push("冻结任务 ID/计分范围缺失或不一致");
@@ -259,10 +263,8 @@ export function evaluateNegativeControl(
       falsePositiveAssertions.push(ladder);
     } else if (baselineRate >= INSENSITIVE_BASELINE_PASS_RATE - 1e-9) {
       insensitiveAssertions.push(ladder);
-    } else if (originalRate > brokenRate + 1e-9 || (originalRate === 1 && baselineRate < 0.8 && brokenRate <= originalRate)) {
-      if (originalRate > baselineRate + 1e-9) {
-        trueContractAssertions.push(ladder);
-      }
+    } else if (originalRate > Math.max(brokenRate, baselineRate) + 1e-9) {
+      trueContractAssertions.push(ladder);
     }
   }
 

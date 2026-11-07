@@ -164,9 +164,14 @@ function installedRuntime(): ReturnType<typeof resolvePiRuntime> | undefined {
 }
 const nativeRuntime = installedRuntime();
 
-for (const scenario of ["complete", "judge401"] as const) test(scenario === "complete"
-  ? "普通 eval CLI 离线贯通原编排、原生隔离 worker、双角色共享账本及报告"
-  : "普通 eval CLI 评委最终401失败不连坐其余冻结轮次，partial非零退出", {
+const scenarios = {
+  complete: "普通 eval CLI 离线贯通原编排、原生隔离 worker、双角色共享账本及报告",
+  judge401: "普通 eval CLI 评委最终401失败不连坐其余冻结轮次，partial非零退出",
+  quota429: "普通 eval CLI 遇套餐配额耗尽只发一次请求，保留失败及未运行矩阵",
+  interrupt: "普通 eval CLI 接收 SIGTERM 后保存终态、账本与报告",
+} as const;
+
+for (const scenario of Object.keys(scenarios) as Array<keyof typeof scenarios>) test(scenarios[scenario], {
   skip: nativeRuntime ? false : "Installed native Pi SDK and macOS sandbox required",
   timeout: 60_000,
 }, () => {
@@ -208,6 +213,11 @@ globalThis.fetch = async (url, init) => {
       headers.get(isSubject ? 'x-api-key' : 'authorization') !== (isSubject ? 'fixture-only' : 'Bearer fixture-only')) forbidden();
   appendFileSync(calls, JSON.stringify({ role: isSubject ? 'subject' : 'judge', model: body.model, maxOutputTokens:body.max_tokens??body.max_completion_tokens, thinking:body.thinking }) + '\\n');
   if (!isSubject && ${JSON.stringify(scenario)} === 'judge401') return new Response('OFFLINE_HTTP_401_FIXTURE', {status:401});
+  if (${JSON.stringify(scenario)} === 'quota429') return Response.json({type:'error',error:{type:'rate_limit_error',message:'已达到 Token Plan 用量上限 (2056)'}}, {status:429});
+  if (${JSON.stringify(scenario)} === 'interrupt') {
+    process.kill(process.pid, 'SIGTERM');
+    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), {once:true}));
+  }
   let stream;
   if (isSubject) {
     const events = [
@@ -241,6 +251,32 @@ globalThis.fetch = async (url, init) => {
     assert.equal(result.error, undefined);
     const summary = JSON.parse(readFileSync(join(out, "summary.json"), "utf8"));
     const ledger = JSON.parse(readFileSync(join(out, "budget-ledger.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(out, "run-manifest.json"), "utf8"));
+    assert.deepEqual(summary.manifest.runtimeIdentity, manifest.runtimeIdentity);
+    assert.match(manifest.runtimeIdentity.evaluator.sourceSha256, /^[a-f0-9]{64}$/);
+    assert.match(manifest.runtimeIdentity.evaluator.workerSha256, /^[a-f0-9]{64}$/);
+    assert.match(manifest.runtimeIdentity.evaluator.judgeDecoderSha256, /^[a-f0-9]{64}$/);
+    assert.match(manifest.runtimeIdentity.piSdk.sdkEntrySha256, /^[a-f0-9]{64}$/);
+    assert.equal(manifest.runtimeIdentity.piSdk.version, JSON.parse(readFileSync(join(nativeRuntime!.readOnlyRoots[0]!, "package.json"), "utf8")).version);
+    if (scenario === "quota429" || scenario === "interrupt") {
+      const reason = scenario === "quota429" ? "PROVIDER_QUOTA_EXHAUSTED" : "EVALUATION_INTERRUPTED_SIGTERM";
+      assert.equal(result.status, scenario === "quota429" ? 1 : 143, result.stdout + result.stderr);
+      assert.equal(summary.execution.reason, reason);
+      assert.equal(summary.execution.attemptedSessions, 1);
+      assert.equal(summary.execution.notRunSessions, 7);
+      assert.equal(ledger.state, "stopped");
+      assert.equal(ledger.stoppedReason, reason);
+      assert.equal(ledger.requests.length, 1);
+      assert.equal(ledger.unknownRequests, 1);
+      assert.equal(ledger.reservedNanoUsd, 0);
+      assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 1);
+      const status = JSON.parse(readFileSync(join(out, "execution-status.json"), "utf8"));
+      assert.deepEqual(status.sessions.map((row: { status: string }) => row.status), ["FAILED", ...Array(7).fill("NOT_RUN")]);
+      assert.equal(status.sessions[0].reason, reason);
+      assert.match(readFileSync(join(out, "REPORT.md"), "utf8"), new RegExp(reason));
+      assert.equal(readFileSync(join(config, "auth.json"), "utf8"), fakeAuth);
+      return;
+    }
     if (scenario === "judge401") {
       assert.equal(result.status, 1, result.stdout + result.stderr);
       assert.equal(summary.status, "partial");

@@ -96,6 +96,7 @@ import { freezeSkill } from "../core/provenance.ts";
 import { assertFreshRunRoot, saveRunManifest, loadRunManifest, frozenSkillPath, relativeSnapshotDir, EVALUATION_POLICY_VERSION, type RunManifest } from "../core/run-manifest.ts";
 import { preflightModels } from "../core/model-preflight.ts";
 import { validateControlledPlan } from "../core/execution.ts";
+import { captureEvaluatorIdentity, type EvaluationRuntimeIdentity } from "../core/runtime-identity.ts";
 
 interface CliArgs {
   command: string;
@@ -423,6 +424,8 @@ async function runSingleModelEval(params: {
   timeoutMs: number | undefined;
   judgeTimeoutMs: number | undefined;
   gainThresholdPp: number | undefined;
+  runtimeIdentity: EvaluationRuntimeIdentity;
+  signal: AbortSignal;
 }): Promise<{ summary: EvaluationSummary; decision: VerdictDecision; reportPath: string }> {
   const { suite, skillPath, model, judgeModel, repeat, judgeRepeat, outDir, runId } = params;
   assertFreshRunRoot(outDir);
@@ -434,7 +437,7 @@ async function runSingleModelEval(params: {
   ];
   const manifest: RunManifest = {
     schemaVersion: 1, policyVersion: EVALUATION_POLICY_VERSION, runId, model, judgeModel, repeat, judgeRepeat, judgeSeed: runId,
-    tasks: suite.tasks, variants, contextPrefix: params.contextPrefix,
+    tasks: suite.tasks, variants, contextPrefix: params.contextPrefix, runtimeIdentity: params.runtimeIdentity,
     settings: { gainThresholdPp: params.gainThresholdPp ?? GAIN_THRESHOLD_PP, timeoutMs: params.timeoutMs, judgeTimeoutMs: params.judgeTimeoutMs, keywordSignal: params.keywordSignal, nodeVersion: process.version, nativeLimits: params.nativeLimits },
     candidate: { identity: frozen.identity, snapshotDir: relativeSnapshotDir(outDir, frozen.skillPath), originalSkillPath: skillPath },
     suiteMeta: { suiteId: suite.id, suiteVersion: suite.version ?? "未标注", suiteHash: effectiveSuiteHash, skillVersion: suite.skill?.version ?? "未标注", skillPath },
@@ -459,6 +462,7 @@ async function runSingleModelEval(params: {
     model,
     judgeModel,
     nativeLimits: params.nativeLimits,
+    signal: params.signal,
     variants,
     tasks: suite.tasks,
     repeat,
@@ -583,6 +587,8 @@ async function commandEval(args: CliArgs): Promise<number> {
     process.stderr.write(`模型预检未通过（未调用 Provider）：\n  ${modelCheck.errors.join("\n  ")}\n`);
     return 1;
   }
+  if (!modelCheck.runtime?.sdkEntrySha256) throw new Error("PI_SDK_IDENTITY_MISSING: 未找到 Pi SDK 执行入口");
+  const runtimeIdentity: EvaluationRuntimeIdentity = { evaluator: captureEvaluatorIdentity(), piSdk: modelCheck.runtime };
   const limitsFor = (role: "subject" | "judge", reference: string) => {
     const native = modelCheck.models.find(entry => entry.role === role && entry.requested === reference)?.model;
     if (!native || !Number.isSafeInteger(native.contextWindow) || !Number.isSafeInteger(native.maxTokens) || native.contextWindow! < 1 || native.maxTokens! < 1) {
@@ -595,6 +601,10 @@ async function commandEval(args: CliArgs): Promise<number> {
   const runId = newRunId();
   const outDir = flagString(args.flags, "out") ? resolve(flagString(args.flags, "out")!) : resolve("runs", runId);
 
+  const interruption = new AbortController();
+  const interrupt = (signal: NodeJS.Signals) => interruption.abort(`EVALUATION_INTERRUPTED_${signal}`);
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
   const { summary, decision } = await runSingleModelEval({
     suite,
     suiteHash: suiteCheck.suiteHash,
@@ -612,7 +622,14 @@ async function commandEval(args: CliArgs): Promise<number> {
     timeoutMs,
     judgeTimeoutMs,
     gainThresholdPp,
+    runtimeIdentity,
+    signal: interruption.signal,
+  }).finally(() => {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
   });
+
+  if (interruption.signal.aborted) return interruption.signal.reason === "EVALUATION_INTERRUPTED_SIGINT" ? 130 : 143;
 
   const archiveTo = flagString(args.flags, "archive-to");
   if (archiveTo) {

@@ -3,7 +3,7 @@ import type { PiEvent } from "./pi.ts";
 
 export const TOOL_ERROR_POLICY_VERSION = "native-agent-recovery-v2";
 
-export type IncidentType = "tool_error" | "worker_error" | "assistant_error" | "request_error" | "timeout" | "startup_error" | "persistence_error" | "tool_aborted_during_cleanup" | "assistant_aborted_during_cleanup";
+export type IncidentType = "tool_error" | "worker_error" | "assistant_error" | "request_error" | "timeout" | "interrupted" | "startup_error" | "persistence_error" | "tool_aborted_during_cleanup" | "assistant_aborted_during_cleanup";
 export interface FailureCause {
   code: string;
   incidentType: IncidentType;

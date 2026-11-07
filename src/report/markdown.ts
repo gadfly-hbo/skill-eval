@@ -18,7 +18,7 @@ import {
   type FailureMode,
   type SkillDocContext,
 } from "../core/improve.ts";
-import { evaluateGainFromResults } from "../core/gain.ts";
+import { evaluateGainFromResults, isScoredTask } from "../core/gain.ts";
 import { analyzeAssertionSensitivity } from "../core/sensitivity.ts";
 import type { CalibrationResult } from "../core/calibration.ts";
 import {
@@ -27,9 +27,6 @@ import {
   MAX_FALSE_ACTIVATION_RATE,
   MAX_VARIANT_TIMEOUT_RATE,
   MIN_PAIR_COVERAGE,
-  WIN_RATE_MARGINAL_THRESHOLD,
-  WIN_RATE_STRONG_THRESHOLD,
-  WIN_RATE_THRESHOLD,
 } from "../core/thresholds.ts";
 
 export interface ReportMeta {
@@ -134,7 +131,7 @@ export function renderReport(options: ReportOptions): string {
       ? `（95% CI [${signedPp(gainFromResults.ciPp.lowPp)}, ${signedPp(gainFromResults.ciPp.highPp)}]）`
       : "";
     const winCiText = variant.winRateCi
-      ? `（95% CI [${percent(variant.winRateCi.low)}, ${percent(variant.winRateCi.high)}]）`
+      ? `（95% Wilson 区间 [${percent(variant.winRateCi.low)}, ${percent(variant.winRateCi.high)}]）`
       : "";
 
     lines.push("| 指标 | baseline（不装 skill） | variant（装 skill） | 判读 |");
@@ -148,16 +145,16 @@ export function renderReport(options: ReportOptions): string {
       );
     }
     lines.push(
-      `| 成对评委胜率（已判对） | — | ${variant.winRate === null ? "不可判定" : `${percent(variant.winRate)}${winCiText}`} | ${judgeWinRate(variant.winRate)} |`,
+      `| 原始评委胜率（已判计分对） | — | ${variant.winRate === null ? "不可判定" : `${percent(variant.winRate)}${winCiText}`} | 描述性统计 |`,
     );
     if (variant.pairCoverage !== undefined || variant.winRateLowerBound !== undefined) {
       const cov = variant.pairCoverage ?? null;
       const lb = variant.winRateLowerBound ?? null;
-      const ruleAdj = variant.ruleAdjustedWinRate ?? variant.winRate;
       lines.push(
-        `| 评判覆盖率 / 全样本胜率下界 | — | 覆盖 ${percent(cov)} · 下界 ${percent(lb)} · 规则纠偏 ${percent(ruleAdj)} | ${cov !== null && cov < MIN_PAIR_COVERAGE ? "⚠️ 缺失样本过多" : "覆盖充分"} |`,
+        `| 计分对评判覆盖率 / 全计分对胜率下界 | — | 覆盖 ${percent(cov)} · 下界 ${percent(lb)} | ${cov === null ? "覆盖率未验证" : cov < MIN_PAIR_COVERAGE ? "⚠️ 缺失样本过多" : "覆盖充分"} |`,
       );
     }
+    lines.push(`| 规则纠偏胜率（已判计分对） | — | ${percent(variant.ruleAdjustedWinRate ?? null)} | 用于正式判定 |`);
     if (variant.timeoutRate !== undefined && variant.timeoutRate > 0) {
       lines.push(
         `| 运行超时率 | — | ${(variant.missing ?? 0) > 0 ? "未知（产物缺失）" : percent(variant.timeoutRate)}（已知 ${variant.timedOut ?? 0}/${variant.total} 次） | ${variant.timeoutRate > MAX_VARIANT_TIMEOUT_RATE ? "⚠️ 超时率超标" : "偶发超时"} |`,
@@ -202,6 +199,10 @@ export function renderReport(options: ReportOptions): string {
   lines.push("| --- | --- |");
   lines.push(`| 被评模型 | \`${summary.model}\` |`);
   lines.push(`| 评委模型 | \`${summary.judgeModel}\` |`);
+  const runtime = summary.manifest?.runtimeIdentity;
+  lines.push(`| 测评器检出提交 | ${runtime?.evaluator.gitCommit ? `\`${runtime.evaluator.gitCommit}\`` : "未记录"} |`);
+  lines.push(`| 测评器源码指纹 | ${runtime ? `\`sha256:${runtime.evaluator.sourceSha256}\`` : "未记录"} |`);
+  lines.push(`| Pi SDK | ${runtime ? `\`${runtime.piSdk.package}@${runtime.piSdk.version}\`` : "未记录"} |`);
   lines.push(`| 每用例重复 | ${summary.repeat} 次 |`);
   lines.push(`| 评委轮数 | ${summary.judgeRepeat} 轮${summary.judgeRepeat >= 2 ? "（含位置偏好探测）" : ""} |`);
   lines.push(`| 用例数 | ${options.tasks.length} |`);
@@ -215,7 +216,7 @@ export function renderReport(options: ReportOptions): string {
     lines.push(`| 整批执行 | ${summary.execution.stopped ? "STOPPED" : summary.status}；计划 ${summary.execution.plannedSessions}，已尝试 ${summary.execution.attemptedSessions}，NOT_RUN ${summary.execution.notRunSessions} |`);
     const cap = summary.execution.budgetCapNanoUsd;
     const budget = cap === null ? "不设预算上限" : typeof cap === "number" ? `保守等价上限 US$${(cap / 1e9).toFixed(2)}` : "历史限额见原账本";
-    lines.push(`| 共享费用账本 | \`budget-ledger.json\`（subject + judge；${budget}，实际账单未知） |`);
+    lines.push(`| 共享费用账本 | \`budget-ledger.json\` 为收尾快照，\`budget-ledger.jsonl\` 为增量记录（subject + judge，${budget}，实际账单未知） |`);
     lines.push(`| 逐会话状态 | \`${summary.execution.statusFile}\`；未执行项不填零 usage 或费用 |`);
     if (summary.execution.reason) lines.push(`| 停止原因 | ${summary.execution.reason.replace(/[\r\n|]/g, " ")} |`);
   }
@@ -233,7 +234,7 @@ export function renderReport(options: ReportOptions): string {
       : "- **已有产物复核/回放**：未进行新的模型调用；历史记录未追溯覆盖，缺少的证据保持未验证。");
   lines.push("- **事件流取证**：每次运行保存完整 pi 事件流，可回放核对（含附属文件读取取证）。");
   lines.push("- **规则断言**：条目累计率只描述成功输出；推断使用完整计分配对，失败或缺失不产生负向断言假通过。95% 区间以任务为独立簇，采用保守 Hoeffding 界；增加断言或重复次数不会增加独立任务数。");
-  lines.push("- **成对评委**：模型评委判定相对优劣；已匿名化（A/B 无来源暗示），长输出采用头尾保留采样。");
+  lines.push("- **成对评委**比较匿名 A/B 输出。实际输入见评委提示词记录。");
   lines.push("- **计分范围**：增益、显著性与成本门禁仅使用 scored 且应触发的任务；diagnostic 与负向触发任务单列，不参与这些门禁。执行摘要只提供匿名状态计数，不向评委泄露脚本或 skill 身份。");
   lines.push("");
   if (summary.judgeModel === summary.model) {
@@ -264,16 +265,22 @@ export function renderReport(options: ReportOptions): string {
   lines.push("");
 
   // ---- 5. 判定结果 ----
+  const scoredTaskIds = new Set(options.tasks.filter(isScoredTask).map((task) => task.id));
   lines.push("## 5. 判定结果");
   lines.push("");
   lines.push("### 5.1 Variant 汇总");
   lines.push("");
-  lines.push("| Variant | win | tie | loss | 未判定 | 评判覆盖率 | 已判胜率 | 全样本下界 | 规则纠偏胜率 | 断言全过率 | 成本评级 |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("全部配对包含诊断题。覆盖率、原始评委胜率、下界和规则纠偏胜率只使用计分对。");
+  lines.push("");
+  lines.push("| Variant | 全部配对胜 / 平 / 负 / 未判 | 计分对已判 / 计划 | 计分对覆盖率 | 原始评委胜率（已判计分对） | 全计分对胜率下界 | 规则纠偏胜率（已判计分对） | 断言全过率 | 成本评级 |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const item of summary.variantSummaries) {
     const isBaseline = item.variantId === "baseline";
+    const allPairs = isBaseline ? "—" : `${item.win} / ${item.tie} / ${item.loss} / ${item.notJudged}`;
+    const scoredPairs = !isBaseline && item.scoredJudged !== undefined && item.totalScoredPairs !== undefined
+      ? `${item.scoredJudged} / ${item.totalScoredPairs}` : "—";
     lines.push(
-      `| ${item.variantLabel} | ${item.win} | ${item.tie} | ${item.loss} | ${item.notJudged} | ${isBaseline ? "—" : percent(item.pairCoverage ?? null)} | ${item.winRate === null ? "—" : percent(item.winRate)} | ${isBaseline ? "—" : percent(item.winRateLowerBound ?? null)} | ${isBaseline ? "—" : percent(item.ruleAdjustedWinRate ?? item.winRate)} | ${percent(item.assertionPassRate)} | ${item.costEfficiency ? item.costEfficiency.grade : "—"} |`,
+      `| ${item.variantLabel} | ${allPairs} | ${scoredPairs} | ${isBaseline ? "—" : percent(item.pairCoverage ?? null)} | ${percent(item.winRate)} | ${isBaseline ? "—" : percent(item.winRateLowerBound ?? null)} | ${isBaseline ? "—" : percent(item.ruleAdjustedWinRate ?? null)} | ${percent(item.assertionPassRate)} | ${item.costEfficiency ? item.costEfficiency.grade : "—"} |`,
     );
   }
   lines.push("");
@@ -284,8 +291,9 @@ export function renderReport(options: ReportOptions): string {
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const task of summary.taskSummaries) {
     const expectTrig = task.shouldActivate === false ? "否（误触发测试）" : "是";
+    const scored = task.kind === "scored" && task.shouldActivate !== false;
     lines.push(
-      `| ${task.taskId} | ${task.kind === "scored" ? "计分" : "诊断"} | ${expectTrig} | ${percent(task.total ? task.success / task.total : 0)} | ${percent(task.activationRate)} | ${percent(task.assertionPassRate)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} |`,
+      `| ${task.taskId} | ${scored ? "计分" : "诊断"} | ${expectTrig} | ${percent(task.total ? task.success / task.total : 0)} | ${percent(task.activationRate)} | ${percent(task.assertionPassRate)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} |`,
     );
   }
   lines.push("");
@@ -294,6 +302,10 @@ export function renderReport(options: ReportOptions): string {
   if (assertionRows.length > 0) {
     lines.push("### 5.3 规则断言明细");
     lines.push("");
+    if (options.tasks.some((task) => task.shouldActivate === false)) {
+      lines.push("不应触发用例的断言结果用于诊断输出，误触发以实际读取证据判定。");
+      lines.push("");
+    }
     lines.push("| Variant | 用例 | 次数 | 断言 | 结果 |");
     lines.push("| --- | --- | --- | --- | --- |");
     for (const result of assertionRows) {
@@ -310,13 +322,14 @@ export function renderReport(options: ReportOptions): string {
       lines.push("### 5.4 断言灵敏度体检（白送断言筛查）");
       lines.push("");
       lines.push(
-        `共评估 ${sensitivity.totalAssertions} 条断言：有区分度 **${sensitivity.sensitiveCount}** 条（${percent(sensitivity.sensitivityRate)}），` +
+        `全部用例共评估 ${sensitivity.totalAssertions} 条断言。有区分度 **${sensitivity.sensitiveCount}** 条（${percent(sensitivity.sensitivityRate)}），` +
           `无区分度（baseline 通过率 ≥ 80%）**${sensitivity.insensitiveCount}** 条。`,
       );
       lines.push("");
-      if (sensitivity.zeroDiscriminationTasks.length > 0) {
+      const zeroScoredTasks = sensitivity.zeroDiscriminationTasks.filter((id) => scoredTaskIds.has(id));
+      if (zeroScoredTasks.length > 0) {
         lines.push(
-          `> ⚠️ **零区分度用例**：\`${sensitivity.zeroDiscriminationTasks.join("`、`")}\` 的全部断言在 baseline 下均已 ≥ 80% 通过，无法检验 skill 的契约价值，建议收紧断言或改为 \`diagnostic\`。`,
+          `> ⚠️ **零区分度计分用例** \`${zeroScoredTasks.join("`、`")}\` 的全部断言在 baseline 下均已 ≥ 80% 通过，建议收紧断言或改为 \`diagnostic\`。`,
         );
         lines.push("");
       }
@@ -424,9 +437,9 @@ export function renderReport(options: ReportOptions): string {
 
     const actionableGroups = advice.groupedDiagnoses.filter((g) => isSkillIssue(g.mode));
     if (actionableGroups.length > 0) {
-      lines.push(`### 8.${subIdx++} 核心待改根因（跨用例去重 · 按优先级与预计增益排序）`);
+      lines.push(`### 8.${subIdx++} 核心待改根因（跨用例去重）`);
       lines.push("");
-      lines.push("| 优先级 | 失败模式 | 待修契约 | 影响用例 | 预计增益 | 修改建议与定位 |");
+      lines.push("| 优先级 | 失败模式 | 待修契约 | 影响用例 | 条目通过率增量估计 | 修改建议与定位 |");
       lines.push("| --- | --- | --- | --- | --- | --- |");
       actionableGroups.forEach((g, i) => {
         const locText = g.skillLocationHint ? `（${g.skillLocationHint}）` : "";
@@ -550,7 +563,7 @@ export function renderReport(options: ReportOptions): string {
   lines.push("");
   lines.push("### 结论边界");
   lines.push("");
-  lines.push("- 本结论仅覆盖上述运行配置与被评模型下的用例集，不同能力层级的模型建议用 `--models` 跑跨模型矩阵验证。");
+  lines.push("- 本结论仅覆盖上述用例集、被评模型和运行配置。");
   lines.push("- 判定基于模型输出质量，不是业务真实效果。");
   if (summary.judgeModel === summary.model) {
     lines.push("- 评委与被评同模型，存在自我偏好风险。");
@@ -584,7 +597,9 @@ function buildLimitations(options: ReportOptions): string[] {
 
   const notJudged = summary.pairwise.filter((item) => item.verdict === "not_judged");
   if (notJudged.length > 0) {
-    items.push(`${notJudged.length} 对比较未能完成评判，已在全样本胜率下界与有效评判覆盖率中显式计入分母`);
+    const scoredTaskIds = new Set(options.tasks.filter(isScoredTask).map((task) => task.id));
+    const scoredNotJudged = notJudged.filter((item) => scoredTaskIds.has(item.taskId)).length;
+    items.push(`${notJudged.length} 对比较未能完成评判，其中 ${scoredNotJudged} 个计分对纳入胜率下界和覆盖率的分母`);
   }
 
   if (summary.judgeRepeat < 2) {
@@ -630,15 +645,6 @@ function judgeActivation(rate: number): string {
   if (rate >= ACTIVATION_THRESHOLD - 1e-9) return "压线达标（偶有漏触发）";
   if (rate > 0) return "触发不足（未达 60% 门槛）";
   return "从未触发";
-}
-
-function judgeWinRate(rate: number | null): string {
-  if (rate === null) return "无法判定";
-  if (rate >= WIN_RATE_STRONG_THRESHOLD - 1e-9) return "有实质提升";
-  if (rate >= WIN_RATE_THRESHOLD - 1e-9) return "压线达标（60%–70% 边界区间）";
-  if (rate >= WIN_RATE_MARGINAL_THRESHOLD - 1e-9) return "提升不显著";
-  if (rate > 0) return "无提升甚至倒退";
-  return "完全无提升";
 }
 
 function signedPp(value: number): string {

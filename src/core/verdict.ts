@@ -334,8 +334,8 @@ export function decideVerdict(
   if (!rawWinOk) {
     blockers.push(
       objectiveStrong
-        ? `成对评委胜率 ${pct(winRate)} 未达断言驱动守门线 ${gateLabel}（客观增益虽过硬，但评委并不认为其不劣于 baseline）`
-        : `成对评委胜率 ${pct(winRate)} 未达 ${gateLabel} 门槛`,
+        ? `原始评委胜率 ${pct(winRate)} 未达断言驱动守门线 ${gateLabel}（客观增益虽过硬，但评委并不认为其不劣于 baseline）`
+        : `原始评委胜率 ${pct(winRate)} 未达 ${gateLabel} 门槛`,
     );
   } else if (winRate !== null && winRate < WIN_RATE_STRONG_THRESHOLD - EPS) {
     if (objectiveStrong && winRate < WIN_RATE_THRESHOLD - EPS) {
@@ -439,7 +439,7 @@ export function decideVerdict(
       verdict: "effective",
       costGrade,
       expensive,
-      reason: `激活率 ${pct(activationRate)}，胜率 ${pct(winRate)}${gainNote}，各项统计与覆盖率门禁均达标${driveNote}。该 skill 在当前用例集下有效${costNote}。`,
+      reason: `激活率 ${pct(activationRate)}，原始评委胜率 ${pct(winRate)}${gainNote}，各项统计与覆盖率门禁均达标${driveNote}。该 skill 在当前用例集下有效${costNote}。`,
       blockers: [],
       warnings,
       metrics,
@@ -455,7 +455,7 @@ export function decideVerdict(
         verdict: "ineffective",
         costGrade,
         expensive: false,
-        reason: `激活率 ${pct(activationRate)} 未达 60% 门槛，胜率 ${pct(winRate)} 未达 60% 门槛。skill 未产生稳定可观测的价值。`,
+        reason: `激活率 ${pct(activationRate)} 未达 60% 门槛，原始评委胜率 ${pct(winRate)} 未达 60% 门槛。skill 未产生稳定可观测的价值。`,
         blockers,
         warnings,
         metrics,
@@ -474,7 +474,7 @@ export function decideVerdict(
         verdict: "ineffective",
         costGrade,
         expensive: false,
-        reason: `skill 已被充分读取（激活率 ${pct(activationRate)}），但胜率仅 ${pct(ruleAdjustedWinRate)} 且断言增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛，未能带来实质改善。`,
+        reason: `skill 已被充分读取（激活率 ${pct(activationRate)}），但规则纠偏胜率仅 ${pct(ruleAdjustedWinRate)} 且断言增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛，未能带来实质改善。`,
         blockers,
         warnings,
         metrics,

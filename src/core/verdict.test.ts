@@ -611,7 +611,7 @@ test("0 断言套件且小样本（4/6 胜率66.7%，独立任务级下界证据
   assert.ok(decision.blockers.some((b) => b.includes("无规则断言") || b.includes("缺少规则断言")));
 });
 
-test("阴性对照破坏版画像：100% 激活、充足样本下胜率 22.2% 且断言增益 8.6pp 未达标 → 证伪为 ineffective", () => {
+test("评委原始胜率高但规则纠偏和断言增益不达标，结论标明纠偏胜率", () => {
   // baseline 29/58 (50.0%) → broken 34/58 (58.6%, +8.6pp)
   const results: RunResult[] = [
     makeAssertionResult("baseline", "t1", 1, 29, 58),
@@ -661,15 +661,15 @@ test("阴性对照破坏版画像：100% 激活、充足样本下胜率 22.2% �
         activationRate: 1.0,
         weakActivationRate: 0,
         assertionPassRate: 0.5,
-        winRate: 2 / 9,
-        winRateLowerBound: 2 / 10,
-        effectiveWinRate: 2 / 9,
+        winRate: 7 / 9,
+        winRateLowerBound: 7 / 10,
+        effectiveWinRate: 7 / 9,
         ruleAdjustedWinRate: 2 / 9,
         totalScoredPairs: 10,
         scoredJudged: 9,
         pairCoverage: 0.9,
-        win: 2,
-        tie: 7,
+        win: 7,
+        tie: 2,
         loss: 0,
         notJudged: 1,
         avgTokens: 65942,
@@ -686,6 +686,7 @@ test("阴性对照破坏版画像：100% 激活、充足样本下胜率 22.2% �
 
   const decision = decideVerdict(freezeFixture(summary));
   assert.equal(decision.verdict, "ineffective");
+  assert.match(decision.reason, /规则纠偏胜率仅 22\.2%/);
 });
 
 /**

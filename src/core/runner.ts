@@ -14,7 +14,7 @@
  * - 失败计入分母，不做选择性重跑；失败运行不参与负向断言通过率（防空输出假通过）。
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, renameSync } from "node:fs";
 import { join, basename, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createControlledExecution, validateControlledPlan, type EvaluationExecution } from "./execution.ts";
@@ -91,6 +91,7 @@ export interface RunnerOptions {
   judgeRepeat?: number;
   judgeSeed?: string;
   manifest?: RunManifest;
+  signal?: AbortSignal;
   /** 每次运行附加的上下文前缀。 */
   contextPrefix?: string;
   /** 隔离 HOME。 */
@@ -131,9 +132,10 @@ interface ExecutionStatus {
 }
 
 function saveExecutionStatus(runRoot: string, state: ExecutionStatus, fresh = false): void {
-  writeFileSync(join(runRoot, "execution-status.json"), JSON.stringify(state, null, 2), {
-    encoding: "utf8", flag: fresh ? "wx" : "w",
-  });
+  const path = join(runRoot, "execution-status.json");
+  const target = fresh ? path : `${path}.tmp`;
+  writeFileSync(target, JSON.stringify(state, null, 2), { encoding: "utf8", flag: "wx" });
+  if (!fresh) renameSync(target, path);
 }
 
 function stopBatch(options: RunnerOptions, state: ExecutionStatus, reason: string): void {
@@ -347,6 +349,8 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
     runRoot: options.runRoot, home: options.home, model: options.model,
     judgeModel: options.judgeModel ?? options.model, plannedSessions: sessions.length,
     nativeLimits: options.nativeLimits,
+    signal: options.signal,
+    runtimeIdentity: options.manifest?.runtimeIdentity,
   });
   options = { ...options, execution };
   const state: ExecutionStatus = { sessions, stopped: false, reason: null };
@@ -371,7 +375,11 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
         }
         results.push(result);
         planned.status = result.status === "success" ? "SUCCESS" : "FAILED";
-        if (execution.isStopped()) stopBatch(options, state, execution.snapshot().stoppedReason ?? result.error ?? "Host 执行故障");
+        if (execution.isStopped()) {
+          const reason = execution.snapshot().stoppedReason ?? result.error ?? "Host 执行故障";
+          if (planned.status === "FAILED") planned.reason = reason;
+          stopBatch(options, state, reason);
+        }
         else saveExecutionStatus(options.runRoot, state);
         options.onProgress?.({
           phase: "run",

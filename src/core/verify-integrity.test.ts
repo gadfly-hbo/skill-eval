@@ -43,6 +43,40 @@ test("配置可比、完整覆盖且双方增益已测量时，阴性对照可�
   assert.match(formatNegativeControlReport(report), /具备区分能力/);
 });
 
+test("原版和消融均通过的断言不提供正文区分证据", () => {
+  const report = evaluateNegativeControl(makeSummary(10), makeSummary(1), { thresholdPp: 20 });
+  assert.equal(report.status, "passed");
+  assert.equal(report.trueContractAssertions.length, 16 * 9);
+  assert.ok(report.trueContractAssertions.every((item) => item.assertionIndex !== 0));
+});
+
+test("新消融记录须匹配原版源码与 SDK 身份，旧记录仍可按既有字段复核", () => {
+  const original = makeSummary(10);
+  const broken = makeSummary(0);
+  assert.equal(evaluateNegativeControl(original, broken).status, "passed");
+
+  original.manifest = {
+    schemaVersion: 1, policyVersion: "paired-task-v2", runId: original.runId,
+    model: original.model, judgeModel: original.judgeModel, repeat: 1, judgeRepeat: 2, judgeSeed: "fixture",
+    tasks: original.tasks!, variants: [],
+    candidate: { identity: { schemaVersion: 1, entry: "SKILL.md", hash: "fixture", files: [] },
+      snapshotDir: ".frozen/skill", originalSkillPath: "/fixture/SKILL.md" },
+    suiteMeta: { suiteId: "suite", suiteVersion: "1", suiteHash: "same-frozen-suite", skillVersion: "1", skillPath: "/fixture/SKILL.md" },
+    runtimeIdentity: {
+      evaluator: { gitCommit: "fixture", sourceSha256: "evaluator", workerSha256: "worker", judgeDecoderSha256: "decoder" },
+      piSdk: { package: "pi-fixture", version: "1.0.0", entrySha256: "cli", sdkEntrySha256: "sdk" },
+    },
+  };
+  const missing = evaluateNegativeControl(original, broken);
+  assert.equal(missing.status, "inconclusive");
+  assert.ok(missing.issues.some((issue) => /冻结身份缺失或不一致/.test(issue)));
+
+  broken.manifest = structuredClone(original.manifest);
+  assert.equal(evaluateNegativeControl(original, broken).status, "passed");
+  broken.manifest.runtimeIdentity!.piSdk.version = "2.0.0";
+  assert.equal(evaluateNegativeControl(original, broken).status, "inconclusive");
+});
+
 test("破坏版缺失样本/断言不再被写成0增益通过", () => {
   for (const mutate of [
     (s: EvaluationSummary) => { s.results = []; },

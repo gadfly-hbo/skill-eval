@@ -164,6 +164,51 @@ test("shared executor accepts native recovery from a tool error without retroact
   } finally { globalThis.fetch = originalFetch; f.cleanup(); }
 });
 
+for (const reason of ["PROVIDER_QUOTA_EXHAUSTED", "EVALUATION_INTERRUPTED_SIGTERM"] as const) {
+  test(`shared executor closes its session and accounting after ${reason}`, { skip: !nativeAvailable, timeout: 15000 }, async () => {
+    const f = fixture(), originalFetch = globalThis.fetch;
+    const interruption = new AbortController();
+    const quota = JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "已达到 Token Plan 用量上限。 (2056)" } });
+    let calls = 0;
+    try {
+      writeFileSync(join(f.home, ".pi", "agent", "auth.json"), JSON.stringify({ "minimax-cn": { type: "api_key", key: "offline-factory-fixture" } }));
+      const execution = createControlledExecution({ ...plan, runRoot: f.runRoot, home: f.home, signal: interruption.signal });
+      globalThis.fetch = async (_url, request) => {
+        calls++;
+        if (reason === "PROVIDER_QUOTA_EXHAUSTED") return new Response(quota, { status: 429 });
+        return new Promise<Response>((_, reject) => {
+          request?.signal?.addEventListener("abort", () => reject(new Error("OFFLINE_ABORT")), { once: true });
+          interruption.abort(reason);
+        });
+      };
+      const stopped = await execution.run("subject", { ...f.request, timeoutMs: 10000 });
+      assert.equal(stopped.stderr, reason);
+      assert.equal(stopped.timedOut, false);
+      assert.equal(execution.isStopped(), true);
+      assert.equal((await execution.run("subject", { ...f.request, sessionId: "must-not-run" })).stderr, "CONTROLLED_EXECUTION_STOPPED");
+      assert.equal(calls, 1);
+      const snapshot = execution.snapshot();
+      assert.equal(snapshot.stoppedReason, reason);
+      assert.equal(snapshot.sessions[0]?.state, "failed");
+      assert.equal(snapshot.requests[0]?.reason, reason);
+      assert.equal(snapshot.reservedNanoUsd, 0);
+      assert.equal(snapshot.unknownRequests, 1);
+      assert.equal(snapshot.chargedNanoUsd, null);
+      const evidence = JSON.parse(readFileSync(join(f.runRoot, "cases", "one", "failure-evidence.json"), "utf8"));
+      assert.equal(evidence.firstCause.code, reason);
+      assert.equal(evidence.firstCause.incidentType, reason === "PROVIDER_QUOTA_EXHAUSTED" ? "request_error" : "interrupted");
+      if (reason === "PROVIDER_QUOTA_EXHAUSTED") {
+        const id = snapshot.requests[0]?.id;
+        const wire = JSON.parse(readFileSync(join(f.runRoot, "cases", "one", `wire-${id}.json`), "utf8"));
+        assert.deepEqual(wire.response, { status: 429, body: quota });
+      }
+      assert.deepEqual(JSON.parse(readFileSync(join(f.runRoot, "budget-ledger.json"), "utf8")), snapshot);
+      const journal = readFileSync(join(f.runRoot, "budget-ledger.jsonl"), "utf8").trimEnd().split("\n").map(line => JSON.parse(line) as BudgetUpdate);
+      assert.deepEqual(journal.at(-1), { type: "state", state: "stopped", stoppedReason: reason });
+    } finally { globalThis.fetch = originalFetch; f.cleanup(); }
+  });
+}
+
 for (const requests of [128, 5000]) test(`incremental ledger persists ${requests} requests within a fixed byte envelope`, (t) => {
   const root = mkdtempSync(join(tmpdir(), "native-ledger-bytes-"));
   const ledgerPath = join(root, "budget-ledger.json"), journalPath = join(root, "budget-ledger.jsonl");
