@@ -45,12 +45,31 @@ test("输出与脚本结果相同仍须通过原冻结断言", () => {
   assert.equal(result.contentIssue, "frozen_assertions_failed");
 });
 
-test("首个围栏对象即使通过冻结断言，多个对象也不能通过阳性内容判定", () => {
-  for (const second of [json, '{"total":15,"label":"subtotal"}']) {
-    const output = `\`\`\`json\n${json}\n\`\`\`\n\n\`\`\`json\n${second}\n\`\`\``;
+test("同值对象重复交付仍可通过内容，单独记录格式失败", () => {
+  const reordered = '{"label":"subtotal","total":14.250}';
+  for (const second of [reordered, `\`\`\`json\n${reordered}\n\`\`\``]) {
+    const output = `\`\`\`json\n${json}\n\`\`\`\n\n${second}`;
+    const result = evaluatePositiveDelivery(output, scriptResult, assertions);
+    assert.deepEqual(result.assertions, evaluateAssertions(output, assertions));
+    assert.equal(result.contentPassed, true);
+    assert.equal(result.contentIssue, null);
+    assert.equal(result.formatPassed, false);
+  }
+});
+
+test("正确对象之后的矛盾、非法对象、数组和重复键仍使内容失败", () => {
+  for (const second of [
+    '{"total":15,"label":"subtotal"}',
+    '{"total":14.25,}',
+    '{"total":14.25',
+    `[${json}]`,
+    '[]',
+    '{"total":15,"total":14.25,"label":"subtotal"}',
+  ]) {
+    const output = `\`\`\`json\n${json}\n\`\`\`\n\n${second}`;
     const result = evaluatePositiveDelivery(output, scriptResult, assertions);
     assert.equal(result.assertions.allPassed, true);
-    assert.equal(result.contentIssue, "not_unique_json_object");
+    assert.equal(result.contentPassed, false);
     assert.equal(result.formatPassed, false);
   }
 });
