@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T02:39:32.334296+00:00",
+  "version": "0.3.2",
+  "baseCommit": "e79584442c6fb1443f98ee678e0f09bfd70bf88d",
+  "branch": "codex/skill-eval-v0.3.2-real-case",
+  "evidenceLevel": "REAL_PROVIDER_EXECUTION_WITH_OFFLINE_AND_INDEPENDENT_AGENT_REVIEW",
+  "realFunctionalGate": "PASS",
+  "publication": "AUTHORIZED_AFTER_PASS",
+  "runRoot": "runs/run-20261107T022436Z-d7494329",
+  "runId": "run-20261107-022537-a3d9b552",
+  "cliExitCode": 0,
+  "status": "success",
+  "model": "minimax-cn/MiniMax-M3.1-Flash",
+  "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+  "sdk": {
+    "sdkPackage": "@earendil-works/pi-coding-agent",
+    "version": "1.4.0",
+    "filesChecked": 15138,
+    "changedCount": 0,
+    "baselineInventorySha256": "0103bf8ad16b12cf48c2686fc7926b337b0eecbb4c8613f6d1e6e75d66531d4f",
+    "sourceOrVersionChangesMade": false,
+    "elapsedSec": 2.14
+  },
+  "nativeLimits": {
+    "subject": {
+      "contextWindow": 1000000,
+      "maxOutputTokens": 524288
+    },
+    "judge": {
+      "contextWindow": 1048576,
+      "maxOutputTokens": 131072
+    }
+  },
+  "budgetCapNanoUsd": null,
+  "fixedAgentSessionOrTurnCap": null,
+  "defaultTimeoutMs": null,
+  "sdkExecution": "Official defaults; no SDK modification, no thinking-off/payload rewriting/native-recovery suppression",
+  "candidate": {
+    "hash": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc",
+    "versionLabel": "1.9.0 archive label; six-file runtime projection",
+    "fileCount": 6,
+    "modified": false
+  },
+  "suite": {
+    "hash": "sha256:f913f4406632a000",
+    "independentTasks": 2,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "privateTruthAndAssertionsUploaded": false
+  },
+  "matrix": {
+    "plannedSessions": 8,
+    "attemptedSessions": 8,
+    "successfulSessions": 8,
+    "failedSessions": 0,
+    "notRunSessions": 0,
+    "actualJudgeVotes": 4,
+    "httpRequests": 37,
+    "ledgerSessionCompleted": 8
+  },
+  "subjectResults": [
+    {
+      "variantId": "baseline",
+      "taskId": "t1",
+      "status": "success",
+      "durationSec": 31.331,
+      "activation": false,
+      "assertionItems": {
+        "passed": 2,
+        "total": 6
+      },
+      "totalTokens": 6059,
+      "sdkEstimateUsd": 0.0026241885,
+      "evidenceDir": "cases/baseline/t1/1",
+      "evidenceHashes": {
+        "events.json": "bc4947e71fefc3dd9a034b8af296f83573b5da216b241e4329e256951f67f462",
+        "output.md": "997df16d85dc338361be1395c855d151387ae5fb085d6196a17a7e4fac82e22b",
+        "result.json": "ac449bc38350bb8c162cd69e58d7adf275019e3c4638ec251ccb46ac244378dc"
+      }
+    },
+    {
+      "variantId": "baseline",
+      "taskId": "t2",
+      "status": "success",
+      "durationSec": 3.753,
+      "activation": false,
+      "assertionItems": {
+        "passed": 4,
+        "total": 4
+      },
+      "totalTokens": 2229,
+      "sdkEstimateUsd": 0.0004323286,
+      "evidenceDir": "cases/baseline/t2/1",
+      "evidenceHashes": {
+        "events.json": "83981243ea863f993f3061bed0bb49ddc61fc62463548b379d2deb56ace6f8bb",
+        "output.md": "b8e8426da1e6a1a581a05a56f765fbb6dfab2fa73b69ef0c052432e5287b3f8c",
+        "result.json": "853ab56901eef29d667021e3eaca01c86ca6a1dc472d73af71d7cf62d914b2ad"
+      }
+    },
+    {
+      "variantId": "skill",
+      "taskId": "t1",
+      "status": "success",
+      "durationSec": 91.665,
+      "activation": true,
+      "assertionItems": {
+        "passed": 5,
+        "total": 6
+      },
+      "totalTokens": 345099,
+      "sdkEstimateUsd": 0.014369495299999998,
+      "evidenceDir": "cases/skill/t1/1",
+      "evidenceHashes": {
+        "events.json": "3a41012b9efacc6b0d58649b9ebc6dbb9e842023efece5c1cc6bf0248ad7b018",
+        "output.md": "34c3937c0c698b79b60e0ce39be34008fa7cf7511e0b8ddcf83fd014312103c7",
+        "result.json": "b753f88e7caedd72b8264e57e1a48d1a8f0cd35f21baefd1f07a149289a52bae"
+      }
+    },
+    {
+      "variantId": "skill",
+      "taskId": "t2",
+      "status": "success",
+      "durationSec": 11.243,
+      "activation": true,
+      "assertionItems": {
+        "passed": 4,
+        "total": 4
+      },
+      "totalTokens": 21863,
+      "sdkEstimateUsd": 0.0017118084000000001,
+      "evidenceDir": "cases/skill/t2/1",
+      "evidenceHashes": {
+        "events.json": "afedd050d60744d7a8498dcc3842b52cd80bce799c0b8d42c0b2ec41ffffe8e4",
+        "output.md": "855ea79f33f1ba29e1b139e53cd3acf4390ef1e6bfb560456d4b6f0cafee3757",
+        "result.json": "8dcc79bb759e37a0910aab8ceb86f1b792fed1ec0254390c70fbdd917e15b095"
+      }
+    }
+  ],
+  "judgeVotes": [
+    {
+      "roundIndex": 0,
+      "swapped": false,
+      "verdict": "win",
+      "rawVerdict": "win",
+      "scoreA": 79,
+      "scoreB": 87,
+      "scoreDelta": 8,
+      "confidence": 0.72,
+      "protocolVersion": "b-relative-a-v2",
+      "semanticsStatus": "explicit",
+      "labelConflict": null,
+      "taskId": "t1"
+    },
+    {
+      "roundIndex": 1,
+      "swapped": true,
+      "verdict": "win",
+      "rawVerdict": "loss",
+      "scoreA": 79,
+      "scoreB": 87,
+      "scoreDelta": 8,
+      "confidence": 0.7,
+      "protocolVersion": "b-relative-a-v2",
+      "semanticsStatus": "explicit",
+      "labelConflict": null,
+      "taskId": "t1"
+    },
+    {
+      "roundIndex": 0,
+      "swapped": false,
+      "verdict": "loss",
+      "rawVerdict": "loss",
+      "scoreA": 90,
+      "scoreB": 72,
+      "scoreDelta": -18,
+      "confidence": 0.85,
+      "protocolVersion": "b-relative-a-v2",
+      "semanticsStatus": "explicit",
+      "labelConflict": null,
+      "taskId": "t2"
+    },
+    {
+      "roundIndex": 1,
+      "swapped": true,
+      "verdict": "loss",
+      "rawVerdict": "win",
+      "scoreA": 91,
+      "scoreB": 80,
+      "scoreDelta": -11,
+      "confidence": 0.75,
+      "protocolVersion": "b-relative-a-v2",
+      "semanticsStatus": "explicit",
+      "labelConflict": null,
+      "taskId": "t2"
+    }
+  ],
+  "activation": {
+    "baseline": {
+      "activated": 0,
+      "total": 2
+    },
+    "variant": {
+      "activated": 2,
+      "total": 2
+    }
+  },
+  "scoring": {
+    "baselineItemPasses": 6,
+    "baselineItems": 10,
+    "variantItemPasses": 9,
+    "variantItems": 10,
+    "taskWeightedGainPp": 25,
+    "pairwise": {
+      "win": 1,
+      "tie": 0,
+      "loss": 1,
+      "coverage": 1,
+      "winRate": 0.5
+    },
+    "ruleJudgeDisagreements": 1,
+    "labelCorrections": 0,
+    "candidateVerdict": "inconclusive",
+    "authorGate": {
+      "baselinePassed": 0,
+      "variantPassed": 0,
+      "perSideTotal": 2,
+      "callErrors": 0,
+      "interpretation": "Title-format sensitivity and input-disclosure requirements; not a Provider or SDK failure"
+    }
+  },
+  "cost": {
+    "conservativeUsdEquivalent": 0.07290224,
+    "subjectNanoUsd": 63466800,
+    "judgeNanoUsd": 9435440,
+    "unknownRequests": 0,
+    "pendingReservationNanoUsd": 0,
+    "usageByRole": {
+      "subject": {
+        "input": 31600,
+        "output": 15954,
+        "cacheRead": 327696,
+        "cacheWrite": 0
+      },
+      "judge": {
+        "input": 23040,
+        "output": 15522,
+        "cacheRead": 13312,
+        "cacheWrite": 0
+      }
+    },
+    "allProviderTokens": 427124,
+    "subjectSdkEstimateUsd": 0.0191378208,
+    "actualInvoice": "UNKNOWN",
+    "accountRemainingQuota": "UNKNOWN",
+    "cashBillingNotAsserted": true
+  },
+  "durationSec": 546.213,
+  "verification": {
+    "typecheck": "PASS",
+    "offlineTests": 489,
+    "offlinePass": 489,
+    "offlineFail": 0,
+    "offlineSkip": 0,
+    "rawWireSetsChecked": 37,
+    "eventJournalsChecked": 8,
+    "eventReadback": "EXACT",
+    "ledgerJournalRows": 91,
+    "ledgerJournalReplay": "EXACT_MATCH_TO_FINAL",
+    "candidateRunIntegrity": {
+      "verified": true,
+      "issues": []
+    },
+    "isolation": {
+      "verified": true,
+      "issues": []
+    },
+    "judgeBlinding": "All actual request roles checked, no candidate identity or A/B-origin leakage",
+    "runtimeSourceDriftDuringRun": 0,
+    "sourceFilesCheckedAtRun": 99,
+    "protectedHistoryFiles": 2450,
+    "protectedHistoryChanged": 0,
+    "independentAgentReview": "PASS; not human review"
+  },
+  "ioRegression": {
+    "nonemptyCjkDeltas": 1024,
+    "nonemptyCjkEvents": 2068,
+    "eventJournalWrittenBytes": 7619744,
+    "ledgerRequests": 5000,
+    "ledgerRows": 10003,
+    "ledgerAggregateWrittenBytes": 4980319,
+    "ledgerFinalSnapshotBytes": 1434972,
+    "maximumNativeOutputStress": "NOT_RUN",
+    "physicalSsdWritesOrWear": "NOT_MEASURED"
+  },
+  "limitations": [
+    "Only two independent tasks; does not certify skill effectiveness.",
+    "One frozen numeric rule is sensitive to unspecified rounding precision; original scores retained, not labeled arithmetic failure.",
+    "One structural rule and candidate author gate are sensitive to equivalent heading styles; original scores retained, not labeled missing behavior.",
+    "The direct-answer task was judged less concise; both actual votes and rule disagreement retained.",
+    "Native maximum-length output resource behavior is not measured; SDK cumulative snapshots may grow.",
+    "USD equivalents are frozen-rate estimates, not actual Token Plan cash invoices."
+  ],
+  "historicalRunsPreserved": [
+    {
+      "runRoot": "runs/run-20261107T005447Z-d069b2bf",
+      "status": "ABORTED_HOST_RESOURCE_FAULT"
+    },
+    {
+      "runRoot": "runs/run-20261107T012005Z-62b2d797",
+      "status": "PARTIAL_STOPPED_JUDGE_LENGTH"
+    },
+    {
+      "runRoot": "runs/run-20261107T014956Z-fdba3645",
+      "status": "STOPPED_CONFIGURATION_CHANGE"
+    }
+  ],
+  "mainRetest": "NOT_RUN",
+  "selectiveRerun": false,
+  "skillAutoArchive": false,
+  "privateArtifactsCommitted": false,
+  "postRunDocumentationCorrection": {
+    "changedAt": "2026-11-07T02:37:38.397960+00:00",
+    "path": "README.md",
+    "beforeSha256": "ddffffd7c15e48a9caad269ab8372a78a74dc9901f1e313f8740942831c1e573",
+    "afterSha256": "be86022b6aaf067a4225198be05b157d78778520819d786908c9795ca24276bd",
+    "reason": "Correct one stale repository-map description after removal of judge sampling",
+    "onlyDocumentationChanged": true,
+    "runtimeSourceChanged": false,
+    "originalPlanAndSourceMapKept": true
+  },
+  "fingerprints": {
+    ".local/release-v032-native-7v5s4ops/plan.json": "8085fe648f02f8226ea5f64b777637f0ff301f0032393ba741a163f782036b56",
+    ".local/release-v032-native-7v5s4ops/validated-source-sha256.json": "06d40c0aafd50af2ab4f68ae1f35339759636718c31428ab5e2de1c08a2e1982",
+    ".local/release-v032-native-7v5s4ops/reviewed-release-source-sha256.json": "fd1acf3a550dbeb40ef538e2971d268ba9ef3b7f5b3bb91484adda1eb3b94a40",
+    ".local/release-v032-native-7v5s4ops/execution-exit.json": "54e8958bd8a92ee0d57c39ccd9caf50d5fb81faa0eb716308684866eb8190e9a",
+    "runs/run-20261107T022436Z-d7494329/summary.json": "02af53d558a7970a3df40935a2654ad5dd30482f442c2483932bdbc75b96d161",
+    "runs/run-20261107T022436Z-d7494329/run-manifest.json": "ff10827abdd8491a6c8b43a5e002098cb334f240c3bb13695fd0c28122cdb8b0",
+    "runs/run-20261107T022436Z-d7494329/execution-status.json": "9df770c6ccba84e05d2d597232f1fc05af479339da572c6f9ce8335e4c70d4e8",
+    "runs/run-20261107T022436Z-d7494329/budget-ledger.json": "51c65019637f1b67cc2671ea54f03c8136d523e0caa16c4bbf33b49ba1c4a686",
+    "runs/run-20261107T022436Z-d7494329/budget-ledger.jsonl": "cf00c2cc69225004bdcae3eee849c969243c6f2979e28763bad6d51ece37d4d9",
+    "runs/run-20261107T022436Z-d7494329/gate-report.md": "d032f89fea917d592bdf423e46f57c196e3d39586c500f7ad5cb3d2ba2295b65",
+    ".local/four-principles-alignment-20261107/final-check-accepted.log": "7029313cba71c57850bf4bd8a67fe4610187c4bd6f2729c1c3bf2b35f0ad1452"
+  }
+}

@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "status": "REAL_EXECUTION_COMPLETED",
+  "baseCommit": "e79584442c6fb1443f98ee678e0f09bfd70bf88d",
+  "authorizedUncommittedChanges": true,
+  "sourceDiffSha256": "f8c12a10afac9f867bcf4c0f2b6bc829111e60b0436b89616629955b2c6e4079",
+  "validatedSourceSha256": {
+    "README.md": "927c5c4f256f9102baffe3dc96cc404733b109aa15576a15d917aae49d31550e",
+    "package-lock.json": "8d53186a5e6dae9d97a784e2b206da35fa6527f49ac57ca6af17950dbcc5a7d7",
+    "package.json": "b8a6f5a56e674e06a00fb800b9a0148ddf39f3766a874444e76033401e585d0e",
+    "scripts/offline-test-guard.mjs": "7da3c81f94a890981e7d780ded39a3a563351c520cc8f19aeeb99043553c4866",
+    "src/cli/controlled.test.ts": "0a709e9d89e5dea8832d03bccf277b8b85ba45188868acc25bdcfadc4acd1fe0",
+    "src/cli/main.test.ts": "788f5772d94177c266cf51de7a825703fa43a03b8d6c577620c4edf7f49a53ea",
+    "src/cli/main.ts": "63f1e3d5d7895ea3c92479f5d2024ebe86cb5835c6800e0c32551f2e84bb5f1f",
+    "src/cli/offline-regression.test.ts": "be3e928be37a13316a7997ff60e42639dfb9c3a362b983c1d96b44b2e1b6b155",
+    "src/cli/preflight.test.ts": "4389b5a00905f38db3cd1d394f8173dc85f7004a9b177f22c3448057989b99dc",
+    "src/core/activation.test.ts": "1717b15ce81b53072a83e0c5cb1ddf5808fe1621eca6ee0ba87a1a995303f57a",
+    "src/core/activation.ts": "e47b3290e0fb539c87e3036e19726bf58db5a3eb190f4cc1f46b2d1964a946f9",
+    "src/core/archive.test.ts": "e3c7311ca187f4aeaddb945612a0102e72cebcf298e65c167b6f4d9b483c3518",
+    "src/core/archive.ts": "f787a0254a821ee7f106eedfedb5c8c524e19f18ca2a1f1c241aaa47a0764ece",
+    "src/core/assertions.test.ts": "6f518b4066e7a617d3d4d8cbb2d30b4fb80df41a64e05df7d6996db41bfff8ce",
+    "src/core/assertions.ts": "3d6793631cbc7975bc81c2ff770bbf626813765c71cd5b6759e6f72aca310e6d",
+    "src/core/calibration.test.ts": "184ef3fc4cf5d7c789534bec9c624ec5961aba614137deddbc04df298fe0dc2b",
+    "src/core/calibration.ts": "8092306336ea5e2266c2fac470bd61e05c186b764a39005a33a1e17d50bfff75",
+    "src/core/contamination.test.ts": "6c1869b7ff6c14cd61f44b2b7ebca5ddc12196dc513b260c7f973338e414864e",
+    "src/core/contamination.ts": "71a5d812d979efa9a2c04cbb9fcc4eab2a0fea16224ffc8e1c4b6606fffbd03e",
+    "src/core/controlled-budget.test.ts": "36d12058a2d421eead86c23befd8a34e4c4351f76806a07d2544631dd2fc66f7",
+    "src/core/controlled-budget.ts": "20d18bcc268edd3347f28405a17811e0f6949c8a53b6ac7531b9145eb78e0268",
+    "src/core/controlled-session.test.ts": "28d1c45c0244541a2a1967cf44514717a5b76b848b738fc166cae33ba09a4e4d",
+    "src/core/controlled-session.ts": "02ee3c3663c9d2efbc3e3c9c586aa97cc4556f8fd4c0a14c870ca6b39993cf34",
+    "src/core/controlled-worker.test.ts": "124427f0d7d9b3b3195cf41dad49b1c20ad9135c49a9223118818b07fe69bc11",
+    "src/core/controlled-worker.ts": "28d9e85eaa793e77abfe80383934448a9f0cd43c1064560e72738d314c443d71",
+    "src/core/cost.test.ts": "e699c9ca56fa7d8d698187a9be2954e72067a6f4f16adf0bfc6fb419e1476978",
+    "src/core/cost.ts": "76ba59e30a6a7ad3a592848741bc511516d11d779329e67d62413f28156cde29",
+    "src/core/evidence.test.ts": "d84df409c2716b0db83f5a8a405b0c750435011e279e03708f92a7b34a2d2756",
+    "src/core/evidence.ts": "cc560d6ffae89f0af5d959f1106af8643d06156037951f3e054909c610ee71a3",
+    "src/core/execution.test.ts": "2c5131f4578da2c9c3707a5102f59cfc2cde9e266d8a5e19f67ff8a3a1befa44",
+    "src/core/execution.ts": "ede7f55699271052397ad67655719f468453042b42586336d9724d26231afaf2",
+    "src/core/failure-evidence.test.ts": "33d7832638eaaadb7cf5ed595dff3402c37261a1fb361e0efa788234d6dead7d",
+    "src/core/failure-evidence.ts": "1602a0ef23b615aae558f73737312c948308c43e9e31496f07fa31f127bdece6",
+    "src/core/gain.test.ts": "f66007ae663e832512160d4f57c41ea3d437d781fd4344fc5ffcf3573ffa7913",
+    "src/core/gain.ts": "b6bad658e05224a74c7b1e7d00462cf229b75634b0c29e577e6a855e176ae917",
+    "src/core/improve.test.ts": "0c3a236997bdbb617c109eb907b623f8ec053f6a44ccdd4d20a3321f22c5aa99",
+    "src/core/improve.ts": "3500f56ff4095021c655b5b75e0f52804eb5a78830169447ce1196bf3e19fe7e",
+    "src/core/integrity-regression.test.ts": "3c6eef0abbb0a1aa2b44c4884a6491545906e9a2116e0631c397af4e46a6f8f8",
+    "src/core/isolation.test.ts": "9986913ee09cd0a550ed696f1744844b26d2a1803b19842ef4623c1f0052d3a3",
+    "src/core/isolation.ts": "ae37a7734d0d93f747c47a0ae641e723a0ce9c3a6f9092a4032003ecabaa62a6",
+    "src/core/judge.test.ts": "3274e06a0830fe9952d4848f1e193a1e7daf204338e5c996d0efe46da74ed8cb",
+    "src/core/judge.ts": "44559e93759d6955737eb70f86f99a686c2590222ffd62cff01c71eda9672efc",
+    "src/core/matrix.test.ts": "5ce6e3b902b5dbabfec76ce20bf29acb2db7be398f30cc23d1d6bca4a3f47200",
+    "src/core/matrix.ts": "ae0011c9610bde6ffc8f43924baec0b27a00ef6554ebcebbb88f6bf361a0fdf6",
+    "src/core/model-preflight-worker.ts": "ab0d1530cfd99b9a583fe11eab40ddf6fef0b5c60707aab7e9a66d1e18303d80",
+    "src/core/model-preflight.test.ts": "df62cd4966d36ce11f9176dde619f22054a20d85dd1994de31d24849f0b5c4e4",
+    "src/core/model-preflight.ts": "b36ad2d7470c97980d1fb74d4201533bd4784671c3fd406a93f2274cc80b50ca",
+    "src/core/paths.test.ts": "39e37d27d386f4188f12648da6daecf52c9dc2e63eb99044d7dbf2294d41db97",
+    "src/core/paths.ts": "225e25b6dcde8758596eb29968b0477795b172271a8b4de6e0895e6e20434a30",
+    "src/core/pending-json.test.ts": "5268cd592998019f16e2ce8d37cd3a75147b75288d17c8def3e87e791eb762db",
+    "src/core/pending-json.ts": "555727c81a25c40af64e24188786f17849d343cc991db2898b0d18ba9bf4287e",
+    "src/core/pending.test.ts": "c116b83ea99ee1f6b8516f9e474567188aec50037cc9d0a9a6e70b0e2f15406d",
+    "src/core/pending.ts": "2930398d915cb87e1450fc73dad24429fb1def8b0c3cb86544a4828a867687ce",
+    "src/core/pi.test.ts": "b0ecc4d1b4058d7b6386f3803ef632955189a2395ecfd8773e5ce208d57659ee",
+    "src/core/pi.ts": "a3af444129b6491bea632251a03ccf031210c3960cb756dcc04a61c8754805fd",
+    "src/core/provenance.test.ts": "c8b70d3f167def51a2655d13bc7bd51adb36a1868273b5248e60b097f477a8c0",
+    "src/core/provenance.ts": "9542946da84ba515819a8dc5509bbfddf87ac5548faaef2d2657d58d8c8db84d",
+    "src/core/regression.test.ts": "64bce09bb7798f291d57ed144a71068a69f97efda7d6ae43aed7951ba382dd7f",
+    "src/core/regression.ts": "7e2174caf0d50eea44527fab41a9578cc49b41b320e10b0047adad4553d9697f",
+    "src/core/replay-execution.test.ts": "c9a9cd8f08f153ae16a8910badbcbc89b76d25891964a7b1e53bbad6d25ec512",
+    "src/core/repo-detect.test.ts": "df049a71dd7f70c25287570ea1e337253239ef584af52c71bfb2553a3204031a",
+    "src/core/repo-detect.ts": "fddf27e961a7c9e383eb03ec8acf834e9c71d9097c7e927ad56af5126838eb74",
+    "src/core/report-meta.test.ts": "b5192687e393798beeffe4b263c84b19f1bdce63b6f05ab0712127b02bd07bd1",
+    "src/core/report-meta.ts": "f543accbf20c5387855834c550516461fa719974296ef9ee6443f03104d0c941",
+    "src/core/report-quality.test.ts": "5366cb25ea2b9c97207688133ec5a3cc9d0f9241819301cb69cb622174ccd874",
+    "src/core/report-quality.ts": "9c2dee8bf4a60e89b65d7e66964934b24963c8d6621c806f2aeac015731e6ea9",
+    "src/core/report-safety.test.ts": "805fce4188234fa9d5774d7e4290127fdc566f68f1634d422cda3d64f209d152",
+    "src/core/report-safety.ts": "a95f41ac4a1b1d687a24b6e86c33b24613d8135adca21a3fb8659bf79f063fde",
+    "src/core/run-manifest.ts": "75b6ffd50d60118ed2e6ebad86faf4ddba46533603ce81bbfbcbf425fa15b290",
+    "src/core/runner-execution.test.ts": "6f8af2a4a48123f3aff0f971168795f13d03c7f6da438d5c28dad42b1fc7b618",
+    "src/core/runner.test.ts": "cfb483b6414fbbf4bb0fc8fd9ce1ce269835ae102363e66f73812fe147bccf11",
+    "src/core/runner.ts": "86d30c185bc32c439f142b8545ea061efedfed5d1c164a33bb7ea354d1660ec1",
+    "src/core/sensitivity.test.ts": "14759ec92391b031b327fdbecb897a65f90391c2d75dfc16dfeb57b687061252",
+    "src/core/sensitivity.ts": "de186009749ea892c631004634c58c6924e0c7cd691a63c92a4d8253776e3868",
+    "src/core/skill-files.ts": "bb5da9087499b97710d47da5d1dba8487b1c5b363c78b51647728224492c59c2",
+    "src/core/stats.test.ts": "d45497e139c5ceadb29643fe57648875717d7831da2fb5babd9739ca66307943",
+    "src/core/stats.ts": "1a6a181874965d72b9ce77dd1ee893b1a7a1c3f10945d5501fc9b2f886c0f065",
+    "src/core/suite.test.ts": "9938267605310e0835716096718d0cfd5891ad39935af9b9e91e9e05e041c71b",
+    "src/core/suite.ts": "dade0b25f6e188990ae523ad5c8802d035752f4c601b2842b4c93af3a4539c98",
+    "src/core/thresholds.ts": "1e612fa7c1815d7652754095132b2ce04be6b36d4590765d0412c08c6b6a4aa0",
+    "src/core/verdict-integrity.test.ts": "0fa678fc2b1127cf84c6e35e722986043ae581f0a9080941acd6e66262bb482c",
+    "src/core/verdict.test.ts": "c3febc91d50e8fc87249f9c9128dbcacc493933c6312a4dd82f63925ae65a9c7",
+    "src/core/verdict.ts": "9a621659c6643d7b976d34938598c482ee92cea1aed8a40b59d8bb9b47dbd6c1",
+    "src/core/verify-integrity.test.ts": "7c84f4cf9da7dcee4d4759678fa3ae431cfc0b3092162109cfa3fc6d14302cdd",
+    "src/core/verify.test.ts": "e90111c0f333e024b6e5f1e9a5245be6c4d5bc7efebe3e594c3c9d4b091875f2",
+    "src/core/verify.ts": "977efaa3df15ba4264db7970fa04a538e563ee6b5de124cecffe3e706cc0c253",
+    "src/report/markdown.ts": "c2fe13d3b9b48b29d74d2c7b9ff4f4480fa10a5d17318cf63276856cbebd6bdc",
+    "suites/controlled-example.json": "3e2edc235f0d26928c2de5073f0add4db619002dc556eeae1a5a6744da176c9f"
+  },
+  "toolErrorPolicy": "native-agent-recovery-v1",
+  "principlesReference": {
+    "path": "/Users/huangbo/Dev/OptraCall/docs/engineering-workflow.md",
+    "sha256": "630fcfef3d6b3e2eb91fb1d17b320956ae12ddcf0a3508311abb20e240033790",
+    "sourceHead": "98ee477eb1a3f9bdb0d64f1eed7cbb613b4e00bc",
+    "lines": "106-125",
+    "principles": [
+      "Host管环境",
+      "Agent自主执行",
+      "优先复用Pi已有能力",
+      "减少人的操作"
+    ]
+  },
+  "principlesReview": {
+    "Host": "Budget, filesystem/network boundary, cancellation and evidence retained; ordinary tool errors no longer terminate the agent",
+    "Agent": "Native agent decides tools, order and self-correction",
+    "PiReuse": "Removed interception at worker, parent and executor; no classifier, command whitelist or repair loop added",
+    "HumanOperations": "One existing authorization drove offline checks and one real run without per-tool approvals",
+    "scope": "Current diff only; no assertion of whole historical evaluator or existing SDK adapter compliance"
+  },
+  "offlineValidation": {
+    "command": "npm run check",
+    "tests": 458,
+    "pass": 458,
+    "fail": 0,
+    "skip": 0,
+    "logSha256": "313e253847ead810d5fad64ce6278959b3281a5f7b8b19aae0b7047b0920ff67"
+  },
+  "targetValidation": {
+    "tests": 50,
+    "pass": 50,
+    "fail": 0,
+    "skip": 0,
+    "redEvidence": "Denied read yielded one fixture request when two expected before fix; observed tool output, no raw RED log invented"
+  },
+  "realRun": {
+    "runId": "run-20261107-003328-a7074e62",
+    "runRoot": "runs/json-contract-native-recovery-20261107T003305Z",
+    "evidenceLevel": "real-model",
+    "suiteHash": "sha256:99bbb6aaa8febf3d",
+    "suiteVersion": "2",
+    "candidateIdentity": "sha256:af820bd96bb4647f180487e9922166f9d6feae5897bdb91f75f0bc775d88683e",
+    "subjectModel": "minimax-cn/MiniMax-M3.1-Flash",
+    "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "plannedSessions": 8,
+    "successfulSessions": 8,
+    "notRunSessions": 0,
+    "httpRequests": 11,
+    "http200": 11,
+    "cliExitCode": 0,
+    "durationSec": 69.454,
+    "usage": {
+      "input": 16208,
+      "output": 3405,
+      "cacheRead": 11299,
+      "cacheWrite": 0,
+      "totalTokens": 30912
+    },
+    "byRole": {
+      "subject": {
+        "sessions": 4,
+        "requests": 6,
+        "usage": {
+          "input": 7687,
+          "output": 2180,
+          "cacheRead": 4515,
+          "cacheWrite": 0,
+          "totalTokens": 14382
+        },
+        "equivalentNanoUsd": 3138300
+      },
+      "judge": {
+        "sessions": 4,
+        "requests": 5,
+        "usage": {
+          "input": 8521,
+          "output": 1225,
+          "cacheRead": 6784,
+          "cacheWrite": 0,
+          "totalTokens": 16530
+        },
+        "equivalentNanoUsd": 2485700
+      }
+    },
+    "sdkEstimatedUsdAllRoles": 0.0025184793,
+    "conservativeEquivalentUsd": 0.005624,
+    "pendingNanoUsd": 0,
+    "actualBilling": "UNKNOWN",
+    "remainingAccountQuota": "UNKNOWN",
+    "authAndExactModelPermission": "Both roles accepted at their configured endpoints for this run; not a guarantee of future availability",
+    "rawToolErrors": 0,
+    "realRecoveryProof": "NOT_TRIGGERED; recovery after actual native tool errors is verified by offline fixture integration tests",
+    "activation": {
+      "strongActivated": 2,
+      "plannedSkillRuns": 2
+    },
+    "assertions": {
+      "baseline": {
+        "runs": 2,
+        "fullyPassedRuns": 0,
+        "passedItems": 1,
+        "totalItems": 5
+      },
+      "skill": {
+        "runs": 2,
+        "fullyPassedRuns": 1,
+        "passedItems": 4,
+        "totalItems": 5
+      }
+    },
+    "pairwise": {
+      "win": 1,
+      "tie": 1,
+      "loss": 0,
+      "actualJudgeRuns": 4
+    },
+    "effectivenessVerdict": "inconclusive",
+    "limitation": "Only 2 independent tasks; skill numeric answer has number-valued answer instead of string and fails schema; successful execution is not full assertion success",
+    "integrity": {
+      "verified": true,
+      "issues": []
+    },
+    "subjectIsolationEvidence": {
+      "verified": true,
+      "issues": []
+    },
+    "blindingLimitation": {
+      "status": "NOT_FULLY_BLIND",
+      "evidence": "MiMo request messages with role=developer include the native Pi working directory; this runRoot contains the json-contract candidate name",
+      "scope": "User-level scoring materials are anonymized, but the full native SDK context is not proven fully anonymous",
+      "impact": "Keep existing raw judgments as diagnostic results; do not claim formal blind-judge acceptance or skill effectiveness from this smoke run",
+      "action": "Recorded only; no source change, rejudgment, rerun or alteration of historical results"
+    }
+  },
+  "preservation": {
+    "protectedFiles": 1434,
+    "changed": 0,
+    "originalFreezeSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloadFiles": 67,
+    "frozenPayloadChanges": 0,
+    "previousFailedRun": "runs/json-contract-real-20261107T001756Z-ehcchb3y",
+    "previousFailedRunFilesRetained": 20,
+    "originalCandidateUnchanged": true
+  },
+  "realInvocations": 1,
+  "selectiveReruns": 0,
+  "mainRetest": "NOT_RUN",
+  "delivery": {
+    "committed": false,
+    "pushed": false
+  },
+  "privateEvidenceRoot": ".local/native-agent-recovery-20261107T002920Z-5l3aq5j6"
+}

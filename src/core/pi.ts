@@ -88,19 +88,6 @@ export function emptyMetrics(): PiRunMetrics {
 }
 
 /**
- * 单次运行的默认超时。
- *
- * 取 480s 而非 180s 的实测依据（2026-11-01 阴性对照实验）：
- * 被测 skill 为 data-analysis v1.8.0 时，六段契约 + 门禁脚本 + 数字复算的
- * 引导让单次运行需 156–317s、消耗 175K+ tokens。180s 会把这类
- * 「慢但有效」的 skill 误杀为 failed（超时），把真实增益从 +50.0pp
- * 压到 +5.2pp，判定从 effective 翻成 inconclusive。
- *
- * 重量级 skill 是常态而非例外，超时必须留足余量。
- */
-export const DEFAULT_TIMEOUT_MS = 480_000;
-
-/**
  * 关闭宿主 IDE 注入的 fs hook。
  *
  * 背景（实测）：CodeBuddy / WorkBuddy 等宿主通过 `NODE_OPTIONS --require` 给所有
@@ -212,11 +199,10 @@ export function runPi(options: PiRunOptions): Promise<PiRunResult> {
     let timedOut = false;
     let settled = false;
 
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const timer = setTimeout(() => {
+    const timer = options.timeoutMs === undefined ? undefined : setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-    }, timeoutMs);
+    }, options.timeoutMs);
 
     const finish = (exitCode: number | null) => {
       if (settled) return;

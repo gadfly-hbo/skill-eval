@@ -12,7 +12,6 @@ import {
   reconcileVerdictWithScores,
   reconcileJudgeRun,
   LABEL_CONFLICT_MIN_DELTA,
-  DEFAULT_JUDGE_TIMEOUT_MS,
   buildJudgeSchedule,
   JUDGE_PROTOCOL_VERSION,
   type JudgeOptions,
@@ -357,14 +356,10 @@ test("正反轮一致时不被误判为位置偏好（实测 trap-incomplete-per
   assert.equal(probe.biased, false);
 });
 
-test("评委默认超时宽于 120 秒（实测 120s 会导致反轮空输出）", () => {
-  assert.ok(DEFAULT_JUDGE_TIMEOUT_MS >= 240_000);
-});
-
-test("超长输出（> 24000 字符）采用头尾保留窗口，不截断报告末尾的结论与免责声明", () => {
+test("超长输出完整送入评委，保留中间证据及末尾结论", () => {
   const longOutput =
     "【报告开头核心摘要】\n" +
-    "正文填充".repeat(7000) +
+    "正文填充".repeat(3500) + "MIDDLE_EVIDENCE_MUST_BE_JUDGED" + "正文填充".repeat(3500) +
     "\n【末尾参考文献与免责声明：本报告仅供参考】";
 
   const prompt = buildJudgePrompt({
@@ -375,7 +370,8 @@ test("超长输出（> 24000 字符）采用头尾保留窗口，不截断报告
 
   assert.match(prompt, /报告开头核心摘要/);
   assert.match(prompt, /末尾参考文献与免责声明/);
-  assert.match(prompt, /中间省略/);
+  assert.ok(prompt.includes(longOutput));
+  assert.doesNotMatch(prompt, /中间省略/);
 });
 
 

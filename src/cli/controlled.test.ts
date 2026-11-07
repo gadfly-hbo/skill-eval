@@ -49,19 +49,19 @@ function assertBlocked(f: ReturnType<typeof fixture>, result: ReturnType<ReturnT
   assert.deepEqual(readdirSync(f.home), [], "guard must not read/copy/create real auth configuration");
 }
 
-test("eval 会话规划包含诊断题和全部评委轮次，超限在模型目录发现前拒绝", () => {
+test("eval 大于8个计划会话仍进入精确模型预检", () => {
   const f = fixture([
     { id: "scored", prompt: "Scored fixture", kind: "scored" },
     { id: "diagnostic1", prompt: "Diagnostic fixture one", kind: "diagnostic" },
     { id: "diagnostic2", prompt: "Diagnostic fixture two", kind: "diagnostic" },
   ]);
   try {
-    assertBlocked(f, f.run([...f.evalArgs, "--judge-repeat", "1"]), /会话|session|预算/i); // 6 subjects + 3 judges = 9
-    assertBlocked(f, f.run([...f.evalArgs, "--judge-repeat", "7"]), /会话|session|预算/i);
+    assertBlocked(f, f.run([...f.evalArgs, "--judge-repeat", "1"]), /模型预检|Pi.*运行时|SDK|package\.json/);
+    assertBlocked(f, f.run([...f.evalArgs, "--judge-repeat", "7"]), /模型预检|Pi.*运行时|SDK|package\.json/);
   } finally { f.cleanup(); }
 });
 
-test("eval 8 会话边界和单元素 --models 通过预算规划，仍须精确目录核验", () => {
+test("eval 单元素 --models 与普通选型均须精确目录核验", () => {
   const f = fixture([
     { id: "scored", prompt: "Scored fixture", kind: "scored" },
     { id: "diagnostic", prompt: "Diagnostic fixture", kind: "diagnostic" },
@@ -75,10 +75,10 @@ test("eval 8 会话边界和单元素 --models 通过预算规划，仍须精确
   } finally { f.cleanup(); }
 });
 
-test("eval 拒绝多模型矩阵，不为每个 cell 重置预算", () => {
+test("eval 明确报告单模型入口的能力范围", () => {
   const f = fixture();
   try {
-    assertBlocked(f, f.run([...f.evalArgs, "--models", `${subject},${subject}`]), /多模型矩阵.*共享预算/);
+    assertBlocked(f, f.run([...f.evalArgs, "--models", `${subject},${subject}`]), /只接受单个被评模型/);
   } finally { f.cleanup(); }
 });
 
@@ -109,7 +109,7 @@ test("eval 不允许非正整数重复次数绕过会话规划", () => {
   } finally { f.cleanup(); }
 });
 
-test("eval/report 明确拒绝未入账的 llm-advice，原始记录不变且不生成派生目录", () => {
+test("eval/report 退役额外建议调用，原始记录不变且不生成派生目录", () => {
   const f = fixture();
   try {
     const historical = join(f.root, "historical");
@@ -118,7 +118,7 @@ test("eval/report 明确拒绝未入账的 llm-advice，原始记录不变且不
     writeFileSync(join(historical, "summary.json"), original);
     for (const command of [f.evalArgs, ["report", "--run", historical]]) {
       for (const flag of ["--llm-advice", "--llm-advice=true", "--llm-advice=false"]) {
-        assertBlocked(f, f.run([...command, flag]), /llm-advice.*共享费用账本/);
+        assertBlocked(f, f.run([...command, flag]), /llm-advice.*退役/);
       }
     }
     assert.equal(readFileSync(join(historical, "summary.json"), "utf8"), original);
@@ -140,17 +140,18 @@ test("eval 非空历史目录保护优先于预算规划及 SDK 发现", () => {
   } finally { f.cleanup(); }
 });
 
-test("CLI help 说明精确成本配置、全部会话和固定预算", () => {
+test("CLI help 说明原生模型能力和不设预算或默认超时", () => {
   const f = fixture();
   try {
     const result = f.run(["help"]);
     assert.equal(result.status, 0);
     assert(result.stdout.includes(subject));
     assert(result.stdout.includes(judge));
-    assert.match(result.stdout, /最多 8 会话/);
-    assert.match(result.stdout, /US\$1 等价预算/);
+    assert.match(result.stdout, /原生上下文和输出上限/);
+    assert.match(result.stdout, /不设预算封顶/);
     assert.match(result.stdout, /诊断题与全部评委轮次/);
-    assert.match(result.stdout, /超过限额请缩小本次计划，或另行制定预算/);
+    assert.match(result.stdout, /默认不设/);
+    assert.doesNotMatch(result.stdout, /最多 8 会话|US\$1 等价预算|默认 480000|默认 300000/);
   } finally { f.cleanup(); }
 });
 
@@ -165,7 +166,7 @@ const nativeRuntime = installedRuntime();
 
 for (const scenario of ["complete", "judge401"] as const) test(scenario === "complete"
   ? "普通 eval CLI 离线贯通原编排、原生隔离 worker、双角色共享账本及报告"
-  : "普通 eval CLI 评委401异常即停、partial非零退出，保留失败及未运行证据", {
+  : "普通 eval CLI 评委最终401失败不连坐其余冻结轮次，partial非零退出", {
   skip: nativeRuntime ? false : "Installed native Pi SDK and macOS sandbox required",
   timeout: 60_000,
 }, () => {
@@ -205,7 +206,7 @@ globalThis.fetch = async (url, init) => {
   const headers = new Headers(init?.headers);
   if ((!isSubject && !isJudge) || body.model !== (isSubject ? 'MiniMax-M3.1-Flash' : 'mimo-v2.6-flash') ||
       headers.get(isSubject ? 'x-api-key' : 'authorization') !== (isSubject ? 'fixture-only' : 'Bearer fixture-only')) forbidden();
-  appendFileSync(calls, JSON.stringify({ role: isSubject ? 'subject' : 'judge', model: body.model }) + '\\n');
+  appendFileSync(calls, JSON.stringify({ role: isSubject ? 'subject' : 'judge', model: body.model, maxOutputTokens:body.max_tokens??body.max_completion_tokens, thinking:body.thinking }) + '\\n');
   if (!isSubject && ${JSON.stringify(scenario)} === 'judge401') return new Response('OFFLINE_HTTP_401_FIXTURE', {status:401});
   let stream;
   if (isSubject) {
@@ -244,27 +245,31 @@ globalThis.fetch = async (url, init) => {
       assert.equal(result.status, 1, result.stdout + result.stderr);
       assert.equal(summary.status, "partial");
       assert.equal(summary.results.length, 4);
-      assert.equal(ledger.state, "stopped");
-      assert.equal(ledger.stoppedReason, "PROVIDER_HTTP_401");
-      assert.equal(ledger.sessions.length, 5);
-      assert.equal(ledger.requests.length, 5);
+      assert.equal(ledger.state, "open");
+      assert.equal(ledger.stoppedReason, null);
+      assert.equal(ledger.sessions.length, 8);
+      assert(ledger.requests.length >= 8);
       assert.equal(ledger.sessions.at(-1).state, "failed");
       assert.equal(ledger.requests.at(-1).state, "failed");
-      assert.equal(ledger.chargedNanoUsd, 147195360, "ambiguous failed judge request keeps its full reservation");
-      assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 5);
+      assert.equal(ledger.chargedNanoUsd, null, "failed requests have UNKNOWN fees, not fabricated zero or full-window charges");
+      assert.equal(ledger.knownChargedNanoUsd, 108000);
+      assert(ledger.unknownRequests >= 4);
+      assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, ledger.requests.length);
       const statuses = JSON.parse(readFileSync(join(out, "execution-status.json"), "utf8"));
-      assert.equal(statuses.stopped, true);
+      assert.equal(statuses.stopped, false);
       const notRun = statuses.sessions.filter((row: { status: string }) => row.status === "NOT_RUN");
-      assert.equal(notRun.length, 3);
+      assert.equal(notRun.length, 0);
       assert(notRun.every((row: object) => !("usage" in row) && !("cost" in row)));
       const firstJudge = summary.pairwise[0];
-      assert.equal(firstJudge.judgeRuns.length, 1);
+      assert.equal(firstJudge.judgeRuns.length, 2);
       assert.equal(firstJudge.verdict, "not_judged");
       assert(firstJudge.judgeRuns[0].error, "failed judge must retain an error code");
       const judgeDir = join(out, "pairwise", firstJudge.variantResultId);
       const judgePlan = JSON.parse(readFileSync(join(judgeDir, "judge-plan.json"), "utf8"));
       const failure = JSON.parse(readFileSync(join(judgeDir, judgePlan.rounds[0].dirName, "failure-evidence.json"), "utf8"));
-      assert.equal(failure.firstCause.code, "PROVIDER_HTTP_401");
+      assert(failure.firstCause, "SDK terminal failure retains a final cause");
+      const failedWire = readdirSync(join(judgeDir, judgePlan.rounds[0].dirName)).find(name => /^wire-.*\.json$/.test(name) && !name.endsWith(".request.json"))!;
+      assert.equal(JSON.parse(readFileSync(join(judgeDir, judgePlan.rounds[0].dirName, failedWire), "utf8")).response.status, 401, "raw HTTP status remains authoritative");
       assert.equal(readFileSync(join(config, "auth.json"), "utf8"), fakeAuth);
       return;
     }
@@ -281,13 +286,16 @@ globalThis.fetch = async (url, init) => {
     assert(ledger.sessions.every((row: { state: string }) => row.state === "completed"));
     assert.equal(ledger.chargedNanoUsd, 186400, "raw fixture usage must include both subjects and judges");
     assert.equal(ledger.reservedNanoUsd, 0);
-    assert.equal(ledger.requests.length, 8);
-    assert.equal(readFileSync(calls, "utf8").trim().split("\n").length, 8);
+    assert(ledger.requests.length >= 8);
+    const captured = readFileSync(calls, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    assert.equal(captured.length, ledger.requests.length);
+    assert(captured.filter(row => row.role === "subject").every(row => row.maxOutputTokens === 524288 && row.thinking?.type === "adaptive"));
+    assert(captured.filter(row => row.role === "judge").every(row => row.maxOutputTokens === 131072 && row.thinking?.type === "enabled"));
+    assert.equal(ledger.policy.maxNanoUsd, null);
+    assert.equal(ledger.policy.maxSessions, null);
     assert.equal(JSON.parse(readFileSync(join(out, "controlled-execution.json"), "utf8")).plannedSessions, 8);
-    const timerValues = readFileSync(timers, "utf8").trim().split("\n").map(line => JSON.parse(line));
-    assert.equal(timerValues.filter(ms => ms === 480_000).length, 4, "ordinary subject default must reach the actual controlled parent deadline");
-    assert.equal(timerValues.filter(ms => ms === 300_000).length, 4, "ordinary judge default must reach the actual controlled parent deadline");
-    assert(!timerValues.includes(120_000), "controlled layer must not silently shorten the original subject timeout");
+    const timerValues = existsSync(timers) ? readFileSync(timers, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+    assert(!timerValues.includes(480_000) && !timerValues.includes(300_000) && !timerValues.includes(120_000), "Host must not impose an unrequested sample deadline");
     assert.match(readFileSync(join(out, "REPORT.md"), "utf8"), /激活|activation/i);
     assert.equal(readFileSync(join(config, "auth.json"), "utf8"), fakeAuth);
   } finally { rmSync(root, { recursive: true, force: true }); }

@@ -1,18 +1,20 @@
 /** One controlled transport shared by the ordinary eval subject and judge orchestration. */
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import { ControlledBudget, CONTROLLED_BUDGET_POLICY, type BudgetSnapshot, type SessionRole } from "./controlled-budget.ts";
+import { ControlledBudget, CONTROLLED_BUDGET_POLICY, type BudgetSnapshot, type NativeModelLimitsByRole, type SessionRole } from "./controlled-budget.ts";
 import { runControlledSession } from "./controlled-session.ts";
 import { canonicalPath } from "./isolation.ts";
-import { DEFAULT_TIMEOUT_MS, emptyMetrics, type PiRunOptions, type PiRunResult } from "./pi.ts";
+import { emptyMetrics, type PiRunOptions, type PiRunResult } from "./pi.ts";
+import { TOOL_ERROR_POLICY_VERSION } from "./failure-evidence.ts";
 
 export interface EvaluationExecution {
   mode: "real" | "simulated";
   run(role: SessionRole, options: PiRunOptions): Promise<PiRunResult>;
   isStopped(): boolean;
   snapshot(): BudgetSnapshot;
+  finalize?(): void;
 }
 
 interface ControlledPlan { model: string; judgeModel: string; plannedSessions: number; }
@@ -22,8 +24,8 @@ export function validateControlledPlan(plan: ControlledPlan): void {
   if (plan.model !== CONTROLLED_BUDGET_POLICY.models.subject.model || plan.judgeModel !== CONTROLLED_BUDGET_POLICY.models.judge.model) {
     throw new Error(`CONTROLLED_MODEL_PROFILE_MISMATCH: 当前成本 profile 仅支持 subject=${CONTROLLED_BUDGET_POLICY.models.subject.model}、judge=${CONTROLLED_BUDGET_POLICY.models.judge.model}；不自动替换模型`);
   }
-  if (!Number.isSafeInteger(plan.plannedSessions) || plan.plannedSessions < 1 || plan.plannedSessions > CONTROLLED_BUDGET_POLICY.maxSessions) {
-    throw new Error("CONTROLLED_SESSION_PLAN_LIMIT: 计划会话数须为 1–8 的整数；请缩小计划或另行制定预算");
+  if (!Number.isSafeInteger(plan.plannedSessions) || plan.plannedSessions < 1) {
+    throw new Error("CONTROLLED_SESSION_PLAN_LIMIT: 计划会话数须为正整数；会话矩阵由实验方案确定");
   }
 }
 
@@ -37,15 +39,64 @@ function persistJson(path: string, value: unknown, initial = false): void {
   try { fsyncSync(directory); } finally { closeSync(directory); }
 }
 
+/** Incremental accounting is authoritative; the JSON file is a compatibility snapshot. */
+export function createLedgerPersistence(budget: ControlledBudget, ledgerPath: string): { sync(): void; finalize(): void } {
+  const journalPath = join(dirname(ledgerPath), "budget-ledger.jsonl");
+  if ([ledgerPath, `${ledgerPath}.tmp`, journalPath].some(existsSync)) throw new Error("CONTROLLED_EXECUTION_RECORD_EXISTS");
+  persistJson(ledgerPath, budget.snapshot(), true);
+  let finalWritten = false;
+  let finalAttempted = false;
+  const writeFinal = () => {
+    if (finalAttempted) return;
+    finalAttempted = true;
+    persistJson(ledgerPath, budget.snapshot());
+    finalWritten = true;
+  };
+  const sync = () => {
+    const changes = budget.drainUpdates();
+    if (!changes.length) return;
+    try {
+      for (const change of changes) appendFileSync(journalPath, JSON.stringify(change) + "\n", { mode: 0o600 });
+      const file = openSync(journalPath, "r");
+      try { fsyncSync(file); } finally { closeSync(file); }
+    } catch {
+      budget.stop("LEDGER_PERSISTENCE_FAILED");
+      // Preserve a terminal snapshot if the journal alone failed. A failing disk
+      // must never trigger another Provider dispatch or an unbounded write loop.
+      try { writeFinal(); } catch { /* the caller still receives the Host failure */ }
+      throw new Error("LEDGER_PERSISTENCE_FAILED");
+    }
+  };
+  sync();
+  const directory = openSync(dirname(ledgerPath), "r");
+  try { fsyncSync(directory); } finally { closeSync(directory); }
+  return {
+    sync,
+    finalize() {
+      if (finalWritten) return;
+      if (finalAttempted) throw new Error("LEDGER_PERSISTENCE_FAILED");
+      try { sync(); writeFinal(); }
+      catch {
+        budget.stop("LEDGER_PERSISTENCE_FAILED");
+        // If only the compatibility snapshot failed, the primary journal can
+        // still preserve the Host-stop cause without another full serialization.
+        try { sync(); } catch { /* original finalization failure remains fatal */ }
+        throw new Error("LEDGER_PERSISTENCE_FAILED");
+      }
+    },
+  };
+}
+
 /** Real factory has no injection or environment bypass. Offline tests supply explicit simulated executors. */
-export function createControlledExecution(options: ControlledPlan & { runRoot: string; home?: string }): EvaluationExecution {
+export function createControlledExecution(options: ControlledPlan & { runRoot: string; home?: string; nativeLimits?: NativeModelLimitsByRole }): EvaluationExecution {
   validateControlledPlan(options);
   const { model: subjectModel, judgeModel, plannedSessions } = options;
+  if (!options.nativeLimits?.subject || !options.nativeLimits?.judge) throw new Error("CONTROLLED_NATIVE_MODEL_LIMITS_REQUIRED: 真实执行须绑定已核验目录中的原生上下文与输出上限");
+  const budget = new ControlledBudget(options.nativeLimits);
   const runRoot = canonicalPath(options.runRoot), home = canonicalPath(options.home ?? homedir());
-  const budget = new ControlledBudget();
   const ledgerPath = join(runRoot, "budget-ledger.json"), recordPath = join(runRoot, "controlled-execution.json");
   // Refuse reuse before touching either historical record; run continuation is not selective replay.
-  if ([ledgerPath, recordPath, `${ledgerPath}.tmp`, `${recordPath}.tmp`].some(existsSync)) throw new Error("CONTROLLED_EXECUTION_RECORD_EXISTS");
+  if ([ledgerPath, join(runRoot, "budget-ledger.jsonl"), recordPath, `${ledgerPath}.tmp`, `${recordPath}.tmp`].some(existsSync)) throw new Error("CONTROLLED_EXECUTION_RECORD_EXISTS");
   const catalogHashes: Record<string, string | null> = {};
   for (const name of ["models.json", "models-store.json"]) {
     const source = join(home, ".pi", "agent", name);
@@ -54,27 +105,38 @@ export function createControlledExecution(options: ControlledPlan & { runRoot: s
   mkdirSync(runRoot, { recursive: true, mode: 0o700 });
   const record = {
     schemaVersion: 1, mode: "real", profile: CONTROLLED_BUDGET_POLICY.version,
+    toolErrorPolicy: TOOL_ERROR_POLICY_VERSION,
     model: subjectModel, judgeModel, plannedSessions,
+    nativeLimits: {
+      subject: { contextWindow: budget.getModelLimits("subject").contextWindow, maxOutputTokens: budget.getModelLimits("subject").maxOutputTokens },
+      judge: { contextWindow: budget.getModelLimits("judge").contextWindow, maxOutputTokens: budget.getModelLimits("judge").maxOutputTokens },
+    },
+    nativeLimitsSource: "verified-sdk-model-catalog",
     catalogHashes, sessions: [] as Array<{ sessionId: string; transportSessionId: string; role: SessionRole }>,
   };
-  persistJson(ledgerPath, budget.snapshot(), true);
+  const persistence = createLedgerPersistence(budget, ledgerPath);
   persistJson(recordPath, record, true);
-  const syncLedger = () => persistJson(ledgerPath, budget.snapshot());
+  const syncLedger = persistence.sync;
+  let finalized = false;
+  const finalize = () => { persistence.finalize(); finalized = true; };
   const rejected = (reason: string): PiRunResult => ({
     exitCode: null, metrics: emptyMetrics(), events: [], stderr: reason, timedOut: false,
     isolation: { verified: false, issues: [reason], backend: "macos-sandbox-exec-network-denied" },
   });
   const stop = (reason: string): PiRunResult => {
     budget.stop(reason);
-    syncLedger();
+    try { finalize(); }
+    catch { return rejected("LEDGER_PERSISTENCE_FAILED"); }
     return rejected(reason);
   };
   return {
     mode: "real",
     snapshot: () => budget.snapshot(),
-    isStopped: () => budget.snapshot().state === "stopped",
+    isStopped: () => budget.isStopped(),
+    finalize,
     async run(role, request) {
-      if (budget.snapshot().state === "stopped") return rejected("CONTROLLED_EXECUTION_STOPPED");
+      if (budget.isStopped()) return rejected("CONTROLLED_EXECUTION_STOPPED");
+      if (finalized) return rejected("CONTROLLED_EXECUTION_FINALIZED");
       try {
         if (role !== "subject" && role !== "judge") return stop("CONTROLLED_INVALID_ROLE");
         const model = role === "subject" ? subjectModel : judgeModel;
@@ -97,18 +159,18 @@ export function createControlledExecution(options: ControlledPlan & { runRoot: s
         persistJson(recordPath, record);
         const result = await runControlledSession({
           workspaceRoot: workspace, sessionId: transportSessionId, prompt: request.prompt,
-          model, skillPaths, home, role, budget, timeoutMs: request.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          model, skillPaths, home, role, budget, timeoutMs: request.timeoutMs,
           catalogHashes, onLedger: syncLedger, onEvent: request.onEvent,
         });
-        if (result.exitCode !== 0 || result.timedOut || !result.isolation.verified || !result.metrics.output.trim() ||
-            result.events.some(event => event.type === "tool_execution_end" && event.isError === true)) {
-          budget.stop(result.stderr || "CONTROLLED_SESSION_FAILED");
-        }
+        // Ordinary SDK failures remain sample data. The session records genuine
+        // Host failures itself; a missing isolation proof is also a Host fault.
+        if (!result.isolation.verified) budget.stop(result.stderr || "CONTROLLED_SANDBOX_FAILED");
         syncLedger();
+        if (budget.isStopped()) finalize();
         return result;
       } catch {
         // Avoid surfacing credential-bearing native or filesystem exception text.
-        return stop("CONTROLLED_EXECUTION_FAILED");
+        return stop(budget.getStopReason() ?? "CONTROLLED_EXECUTION_FAILED");
       }
     },
   };

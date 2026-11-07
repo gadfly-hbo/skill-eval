@@ -62,37 +62,39 @@ test("原 eval 通过同一个执行器调用 subject 和 judge，保留原计�
   assert.deepEqual(f.state().sessions.map((row: { status: string }) => row.status), ["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]);
 });
 
-test("首次 subject 失败停止整批；未执行项只记 NOT_RUN，不伪造运行或零 usage", async (t) => {
+test("subject 失败仍完成其余独立样本；不合格配对的评委保持 NOT_RUN", async (t) => {
   const f = fixture(t, () => "FAIL");
   const summary = await runEvaluation(f.options);
-  assert.equal(f.calls.length, 1);
-  assert.equal(summary.results.length, 1);
+  assert.equal(f.calls.length, 2);
+  assert.equal(summary.results.length, 2);
   assert.equal(summary.results[0]!.assertions, null);
   assert.equal(summary.status, "failed");
   assert.equal(summary.pairwise[0]!.verdict, "not_judged");
   assert.equal(summary.variantSummaries.find((row) => row.variantId === "skill")!.totalScoredPairs, 1);
   const skipped = f.state().sessions.filter((row: { status: string }) => row.status === "NOT_RUN");
-  assert.equal(skipped.length, 3);
+  assert.equal(skipped.length, 2);
+  assert.equal(f.state().stopped, false);
   assert.ok(skipped.every((row: object) => !("usage" in row) && !("cost" in row)));
   const report = renderReport({ summary, tasks: f.options.tasks, variants: f.options.variants,
-    verdict: "inconclusive", verdictReason: "整批停止", meta: { skillPath: "/candidate/SKILL.md",
+    verdict: "inconclusive", verdictReason: "样本失败", meta: { skillPath: "/candidate/SKILL.md",
       skillHash: "fixture", skillVersion: "1", suiteId: "fixture", suiteVersion: "1",
       runRoot: f.root, piHome: null, generatedAt: "offline" } });
-  assert.match(report, /STOPPED.*NOT_RUN 3/);
+  assert.match(report, /failed.*NOT_RUN 2/);
   assert.match(report, /budget-ledger\.json.*subject \+ judge/);
   assert.match(report, /被评会话 SDK 估计成本/);
 });
 
-test("评委解析异常停止剩余评委，subject 成功不能使整批冒充 success", async (t) => {
+test("评委解析失败继续全部冻结轮次，subject 成功不能使整批冒充 success", async (t) => {
   const f = fixture(t, (role) => role === "judge" ? "invalid-json" : "ok");
   f.options.tasks.push({ id: "t2", prompt: "second task" });
   const summary = await runEvaluation(f.options);
-  assert.equal(f.calls.length, 5);
+  assert.equal(f.calls.length, 8);
   assert.equal(summary.status, "partial");
   assert.equal(summary.results.length, 4);
-  assert.equal(summary.pairwise[0]!.judgeRuns.length, 1);
+  assert.equal(summary.pairwise[0]!.judgeRuns.length, 2);
   assert.ok(summary.pairwise.every((row) => row.verdict === "not_judged"));
-  assert.equal(f.state().sessions.filter((row: { status: string }) => row.status === "NOT_RUN").length, 3);
+  assert.equal(f.state().sessions.filter((row: { status: string }) => row.status === "NOT_RUN").length, 0);
+  assert.equal(f.state().stopped, false);
 });
 
 test("评委中途失败保留已执行票，按完整冻结轮数聚合，不缩为一票通过", async (t) => {
@@ -100,10 +102,11 @@ test("评委中途失败保留已执行票，按完整冻结轮数聚合，不�
     ? JSON.stringify({ verdict: "win", scoreA: 60, scoreB: 90, confidence: 0.9, reason: "better" }) : "FAIL" : "ok");
   f.options.judgeRepeat = 3;
   const summary = await runEvaluation(f.options);
-  assert.equal(f.calls.length, 4);
+  assert.equal(f.calls.length, 5);
   assert.equal(summary.pairwise[0]!.verdict, "not_judged");
-  assert.equal(summary.pairwise[0]!.judgeRuns.length, 2, "不把未执行票伪装成真实评委运行");
-  assert.equal(f.state().sessions.filter((row: { status: string }) => row.status === "NOT_RUN").length, 1);
+  assert.equal(summary.pairwise[0]!.judgeRuns.length, 3, "全部冻结轮次实际执行且失败票不剔除");
+  assert.equal(summary.pairwise[0]!.judgeRuns.filter(run => run.verdict === "not_judged").length, 2);
+  assert.equal(f.state().sessions.filter((row: { status: string }) => row.status === "NOT_RUN").length, 0);
 });
 
 test("执行入口抛错也会持久化首次失败并停批，不生成虚构 RunResult", async (t) => {

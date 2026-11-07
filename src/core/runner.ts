@@ -18,6 +18,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 
 import { join, basename, dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createControlledExecution, validateControlledPlan, type EvaluationExecution } from "./execution.ts";
+import type { NativeModelLimitsByRole } from "./controlled-budget.ts";
 import { detectActivation, summarizeActivation, parseFrontmatter, type ActivationResult } from "./activation.ts";
 import { detectContamination, type ContaminationReport } from "./contamination.ts";
 import { evaluateAssertions, type Assertion, type AssertionReport } from "./assertions.ts";
@@ -81,6 +82,7 @@ export interface RunnerOptions {
   model: string;
   /** 评委模型。 */
   judgeModel?: string | undefined;
+  nativeLimits?: NativeModelLimitsByRole;
   variants: Variant[];
   tasks: EvalTask[];
   /** 每用例重复次数。 */
@@ -97,7 +99,7 @@ export interface RunnerOptions {
   keywordSignal?: boolean;
   /** 单次运行超时。 */
   timeoutMs?: number;
-  /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
+  /** 评委单次超时，仅使用明确配置的值。 */
   judgeTimeoutMs?: number;
   /**
    * 被测 skill 的 SKILL.md 路径，仅用于污染检测。
@@ -268,7 +270,7 @@ export interface EvaluationSummary {
   isolation?: VerificationState;
   policyVersion?: string;
   evidenceLevel?: "real-model" | "replay" | "offline-fixture";
-  execution?: { statusFile: string; plannedSessions: number; attemptedSessions: number; notRunSessions: number; stopped: boolean; reason: string | null };
+  execution?: { statusFile: string; plannedSessions: number; attemptedSessions: number; notRunSessions: number; stopped: boolean; reason: string | null; budgetCapNanoUsd?: number | null };
   manifest?: RunManifest;
   analysisOf?: { runId: string; originalSuiteHash?: string; suiteHash?: string; createdAt: string };
   judgeRepeat: number;
@@ -344,6 +346,7 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
   const execution = options.execution ?? createControlledExecution({
     runRoot: options.runRoot, home: options.home, model: options.model,
     judgeModel: options.judgeModel ?? options.model, plannedSessions: sessions.length,
+    nativeLimits: options.nativeLimits,
   });
   options = { ...options, execution };
   const state: ExecutionStatus = { sessions, stopped: false, reason: null };
@@ -368,7 +371,7 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
         }
         results.push(result);
         planned.status = result.status === "success" ? "SUCCESS" : "FAILED";
-        if (result.status === "failed") stopBatch(options, state, result.error ?? "subject 运行失败");
+        if (execution.isStopped()) stopBatch(options, state, execution.snapshot().stoppedReason ?? result.error ?? "Host 执行故障");
         else saveExecutionStatus(options.runRoot, state);
         options.onProgress?.({
           phase: "run",
@@ -384,6 +387,8 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
   // 阶段二：成对评判。
   const pairwise = await judgeAll(options, results, judgeRepeat, runPairwiseJudge, state);
   if (execution.isStopped() && !state.stopped) stopBatch(options, state, execution.snapshot().stoppedReason ?? "受控执行层已停止");
+  try { execution.finalize?.(); }
+  catch { stopBatch(options, state, execution.snapshot().stoppedReason ?? "LEDGER_PERSISTENCE_FAILED"); }
 
   const endedAt = Date.now();
   const failedCount = results.filter((result) => result.status === "failed").length;
@@ -403,7 +408,7 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
     execution: { statusFile: "execution-status.json", plannedSessions: sessions.length,
       attemptedSessions: sessions.filter((row) => row.status !== "NOT_RUN").length,
       notRunSessions: sessions.filter((row) => row.status === "NOT_RUN").length,
-      stopped: state.stopped, reason: state.reason },
+      stopped: state.stopped, reason: state.reason, budgetCapNanoUsd: execution.snapshot().policy.maxNanoUsd },
     integrity: checkRunIntegrity(options.runRoot, options.manifest ?? null, results),
     isolation: {
       verified: results.length > 0 && results.every((result) => result.isolation?.verified === true),
@@ -622,9 +627,11 @@ export async function judgeAll(
       runs.push(reconcileJudgeRun(raw, round.swapped));
       if (planned) planned.status = raw.verdict === "not_judged" || raw.error ? "FAILED" : "SUCCESS";
       if (raw.verdict === "not_judged" || raw.error) {
-        halted = true;
         if (planned) planned.reason = raw.error ?? raw.reason;
-        if (state) stopBatch(options, state, raw.error ?? raw.reason);
+      }
+      if (options.execution?.isStopped()) {
+        halted = true;
+        if (state) stopBatch(options, state, options.execution.snapshot().stoppedReason ?? raw.error ?? raw.reason);
       } else if (state) saveExecutionStatus(options.runRoot, state);
     }
     const forward = runs.find((run) => run.swapped === false);
@@ -1087,10 +1094,11 @@ export async function recomputeSummary(
             row.attempt !== planned.attempt || row.roundIndex !== planned.roundIndex ||
             !["NOT_RUN", "RUNNING", "SUCCESS", "FAILED"].includes(row.status) ||
             row.reason !== undefined && typeof row.reason !== "string") throw new Error("执行状态侧车身份、状态或顺序无效");
-        if (unfinished && row.status !== "NOT_RUN") throw new Error("执行状态侧车出现停批后的会话");
-        if (row.status !== "SUCCESS") unfinished = true;
-        if (row.status === "FAILED" && !state.stopped) throw new Error("失败会话缺少整批停止状态");
         const result = results.find(item => item.variantId === row.variantId && item.taskId === row.taskId && item.attempt === row.attempt);
+        if (unfinished && row.status !== "NOT_RUN") throw new Error("执行状态侧车出现未派发会话之后的执行");
+        const baselineResult = executionBaseline && results.find(item => item.variantId === executionBaseline.id && item.taskId === row.taskId && item.attempt === row.attempt);
+        const ineligibleJudge = row.phase === "judge" && (result?.status !== "success" || baselineResult?.status !== "success");
+        if (row.status === "RUNNING" || row.status === "NOT_RUN" && !ineligibleJudge) unfinished = true;
         if (row.phase === "subject") {
           if (row.status === "SUCCESS" && result?.status !== "success" || row.status === "NOT_RUN" && result || row.status === "FAILED" && result?.status === "success") throw new Error("subject 执行状态与原始产物不一致");
         } else {
@@ -1106,8 +1114,15 @@ export async function recomputeSummary(
       execution = { statusFile: "execution-status.json", plannedSessions: expected.length,
         attemptedSessions: state.sessions.filter(row => row.status !== "NOT_RUN").length,
         notRunSessions: state.sessions.filter(row => row.status === "NOT_RUN").length,
-        stopped: state.stopped, reason: state.reason };
-      if (stored?.execution && (Object.keys(execution) as Array<keyof NonNullable<EvaluationSummary["execution"]>>).some(key => stored.execution![key] !== execution![key])) throw new Error("执行状态侧车与已保存汇总不一致");
+        stopped: state.stopped, reason: state.reason,
+        ...(stored?.execution?.budgetCapNanoUsd !== undefined ? { budgetCapNanoUsd: stored.execution.budgetCapNanoUsd } : {}),
+      };
+      if (stored?.execution && (["statusFile", "plannedSessions", "attemptedSessions", "notRunSessions", "stopped", "reason"] as const).some(key => stored.execution![key] !== execution![key])) throw new Error("执行状态侧车与已保存汇总不一致");
+      const ledgerPath = join(runRoot, "budget-ledger.json");
+      if (existsSync(ledgerPath)) {
+        const cap = JSON.parse(readFileSync(ledgerPath, "utf8")).policy?.maxNanoUsd;
+        if (cap === null || typeof cap === "number" && Number.isFinite(cap)) execution.budgetCapNanoUsd = cap;
+      }
       incompleteExecution = state.stopped || state.sessions.some(row => row.status !== "SUCCESS");
       // Missing votes remain in the already-computed quorum denominator; only
       // actual saved judgments belong in the list of executed judge runs.

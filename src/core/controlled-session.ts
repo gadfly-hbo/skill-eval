@@ -1,7 +1,7 @@
 /** Restricted native Pi session. Only this parent process owns credentials/network. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -14,6 +14,7 @@ const SUBJECT = "minimax-cn/MiniMax-M3.1-Flash";
 const JUDGE = "xiaomi-token-plan-cn/mimo-v2.6-flash";
 export interface ControlledRequest { requestId: string; url: string; body: string; headers: Record<string, string> }
 class ControlledRequestError extends Error {}
+class HostRequestError extends ControlledRequestError {}
 type Usage = { input: number; output: number; cacheRead: number; cacheWrite: number };
 function count(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ControlledRequestError("INVALID_PROVIDER_USAGE");
@@ -30,7 +31,8 @@ export function parseProviderUsage(model: string, text: string): Usage {
       const event = JSON.parse(payload);
       if (event.type === "error") throw new ControlledRequestError("PROVIDER_STREAM_ERROR");
       if (event.type === "message_start") {
-        if (input || event.message?.model !== "MiniMax-M3.1-Flash") throw new ControlledRequestError("PROVIDER_MODEL_OR_USAGE_MISMATCH");
+        if (event.message?.model !== "MiniMax-M3.1-Flash") throw new HostRequestError("PROVIDER_MODEL_MISMATCH");
+        if (input) throw new ControlledRequestError("DUPLICATE_PROVIDER_USAGE");
         const usage = event.message.usage;
         input = { input: count(usage?.input_tokens), output: 0, cacheRead: count(usage?.cache_read_input_tokens === undefined ? 0 : usage.cache_read_input_tokens), cacheWrite: count(usage?.cache_creation_input_tokens === undefined ? 0 : usage.cache_creation_input_tokens) };
         if (usage?.output_tokens !== undefined) output = count(usage.output_tokens);
@@ -54,7 +56,7 @@ export function parseProviderUsage(model: string, text: string): Usage {
       }
       if (event.type === "message_stop") ended = true;
     }
-    if (!input || output === undefined || !finalOutputSeen || !ended || !["end_turn", "tool_use"].includes(reason ?? "")) throw new ControlledRequestError("INCOMPLETE_OR_ABNORMAL_PROVIDER_STREAM");
+    if (!input || output === undefined || !finalOutputSeen || !ended || !reason) throw new ControlledRequestError("INCOMPLETE_OR_ABNORMAL_PROVIDER_STREAM");
     return { ...input, output };
   }
   if (model !== JUDGE) throw new ControlledRequestError("UNAPPROVED_MODEL");
@@ -65,7 +67,7 @@ export function parseProviderUsage(model: string, text: string): Usage {
     const event = JSON.parse(payload);
     if (event.error) throw new ControlledRequestError("PROVIDER_STREAM_ERROR");
     if (event.model !== undefined) {
-      if (event.model !== "mimo-v2.6-flash") throw new ControlledRequestError("PROVIDER_MODEL_MISMATCH");
+      if (event.model !== "mimo-v2.6-flash") throw new HostRequestError("PROVIDER_MODEL_MISMATCH");
       modelSeen = true;
     }
     for (const choice of event.choices ?? []) if (choice.finish_reason) reason = choice.finish_reason;
@@ -78,44 +80,46 @@ export function parseProviderUsage(model: string, text: string): Usage {
       usage = { input: total - cacheRead, output, cacheRead, cacheWrite: 0 };
     }
   }
-  if (!usage || !done || !modelSeen || !["stop", "tool_calls"].includes(reason ?? "")) throw new ControlledRequestError("INCOMPLETE_OR_ABNORMAL_PROVIDER_STREAM");
+  if (!usage || !done || !modelSeen || !reason) throw new ControlledRequestError("INCOMPLETE_OR_ABNORMAL_PROVIDER_STREAM");
   return usage;
 }
 
-function validateRequest(request: ControlledRequest, model: string): void {
-  if (!request || typeof request.requestId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(request.requestId) || typeof request.body !== "string" || Buffer.byteLength(request.body) > 8 * 1024 * 1024) throw new ControlledRequestError("INVALID_BROKER_REQUEST");
+function validateRequest(request: ControlledRequest, model: string, nativeOutput: number): void {
+  if (!request || typeof request.requestId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(request.requestId) || typeof request.body !== "string") throw new HostRequestError("INVALID_BROKER_REQUEST");
   const url = new URL(request.url);
   const expected = model === SUBJECT ? "https://api.minimaxi.com/anthropic/v1/messages" : model === JUDGE ? "https://token-plan-cn.xiaomimimo.com/v1/chat/completions" : "";
-  if (url.origin + url.pathname !== expected || url.username || url.password || url.hash || (url.search && !(model === SUBJECT && url.search === "?beta=true"))) throw new ControlledRequestError("UNAPPROVED_PROVIDER_ROUTE");
-  const body = JSON.parse(request.body), cap = model === SUBJECT ? 4096 : 1024;
-  const knownFields = new Set(["model", "messages", "system", "max_tokens", "max_completion_tokens", "stream", "tools", "tool_choice", "parallel_tool_calls", "thinking", "reasoning_effort", "output_config", "temperature", "top_p", "stop", "stop_sequences", "metadata", "stream_options", "betas", "store", "n"]);
-  if (Object.keys(body).some((key) => !knownFields.has(key)) || body.store !== undefined && body.store !== false) throw new ControlledRequestError("UNPRICED_PROVIDER_FEATURE");
-  if (Buffer.byteLength(request.body) > (model === SUBJECT ? 1_000_000 : 1_048_576)) throw new ControlledRequestError("WIRE_INPUT_BOUND");
-  if (body.model !== model.split("/")[1] || body.stream !== true || !Array.isArray(body.messages)) throw new ControlledRequestError("WIRE_MODEL_OR_STREAM_MISMATCH");
-  const limits = [body.max_tokens, body.max_completion_tokens].filter((x) => x !== undefined);
-  if (limits.length !== 1 || limits[0] !== cap || (model === SUBJECT && body.max_tokens !== cap) || body.n !== undefined && body.n !== 1) throw new ControlledRequestError("WIRE_OUTPUT_LIMIT_MISMATCH");
-  if (model === SUBJECT && body.thinking?.type === "enabled" && (!Number.isSafeInteger(body.thinking.budget_tokens) || body.thinking.budget_tokens >= cap)) throw new ControlledRequestError("WIRE_THINKING_LIMIT_MISMATCH");
-  if (model === JUDGE && body.thinking !== undefined && (!body.thinking || typeof body.thinking !== "object" || Object.keys(body.thinking).some(key => key !== "type") || !["enabled", "disabled"].includes(body.thinking.type))) throw new ControlledRequestError("WIRE_THINKING_LIMIT_MISMATCH");
-  // Native local tools are permitted. Server-side tools can carry separate charges.
-  if (body.tools?.some((tool: { type?: string }) => tool.type && !["function", "custom"].includes(tool.type))) throw new ControlledRequestError("SERVER_SIDE_TOOLS_FORBIDDEN");
-  const textBlocks = (content: unknown): boolean => typeof content === "string" || content === null || content === undefined || Array.isArray(content) && content.every(block => block && ["text", "thinking", "redacted_thinking", "tool_use", "tool_result"].includes(block.type) && (block.type !== "tool_result" || textBlocks(block.content)));
-  if (!textBlocks(body.system) || !body.messages.every((message: { content?: unknown }) => textBlocks(message.content))) throw new ControlledRequestError("TEXT_ONLY_REQUEST_REQUIRED");
-  if (model === JUDGE && body.stream_options?.include_usage !== true) throw new ControlledRequestError("WIRE_USAGE_REQUIRED");
-  for (const key of ["web_search", "web_search_options", "search_parameters", "service_tier", "background"]) if (body[key] !== undefined) throw new ControlledRequestError("UNPRICED_PROVIDER_FEATURE");
+  if (!expected || url.origin + url.pathname !== expected || url.username || url.password || url.hash || (url.search && !(model === SUBJECT && url.search === "?beta=true"))) throw new HostRequestError("UNAPPROVED_PROVIDER_ROUTE");
+  const body = JSON.parse(request.body);
+  if (body.model !== model.split("/")[1] || body.stream !== true || !Array.isArray(body.messages)) throw new HostRequestError("WIRE_MODEL_OR_STREAM_MISMATCH");
+  const limits = [body.max_tokens, body.max_completion_tokens].filter(value => value !== undefined);
+  if (limits.length !== 1 || !Number.isSafeInteger(limits[0]) || limits[0] < 1 || limits[0] > nativeOutput) throw new HostRequestError("WIRE_OUTPUT_LIMIT_MISMATCH");
+  // Local SDK tools stay native. Remote services are a separate authorization
+  // boundary, not a token/cost policy or a payload-field whitelist.
+  if (body.tools?.some((tool: { type?: string }) => tool.type && !["function", "custom"].includes(tool.type)) || ["web_search", "web_search_options", "search_parameters", "mcp_servers"].some(key => body[key] !== undefined)) throw new HostRequestError("EXTERNAL_SERVICES_NOT_AUTHORIZED");
 }
 
-/** The only HTTP dispatch seam. Tests supply an in-memory fetch, never credentials. */
+/** One HTTP observation seam. SDK receives original statuses and owns recovery. */
 export async function dispatchControlledRequest(request: ControlledRequest, options: {
   model: string; budget: ControlledBudget; apiKey: string; signal: AbortSignal;
   fetcher?: typeof fetch; onLedger?: () => void; onWire?: (request: ControlledRequest, response: { status: number; body: string }) => void;
+  onRequest?: (request: ControlledRequest) => void;
   onChunk?: (request: ControlledRequest, chunk: Uint8Array) => void;
 }): Promise<{ status: number; headers: Record<string, string>; body: string }> {
   let reserved = false;
+  const persist = () => {
+    try { options.onLedger?.(); }
+    catch { throw new HostRequestError("LEDGER_PERSISTENCE_FAILED"); }
+  };
   try {
-    validateRequest(request, options.model);
+    const role = options.model === SUBJECT ? "subject" : options.model === JUDGE ? "judge" : undefined;
+    if (!role) throw new HostRequestError("UNAPPROVED_MODEL");
+    try { validateRequest(request, options.model, options.budget.getModelLimits(role).maxOutputTokens); }
+    catch (error) { throw error instanceof HostRequestError ? error : new HostRequestError("INVALID_BROKER_REQUEST"); }
     const reservation = options.budget.reserve(request.requestId); reserved = true;
-    if (reservation.model !== options.model || reservation.maxOutputTokens !== (options.model === SUBJECT ? 4096 : 1024)) throw new ControlledRequestError("RESERVATION_MODEL_MISMATCH");
-    options.onLedger?.(); // Persist the charge before dispatch; persistence failure stops dispatch.
+    if (reservation.model !== options.model) throw new HostRequestError("RESERVATION_MODEL_MISMATCH");
+    persist();
+    try { options.onRequest?.(request); }
+    catch { throw new HostRequestError("WIRE_EVIDENCE_WRITE_FAILED"); }
     const headers: Record<string, string> = { "content-type": "application/json", accept: "text/event-stream" };
     if (options.model === SUBJECT) {
       headers["x-api-key"] = options.apiKey;
@@ -124,36 +128,41 @@ export async function dispatchControlledRequest(request: ControlledRequest, opti
       if (beta && /^[a-zA-Z0-9,._-]{1,500}$/.test(beta)) headers["anthropic-beta"] = beta;
     } else headers.authorization = `Bearer ${options.apiKey}`;
     const response = await (options.fetcher ?? fetch)(request.url, { method: "POST", headers, body: request.body, signal: options.signal, redirect: "error" });
-    if (response.status !== 200) throw new ControlledRequestError(`PROVIDER_HTTP_${response.status}`);
-    if (!response.headers.get("content-type")?.includes("text/event-stream")) throw new ControlledRequestError("PROVIDER_STREAM_CONTENT_TYPE");
-    // Bounded accumulation keeps original SSE evidence; output and request time are separately capped.
-    let body = "", bytes = 0;
-    if (!response.body) throw new ControlledRequestError("PROVIDER_EMPTY_BODY");
-    const decoder = new TextDecoder();
-    for await (const chunk of response.body) {
-      bytes += chunk.byteLength;
-      if (bytes > 16 * 1024 * 1024) throw new ControlledRequestError("PROVIDER_BODY_LIMIT");
-      options.onChunk?.(request, chunk);
-      body += decoder.decode(chunk, { stream: true });
+    let body = "";
+    if (response.body) {
+      const decoder = new TextDecoder();
+      for await (const chunk of response.body) {
+        try { options.onChunk?.(request, chunk); }
+        catch { throw new HostRequestError("WIRE_EVIDENCE_WRITE_FAILED"); }
+        body += decoder.decode(chunk, { stream: true });
+      }
+      body += decoder.decode();
     }
-    body += decoder.decode();
-    options.onWire?.(request, { status: response.status, body });
-    const usage = parseProviderUsage(options.model, body);
-    options.budget.settle(request.requestId, usage); reserved = false;
-    options.onLedger?.();
-    return { status: response.status, headers: { "content-type": "text/event-stream" }, body };
+    try { options.onWire?.(request, { status: response.status, body }); }
+    catch { throw new HostRequestError("WIRE_EVIDENCE_WRITE_FAILED"); }
+    // Accounting uncertainty is data. It must not pre-empt a native SDK retry,
+    // compaction or a valid answer; unknown requests retain their raw evidence.
+    try { options.budget.settle(request.requestId, parseProviderUsage(options.model, body)); }
+    catch (error) {
+      if (error instanceof HostRequestError) throw error;
+      options.budget.failRequest(request.requestId, error instanceof ControlledRequestError ? error.message : "UNKNOWN_PROVIDER_USAGE");
+    }
+    reserved = false;
+    persist();
+    return { status: response.status, headers: Object.fromEntries(response.headers.entries()), body };
   } catch (error) {
-    const code = error instanceof ControlledRequestError ? error.message : error instanceof BudgetStopError ? "BUDGET_STOP" : "BROKER_REQUEST_FAILED";
-    if (reserved) { try { options.budget.failRequest(request.requestId, code); } catch { /* fatal already recorded */ } }
-    else options.budget.stop(code);
-    options.onLedger?.();
-    throw new ControlledRequestError(code);
+    const hostFailure = error instanceof HostRequestError || error instanceof BudgetStopError;
+    const code = error instanceof ControlledRequestError ? error.message : error instanceof BudgetStopError ? "LEDGER_STATE_FAILED" : "PROVIDER_TRANSPORT_FAILED";
+    if (reserved) { try { options.budget.failRequest(request.requestId, code); } catch { /* original failure preserved */ } }
+    if (hostFailure) options.budget.stop(code);
+    persist();
+    throw hostFailure ? new HostRequestError(code) : new ControlledRequestError(code);
   }
 }
 
 export interface ControlledSessionOptions {
   workspaceRoot: string; sessionId: string; prompt: string; model: string; skillPaths: string[]; home: string;
-  role: "subject" | "judge"; budget: ControlledBudget; timeoutMs: number; onLedger?: () => void;
+  role: "subject" | "judge"; budget: ControlledBudget; timeoutMs?: number; onLedger?: () => void;
   catalogHashes?: Record<string, string | null>;
   onEvent?: (event: PiEvent) => void;
 }
@@ -201,9 +210,10 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
       try { fsyncSync(directory); } finally { closeSync(directory); }
     } catch { throw new ControlledRequestError("FAILURE_EVIDENCE_WRITE_FAILED"); }
   };
-  const recordFailure = (code: string, kind: IncidentType) => {
-    failures.record(code, kind);
-    try { persistFailureEvidence(); }
+  const recordFailure = (code: string, kind: IncidentType, eventIndex: number | null = null) => {
+    const firstFatal = !failures.hasFatalCause();
+    failures.record(code, kind, eventIndex);
+    try { if (firstFatal) persistFailureEvidence(); }
     catch { failures.record("FAILURE_EVIDENCE_WRITE_FAILED", "persistence_error"); Object.assign(failureEvidence, failures.snapshot()); }
   };
   const syncLedger = () => {
@@ -214,7 +224,8 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
     }
   };
   let isolation = { verified: false, issues: ["CONTROLLED_SANDBOX_NOT_VERIFIED"] as string[], backend: "macos-sandbox-exec-network-denied" };
-  let stderr = "", timedOut = false, started = false;
+  let stderr = "", timedOut = false, started = false, successful = false, sawWorkerStderr = false;
+  let outcome: ControlledSessionResult | undefined;
   try {
     persistFailureEvidence();
     options.budget.beginSession(options.sessionId, options.role, options.model); started = true; syncLedger();
@@ -246,68 +257,95 @@ async function runSession(options: ControlledSessionOptions, offlineFetch?: type
     isolation = { ...verifySandboxCommand(command, options.workspaceRoot), backend: "macos-sandbox-exec-network-denied" };
     if (!isolation.verified) throw new ControlledRequestError("CONTROLLED_SANDBOX_FAILED");
     const abort = new AbortController();
+    const inflight = new Set<Promise<void>>();
     const result = await new Promise<number | null>((resolveExit) => {
       const child = spawn(command.command, command.args, { cwd: options.workspaceRoot, detached: true, stdio: ["pipe", "pipe", "pipe", "ipc"], env: { PATH: "/usr/bin:/bin", HOME: home, PI_CODING_AGENT_DIR: config, TMPDIR: home, PI_OFFLINE: "1", NODE_DISABLE_COMPILE_CACHE: "1", LANG: "en_US.UTF-8" } });
       let done = false, killing: NodeJS.Timeout | undefined;
       const stop = (code: string) => {
         options.budget.stop(code); stderr ||= code; abort.abort();
-        recordFailure(code, code === "SESSION_TIMEOUT" ? "timeout" : code.includes("PERSISTENCE") ? "persistence_error" : "worker_error");
+        recordFailure(code, code === "SESSION_TIMEOUT" ? "timeout" : code.includes("PERSISTENCE") || code.endsWith("WRITE_FAILED") ? "persistence_error" : "worker_error");
         try { syncLedger(); } catch { stderr = "LEDGER_PERSISTENCE_FAILED"; }
         finally {
           if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ } }
           killing ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 1000);
         }
       };
-      const timer = setTimeout(() => { timedOut = true; stop("SESSION_TIMEOUT"); }, options.timeoutMs);
+      const timer = options.timeoutMs === undefined ? undefined : setTimeout(() => {
+        timedOut = true; abort.abort(); stderr ||= "SESSION_TIMEOUT"; recordFailure("SESSION_TIMEOUT", "timeout");
+        if (child.pid) { try { process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ } }
+        killing ??= setTimeout(() => { if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } }, 1000);
+      }, options.timeoutMs);
       child.on("message", (value) => {
         const msg = value as { type?: string } & ControlledRequest;
         if (msg.type !== "request") { stop("INVALID_WORKER_IPC"); return; }
-        void dispatchControlledRequest(msg, { model: options.model, budget: options.budget, apiKey: credential.key, signal: abort.signal, fetcher: offlineFetch, onLedger: syncLedger,
+        const pending = dispatchControlledRequest(msg, { model: options.model, budget: options.budget, apiKey: credential.key, signal: abort.signal, fetcher: offlineFetch, onLedger: syncLedger,
+          onRequest: request => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.request.json`), JSON.stringify({ url: request.url, body: request.body }), { flag: "wx", mode: 0o600 }),
           onWire: (request, response) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.json`), JSON.stringify({ request: { url: request.url, body: request.body }, response }), { flag: "wx", mode: 0o600 }),
           onChunk: (request, chunk) => writeFileSync(join(evidenceRoot, `wire-${request.requestId}.partial.sse`), chunk, { flag: "a", mode: 0o600 }),
         }).then((response) => { if (child.connected) child.send({ type: "response", requestId: msg.requestId, ...response }, (error) => { if (error && !done) stop("WORKER_IPC_FAILURE"); }); }).catch((error) => {
-          recordFailure(error instanceof ControlledRequestError ? error.message : "BROKER_REQUEST_FAILED", "request_error");
-          stop("REQUEST_ABORTED");
-        });
+          if (error instanceof HostRequestError) {
+            recordFailure(error.message, error.message.includes("PERSISTENCE") || error.message.endsWith("WRITE_FAILED") ? "persistence_error" : "worker_error");
+            stop(error.message);
+          } else if (child.connected) child.send({ type: "response-error", requestId: msg.requestId }, sendError => { if (sendError && !done) stop("WORKER_IPC_FAILURE"); });
+        }).finally(() => { inflight.delete(pending); });
+        inflight.add(pending);
       });
       const lines = createInterface({ input: child.stdout! });
       lines.on("line", (line) => {
         try {
           const event = JSON.parse(line) as PiEvent; events.push(event); collectMetrics(metrics, event, options.workspaceRoot);
-          if (failures.observe(event, events.length - 1)) persistFailureEvidence();
+          const hadFatalCause = failures.hasFatalCause();
+          failures.observe(event, events.length - 1);
+          if (!hadFatalCause && failures.hasFatalCause()) persistFailureEvidence();
           options.onEvent?.(event);
-          // Persist incrementally, including failed or partial tool output.
-          writeFileSync(join(evidenceRoot, "events.partial.json"), JSON.stringify(events), { mode: 0o600 });
-          const message = event.message as { role?: string; stopReason?: string } | undefined;
-          if (event.type === "tool_execution_end" && event.isError === true || event.type === "message_end" && message?.role === "assistant" && ["error", "aborted", "length"].includes(message.stopReason ?? "") || event.type === "controlled_error") stop("SESSION_EVENT_FAILURE");
+          // Append only this record; rewriting every accumulated prefix makes
+          // streaming evidence quadratic. The runner writes final events.json once.
+          try { appendFileSync(join(evidenceRoot, "events.partial.jsonl"), JSON.stringify(event) + "\n", { mode: 0o600 }); }
+          catch { throw new ControlledRequestError("EVENT_EVIDENCE_WRITE_FAILED"); }
+          if (event.type === "controlled_error" && !timedOut) stop("SESSION_EVENT_FAILURE");
         } catch (error) {
-          if (error instanceof ControlledRequestError && error.message === "FAILURE_EVIDENCE_WRITE_FAILED") {
-            recordFailure(error.message, "persistence_error");
+          if (error instanceof ControlledRequestError && ["FAILURE_EVIDENCE_WRITE_FAILED", "EVENT_EVIDENCE_WRITE_FAILED"].includes(error.message)) {
+            recordFailure(error.message, "persistence_error", events.length - 1);
             stop(error.message);
           } else stop("INVALID_WORKER_EVENT");
         }
       });
       // Raw SDK stderr can contain headers or credential hints; retain a safe code only.
-      child.stderr?.on("data", () => { stderr ||= "WORKER_STDERR"; });
-      const finish = (code: number | null) => { if (done) return; done = true; clearTimeout(timer); if (killing) clearTimeout(killing); if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } abort.abort(); resolveExit(code); };
+      child.stderr?.on("data", () => { sawWorkerStderr = true; });
+      const finish = (code: number | null) => { if (done) return; done = true; if (timer) clearTimeout(timer); if (killing) clearTimeout(killing); if (child.pid) { try { process.kill(-child.pid, "SIGKILL"); } catch { /* exited */ } } abort.abort(); resolveExit(code); };
       child.on("error", () => { stop("WORKER_START_FAILURE"); finish(null); });
       child.stdin!.on("error", () => { if (!done) stop("WORKER_STDIN_FAILURE"); });
-      child.on("close", finish);
-      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.role === "subject" ? 4096 : 1024 }));
+      child.on("close", (code, signal) => {
+        if (signal && !timedOut && !failures.snapshot().firstCause) {
+          recordFailure("WORKER_EXIT_SIGNAL", "worker_error");
+          options.budget.stop("WORKER_EXIT_SIGNAL");
+        }
+        finish(code);
+      });
+      child.stdin!.end(JSON.stringify({ sdkRoot, workspaceRoot: options.workspaceRoot, home, sessionId: options.sessionId, prompt: options.prompt, model: options.model, skillPaths: options.skillPaths, maxOutputTokens: options.budget.getModelLimits(options.role).maxOutputTokens, contextWindow: options.budget.getModelLimits(options.role).contextWindow }));
     });
+    // Native SDK background work may still be aborting when the worker closes.
+    // Finish its observed accounting before the matrix can open another sample.
+    await Promise.allSettled([...inflight]);
     if (result !== 0 || stderr || !metrics.output.trim()) {
-      stderr ||= "SESSION_FAILED_OR_EMPTY";
-      options.budget.stop(stderr);
+      stderr ||= sawWorkerStderr && result !== 0 ? "WORKER_STDERR" : "SESSION_FAILED_OR_EMPTY";
       if (!failures.snapshot().firstCause) recordFailure(stderr, "worker_error");
     }
-    return { exitCode: stderr ? 1 : result, events, metrics, stderr, timedOut, isolation, failureEvidence };
+    successful = !stderr && result === 0;
+    return outcome = { exitCode: stderr ? 1 : result, events, metrics, stderr, timedOut, isolation, failureEvidence };
   } catch (error) {
     const code = error instanceof ControlledRequestError ? error.message : "CONTROLLED_SESSION_BLOCKED";
     options.budget.stop(code);
     recordFailure(code, ["FAILURE_EVIDENCE_WRITE_FAILED", "LEDGER_PERSISTENCE_FAILED"].includes(code) ? "persistence_error" : "startup_error");
-    return { exitCode: null, events, metrics, stderr: code, timedOut, isolation, failureEvidence };
+    return outcome = { exitCode: null, events, metrics, stderr: code, timedOut, isolation, failureEvidence };
   } finally {
-    if (started) { try { options.budget.endSession(); } catch { /* incomplete HTTP retains reservation */ } }
+    if (started) { try { options.budget.endSession(successful); } catch { /* incomplete HTTP retains reservation */ } }
+    try { persistFailureEvidence(); }
+    catch {
+      options.budget.stop("FAILURE_EVIDENCE_WRITE_FAILED");
+      recordFailure("FAILURE_EVIDENCE_WRITE_FAILED", "persistence_error");
+      if (outcome) { outcome.exitCode = 1; outcome.stderr = "FAILURE_EVIDENCE_WRITE_FAILED"; }
+    }
     Object.assign(failureEvidence, failures.snapshot());
     syncLedger();
   }

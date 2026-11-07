@@ -14,6 +14,7 @@ interface WorkerConfig {
   model: string;
   skillPaths: string[];
   maxOutputTokens: number;
+  contextWindow: number;
 }
 
 interface BrokerResponse {
@@ -54,17 +55,19 @@ function receive(message: unknown): void {
   if (!request) return;
   pending.delete(value.requestId);
   if (value.type === "response-error") {
-    request.reject(new Error("BROKER_REQUEST_FAILED"));
-    stop("BROKER_REQUEST_FAILED");
+    // Let Pi's native retry policy handle a transport failure. The parent owns
+    // the original wire evidence; no raw credential-bearing exception crosses IPC.
+    request.reject(new Error("fetch failed"));
     return;
   }
-  if (!Number.isInteger(value.status) || value.status! < 200 || value.status! >= 300 || typeof value.body !== "string") {
+  if (!Number.isInteger(value.status) || value.status! < 200 || value.status! > 599 || typeof value.body !== "string") {
     request.reject(new Error("BROKER_RESPONSE_INVALID"));
     stop("BROKER_RESPONSE_INVALID");
     return;
   }
   try {
-    request.resolve(new Response(value.body, { status: value.status, headers: value.headers }));
+    const body = [204, 205, 304].includes(value.status!) ? null : value.body;
+    request.resolve(new Response(body, { status: value.status, headers: value.headers }));
   } catch {
     request.reject(new Error("BROKER_RESPONSE_INVALID"));
     stop("BROKER_RESPONSE_INVALID");
@@ -116,17 +119,18 @@ process.on("SIGHUP", () => stop("CONTROLLED_WORKER_TERMINATED"));
 async function main(): Promise<void> {
   const config = JSON.parse(readFileSync(0, "utf8")) as WorkerConfig;
   if (!config || !Number.isSafeInteger(config.maxOutputTokens) || config.maxOutputTokens < 1 ||
+      !Number.isSafeInteger(config.contextWindow) || config.contextWindow < 1 ||
       typeof config.model !== "string" || !config.model.includes("/") || !Array.isArray(config.skillPaths) ||
       typeof config.sessionId !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/.test(config.sessionId)) {
     throw new Error("WORKER_CONFIG_INVALID");
   }
   requestPrefix = config.sessionId;
   const allowed = config.model === "minimax-cn/MiniMax-M3.1-Flash"
-    ? { api: "anthropic-messages", baseUrl: "https://api.minimaxi.com/anthropic", contextWindow: 1_000_000, cap: 4096 }
+    ? { api: "anthropic-messages", baseUrl: "https://api.minimaxi.com/anthropic" }
     : config.model === "xiaomi-token-plan-cn/mimo-v2.6-flash"
-      ? { api: "openai-completions", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1", contextWindow: 1_048_576, cap: 1024 }
+      ? { api: "openai-completions", baseUrl: "https://token-plan-cn.xiaomimimo.com/v1" }
       : undefined;
-  if (!allowed || config.maxOutputTokens !== allowed.cap) throw new Error("WORKER_MODEL_OR_CAP_INVALID");
+  if (!allowed) throw new Error("WORKER_MODEL_INVALID");
   // Apple's /usr/bin/python3 shim otherwise writes xcrun_db outside the sandbox
   // and mixes denied-cache warnings into the native bash tool's combined output.
   process.env.xcrun_db = join(config.workspaceRoot, ".xcrun_db");
@@ -158,12 +162,9 @@ async function main(): Promise<void> {
   if (runtime.getError()) throw new Error("WORKER_CATALOG_INVALID");
   const model = runtime.getModel(provider, id);
   if (!model || model.provider !== provider || model.id !== id ||
-      model.api !== allowed.api || model.baseUrl !== allowed.baseUrl || model.contextWindow !== allowed.contextWindow ||
-      model.reasoning !== true || !Number.isSafeInteger(model.maxTokens) || model.maxTokens < allowed.cap) throw new Error("WORKER_MODEL_INVALID");
-  const settings = sdk.SettingsManager.inMemory({
-    cacheWarming: "off", compaction: { enabled: false },
-    retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
-  });
+      model.api !== allowed.api || model.baseUrl !== allowed.baseUrl || model.contextWindow !== config.contextWindow ||
+      model.reasoning !== true || model.maxTokens !== config.maxOutputTokens) throw new Error("WORKER_MODEL_INVALID");
+  const settings = sdk.SettingsManager.inMemory();
   const loader = new sdk.DefaultResourceLoader({
     cwd: config.workspaceRoot, agentDir, settingsManager: settings,
     noSkills: true, additionalSkillPaths: config.skillPaths,
@@ -177,51 +178,39 @@ async function main(): Promise<void> {
   });
   session = result.session;
   if (result.modelFallbackMessage) throw new Error("WORKER_MODEL_FALLBACK");
-  session.setAutoRetryEnabled(false);
-  session.setAutoCompactionEnabled(false);
   const nativeStream = session.agent.streamFunction.bind(session.agent);
   session.agent.streamFunction = (requestedModel: any, context: unknown, options: any = {}) => {
     if (stopped || requestedModel.provider !== provider || requestedModel.id !== id) throw new Error("WORKER_MODEL_CHANGED");
     return nativeStream(requestedModel, context, {
       ...options, apiKey: "controlled-broker-placeholder", fetch: brokerFetch,
-      maxTokens: config.maxOutputTokens, maxRetries: 0,
-      onPayload: async (original: any, payloadModel: any) => {
-        if (stopped || payloadModel.provider !== provider || payloadModel.id !== id) throw new Error("WORKER_MODEL_CHANGED");
-        const transformed = await options.onPayload?.(original, payloadModel);
-        const payload = { ...(transformed ?? original) };
-        if (payload.model !== id) throw new Error("WORKER_PAYLOAD_MODEL_CHANGED");
-        if (model.api === "anthropic-messages") {
-          payload.max_tokens = config.maxOutputTokens;
-          delete payload.max_completion_tokens;
-          if (payload.thinking?.type === "enabled") {
-            payload.thinking = { ...payload.thinking, budget_tokens: Math.min(payload.thinking.budget_tokens, config.maxOutputTokens - 1024) };
-            if (payload.thinking.budget_tokens < 1024) throw new Error("WORKER_THINKING_CAP_INVALID");
-          }
-        } else if ("max_tokens" in payload) {
-          payload.max_tokens = config.maxOutputTokens;
-          delete payload.max_completion_tokens;
-        } else {
-          payload.max_completion_tokens = config.maxOutputTokens;
-        }
-        return payload;
-      },
+      maxTokens: options.maxTokens ?? model.maxTokens,
       onProviderStreamEvent: async (data: unknown, eventModel: any) => {
         emit({ type: "provider_stream_event", provider: eventModel.provider, api: eventModel.api, model: eventModel.id, data });
         await options.onProviderStreamEvent?.(data, eventModel);
       },
     });
   };
+  let finalAssistant: any;
   session.subscribe((event: any) => {
     emit(event);
-    if (event.type === "tool_execution_end" && event.isError) stop("WORKER_TOOL_FAILED");
     if (event.type === "message_end" && event.message?.role === "assistant") {
       const message = event.message;
-      if (["error", "aborted", "length", "deferred", "pending"].includes(message.stopReason)) stop("WORKER_ASSISTANT_FAILED");
+      finalAssistant = message;
       if (message.provider !== provider || message.model !== id || (message.responseModel && message.responseModel !== id)) stop("WORKER_RESPONSE_MODEL_CHANGED");
     }
-    if (["auto_retry_start", "auto_compaction_start"].includes(event.type)) stop("WORKER_HIDDEN_REQUEST");
   });
-  await session.prompt(config.prompt);
+  try { await session.prompt(config.prompt); }
+  catch {
+    process.exitCode = 1;
+    emit({ type: "native_session_failed", stopReason: "error" });
+    return;
+  }
+  // Only evaluate the terminal result after the SDK has completed its own
+  // retry/compaction/recovery path; intermediate errors remain raw events.
+  if (!finalAssistant || finalAssistant.stopReason !== "stop") {
+    process.exitCode = 1;
+    emit({ type: "native_session_failed", stopReason: finalAssistant?.stopReason ?? "missing" });
+  }
 }
 
 try {

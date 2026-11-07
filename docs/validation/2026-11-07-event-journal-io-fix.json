@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T01:15:21.947010+00:00",
+  "evidenceLevel": "OFFLINE_REGRESSION_AND_READ_ONLY_RECONSTRUCTION",
+  "baseCommit": "e79584442c6fb1443f98ee678e0f09bfd70bf88d",
+  "branch": "codex/skill-eval-v0.3.2-real-case",
+  "releaseGate": "NOT_PASSED_REAL_BATCH_ABORTED",
+  "incident": {
+    "run": "runs/run-20261107T005447Z-d069b2bf",
+    "status": "ABORTED_HOST_RESOURCE_FAULT",
+    "events": 7722,
+    "finalPartialBytes": 28588078,
+    "reconstructedLogicalBytes": 95092779109,
+    "logicalRatio": 3326.3089288129127,
+    "physicalSsdBytes": "UNKNOWN_NOT_MEASURED",
+    "largePrefixWritesDuringReconstruction": 0,
+    "subjectCompleted": 2,
+    "subjectAborted": 1,
+    "sessionsNotRun": 5,
+    "judgeSessionsExecuted": 0,
+    "requestsSettled": 22,
+    "pendingReservationNanoUsd": 0,
+    "chargedNanoUsd": 57554400,
+    "chargedUsdEquivalent": 0.0575544,
+    "actualInvoice": "UNKNOWN",
+    "lastResponseEndedNormally": true
+  },
+  "change": {
+    "journal": "events.partial.jsonl",
+    "mode": "APPEND_ONE_SERIALIZED_EVENT_PER_RECORD",
+    "finalEventsJson": "UNCHANGED_SINGLE_FINAL_WRITE",
+    "appendFailureCode": "EVENT_EVIDENCE_WRITE_FAILED",
+    "appendFailureType": "persistence_error",
+    "sdkModified": false,
+    "candidateModified": false,
+    "frozenBundleModified": false,
+    "isolationRelaxed": false,
+    "ordinaryToolErrors": "NATIVE_AGENT_RECOVERY_PRESERVED"
+  },
+  "regression": {
+    "command": "npm run check",
+    "typecheck": "PASS",
+    "tests": 463,
+    "pass": 463,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "newTests": 5,
+    "redLegacy": {
+      "streamedDeltas": 128,
+      "events": 276,
+      "attemptedBytes": 25056445,
+      "finalCompactEventBytes": 179209,
+      "legacyWritesDiscardedByCountingSink": true
+    },
+    "green": {
+      "streamedDeltas": 10001,
+      "events": 20022,
+      "writtenBytes": 12104924,
+      "finalCompactEventBytes": 12104925,
+      "exactReadback": true
+    },
+    "cases": [
+      "128 deltas byte bound and exact readback",
+      "10001 deltas byte bound and exact readback",
+      "ENOSPC preserves persistence first cause and stops followup HTTP",
+      "broken Provider stream preserves journal and partial SSE",
+      "actual native worker SIGKILL preserves every received record"
+    ]
+  },
+  "independentReview": {
+    "result": "PASS_FOR_OFFLINE_IO_FIX",
+    "releaseAcceptance": "NOT_PASSED"
+  },
+  "preservation": {
+    "protectedFilesChecked": 1555,
+    "changedCount": 0,
+    "oldRunKept": true,
+    "oldPlanKept": true,
+    "selectiveRerun": false
+  },
+  "providerCallsDuringRepair": 0,
+  "newRealRun": "NOT_RUN",
+  "commitMergeTag": "NOT_PERFORMED",
+  "fingerprints": {
+    "src/core/controlled-session.ts": "9cb42d46a9dd87f3bc8429dc9d314e261765e9700ae1c0ce8560154d5b1f8b4b",
+    "src/core/controlled-session.test.ts": "d1a7fd07e5123db823364844af4def046ffefec498b7b7cca85de9a32d58af05",
+    ".local/release-v032-real-case-07aq1luw/io-fix-final-check.log": "d5dc418f6305022abe2c683fc4de942f441394d45110e65786bbb45ff2c928a8",
+    ".local/release-v032-real-case-07aq1luw/io-journal-delta-red.log": "acfe2463848640d395c469289d5536a16456e973b5ae2dbdaff368873e81d852",
+    ".local/release-v032-real-case-07aq1luw/io-journal-targeted-green.log": "921c704b3df468318cd95f943610c7868d8bd3c4946298031285ac9aee9ac771",
+    ".local/release-v032-real-case-07aq1luw/io-journal-worker-close-green.log": "948446077cab6969edf42ee91cd024d0e3b4b41dd90df568152efe8bcf1d526c",
+    ".local/release-v032-real-case-07aq1luw/io-incident-evidence.json": "3b70632ef741698e55395022be944344597d857089c87857fb07e650dd6e55ac"
+  },
+  "limits": [
+    "Byte bound is relative to received serialized event volume; SDK cumulative snapshot growth is not removed.",
+    "Worker SIGKILL while Host lives does not prove Host-crash or power-loss fsync durability.",
+    "Offline tests do not substitute for a complete new authorized real evaluation.",
+    "Logical payload reconstruction is not SSD physical-write or wear measurement."
+  ]
+}
