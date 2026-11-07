@@ -7,11 +7,12 @@
  * |---|---|---|
  * | `activation-missing` | 应触发用例的失败发生在未读取 skill 的轮次 | 漏触发症状，应改 frontmatter description 而非正文 |
  * | `over-trigger` | `shouldActivate=false` 的无关用例触发了 skill | 误触发污染，需收窄 description 触发边界 |
- * | `contract-missing` | 已激活但 baseline 过了、skill 侧没过 | **真问题**：skill 声称的契约没落到输出里或造成倒退 |
- * | `unstable` | 已激活且同一断言多次重复里时过时不过 | 契约强度不够稳，需改为硬性规则+示例 |
- * | `no-effect` | 已激活且两侧都没过 | 正文未覆盖或写在模型未读的附属文件里 |
+ * | `contract-missing` | 已激活但 baseline 过了、skill 侧未通过可直接验证的约束 | 契约未在输出中满足 |
+ * | `unstable` | 可直接验证的约束多次重复里时过时不过 | 检查满足约束的条件是否稳定 |
+ * | `no-effect` | 已激活且两侧都没过可直接验证的约束 | 检查约束和输出之间的落差 |
  * | `regression` | 规则没破但评委判输 | 约束挤占了实质内容空间 |
  * | `assertion-too-strict` | mustMatch 失败但命中了声明的等价写法 | **套件问题**，不是 skill 的问题 |
+ * | `assertion-needs-review` | 文本规则判失败，现有证据不足以确认语义 | 对照原始输出与判据复核，保留冻结计分 |
  */
 
 import type { AssertionOutcome } from "./assertions.ts";
@@ -25,6 +26,7 @@ export type FailureMode =
   | "unstable"
   | "activation-missing"
   | "over-trigger"
+  | "assertion-needs-review"
   | "assertion-too-strict";
 
 /** 单条失败断言的归因结果。 */
@@ -85,32 +87,33 @@ export interface ImprovementAdvice {
   activationIssue: string | null;
   /** 一句话总结。 */
   summary: string;
-  /** skill 侧真正要改的条数（排除「断言过严」）。 */
+  /** skill 侧有直接证据的诊断条数。 */
   skillIssueCount: number;
-  /** 判定为「断言过严」的条数——要改的是套件，不是 skill。 */
+  /** 等价写法证明断言过严的条数。 */
   falseFailureCount: number;
+  /** 文本规则失败、语义归因待复核的条数。 */
+  reviewCount: number;
 }
 
 /** 各失败模式的建议文案。 */
 const MODE_ADVICE: Record<FailureMode, string> = {
   "contract-missing":
-    "skill 声称的约束没有落到输出里。把该条约束从「描述」改成「可执行的硬性步骤或模板」——" +
-    "明确写出要出现什么、放在哪个位置、用什么格式。",
+    "baseline 满足了冻结约束，skill 侧未满足。复核实际输出与约束，确认需强化后可改成可执行的硬性步骤或模板。",
   "no-effect":
-    "这条约束 baseline 也没满足，但装 skill 后依然没满足。检查 skill 里是否真的写清了这条约束" +
-    "（而不是靠模型自己推测），必要时补成明确的红线条目。",
+    "两侧均未满足冻结约束。检查输出与约束，并核对 skill 是否写清了该约束。",
   regression:
     "规则断言没破，但相对 baseline 评委判输——输出质量下降。通常是 skill 的约束挤占了内容空间，" +
     "或措辞让模型过度套模板。检查是否过度规定了格式而削弱了实质内容。",
   unstable:
-    "同一条断言在多次重复里时过时不过——契约强度不够或存在歧义。把模糊表述改成确定性的规则" +
-    "（给出可判定的具体条件），并考虑补一条示例。",
+    "断言结果在重复运行间有差异。复核输出与判据，确认约束本身存在歧义时再补可判定的条件或示例。",
   "activation-missing":
     "模型在该用例未读取 skill 文件（激活漏触发），此处的断言失败是「未触发」的下游症状而非正文失效。" +
     "优先在 frontmatter 的 description 中补充该类任务的用户表达与场景词，切勿盲目堆砌正文。",
   "over-trigger":
     "该用例属于不应触发的无关任务（shouldActivate=false），但模型仍然读取了 skill。" +
     "需收窄 frontmatter description 的适用边界，明确写出「何时不要使用本技能」。",
+  "assertion-needs-review":
+    "先对照原始输出和冻结判据，检查反例引用、否定语境与等价表述，再决定归因。原计分保留。",
   "assertion-too-strict":
     "**这是断言写得过严，不是 skill 的问题**——输出里其实做到了，只是用了断言没覆盖的措辞。" +
     "要改的是**套件**：把这条断言放宽到能接受 skill 契约里允许的其他写法，" +
@@ -126,6 +129,7 @@ export const MODE_LABEL: Record<FailureMode, string> = {
   unstable: "约束不稳",
   "activation-missing": "漏触发（未读 skill）",
   "over-trigger": "误触发（description 过泛）",
+  "assertion-needs-review": "断言待复核",
   "assertion-too-strict": "断言过严（不是 skill 的问题）",
 };
 
@@ -149,7 +153,7 @@ const STOP_WORDS = new Set([
 ]);
 
 export function isSkillIssue(mode: FailureMode): boolean {
-  return mode !== "assertion-too-strict";
+  return mode !== "assertion-too-strict" && mode !== "assertion-needs-review";
 }
 
 const ZH_DIRECTIVE_SPLIT =  /禁止|严禁|不得|切勿|不要|必须|应当|应该|要求|确保|给出|输出|包含|明确|提供|附上|使用|不能|需要|出现|添加|带有|以及|或者|[与和的在中对为以]/g;
@@ -209,7 +213,7 @@ export function locateInSkillDocs(
 
   const inMainSkill = keywords.some((kw) => ctx.skillContent!.includes(kw));
   if (inMainSkill) {
-    return "定位：SKILL.md 正文已提及相关概念，但软性散文约束力不足——建议改为硬性 Checklist 或附标准输出片段";
+    return "SKILL.md 正文含相关关键词，可从对应段落复核约束。";
   }
 
   if (ctx.subFiles) {
@@ -220,14 +224,14 @@ export function locateInSkillDocs(
           (r) => r.endsWith(subPath) || subPath.endsWith(r),
         );
         if (!wasRead) {
-          return `定位：规则位于附属文件 \`${subPath}\`，但模型运行期间未读取该文件——请将该硬红线提炼回 SKILL.md 主文件`;
+          return `附属文件 \`${subPath}\` 含相关关键词，运行期间未读取该文件。`;
         }
-        return `定位：规则位于已读取的附属文件 \`${subPath}\`，建议在 SKILL.md 主文件末尾检查清单中复述强化`;
+        return `已读取的附属文件 \`${subPath}\` 含相关关键词，可核对对应约束。`;
       }
     }
   }
 
-  return "定位：SKILL.md 正文未检索到对应约束关键词，属于规则缺失——需新增独立红线条款";
+  return "未检索到对应约束关键词，仍需核对正文表述。";
 }
 
 /**
@@ -345,10 +349,13 @@ export function buildImprovementAdvice(
     const skillMixed = entry.passes.some(Boolean);
 
     const failedOutcomes = entry.outcomes.filter((o) => !o.passed);
-    const mustMatchFailures = failedOutcomes.filter((o) => o.kind === "mustMatch");
-    const equivalentHits = mustMatchFailures.filter((o) => o.equivalentMatched === true);
-    const equivalentChecked = mustMatchFailures.some((o) => o.equivalentMatched !== undefined);
-    const isFalseFailure = equivalentHits.length > 0 && equivalentChecked;
+    const allFailuresHaveEquivalent = failedOutcomes.every(
+      (outcome) => outcome.kind === "mustMatch" && outcome.equivalentMatched === true,
+    );
+    const hasTextFailure = failedOutcomes.some(
+      (outcome) => outcome.kind === "mustMatch" || outcome.kind === "mustNotMatch" ||
+        outcome.kind === "mustContain" || outcome.kind === "mustNotContain",
+    );
 
     // 激活感知检查：失败是否全部发生在「未读取 skill」的轮次？
     const allFailedWereUnactivated = entry.passes.every(
@@ -356,10 +363,12 @@ export function buildImprovementAdvice(
     );
 
     let mode: FailureMode;
-    if (isFalseFailure) {
+    if (allFailuresHaveEquivalent) {
       mode = "assertion-too-strict";
     } else if (allFailedWereUnactivated) {
       mode = "activation-missing";
+    } else if (hasTextFailure) {
+      mode = "assertion-needs-review";
     } else if (baselineAllPass) {
       mode = "contract-missing";
     } else if (skillMixed || baselineAnyPass) {
@@ -390,6 +399,7 @@ export function buildImprovementAdvice(
     "unstable",
     "no-effect",
     "regression",
+    "assertion-needs-review",
     "assertion-too-strict",
   ];
   // 注意：保持向后兼容的模式排序——当没有 activation-missing/over-trigger 时，
@@ -451,6 +461,8 @@ export function buildImprovementAdvice(
     });
 
   const skillIssueCount = diagnoses.filter((d) => isSkillIssue(d.mode)).length;
+  const falseFailureCount = counts.get("assertion-too-strict") ?? 0;
+  const reviewCount = counts.get("assertion-needs-review") ?? 0;
 
   const activationIssue =
     hasPositiveTask && activationRate < 0.6
@@ -471,14 +483,14 @@ export function buildImprovementAdvice(
       ? "不应触发用例的断言失败见规则断言明细，未发现需要归因到 skill 的失败项。"
       : "规则断言全部通过，没有可加固的契约——如需确认稳定性，可增加 repeat 后复跑。";
   } else if (skillIssueCount === 0) {
-    const falseCount = diagnoses.length;
     summary =
       (passed ? "skill 已通过测评，" : "") +
-      `${falseCount} 条断言失败，但全部属于「${MODE_LABEL["assertion-too-strict"]}」——` +
-      `**不是 skill 的问题**，输出内容做到了，只是断言没覆盖那种措辞。要改的是套件。`;
+      (reviewCount > 0
+        ? `${reviewCount} 条文本断言待复核，先对照原始输出和冻结判据再归因。原计分保留。` +
+          (falseFailureCount > 0 ? `另有 ${falseFailureCount} 条因等价写法未被主模式覆盖，可修订套件。` : "")
+        : `${falseFailureCount} 条断言失败，均有声明的等价写法命中。应修订套件判据。`);
   } else {
     const top = byMode.find((m) => isSkillIssue(m.mode));
-    const falseCount = diagnoses.length - skillIssueCount;
     const rootCauseCount = groupedDiagnoses.filter((g) => isSkillIssue(g.mode)).length;
     const dedupNote =
       rootCauseCount < skillIssueCount
@@ -488,9 +500,8 @@ export function buildImprovementAdvice(
       (passed ? "skill 已通过测评，但仍有可加固的契约：" : "skill 未通过：") +
       `${skillIssueCount} 条断言失败${dedupNote}，其中 ${top ? top.count : 0} 条属于「${top ? MODE_LABEL[top.mode] : "未知"}」。` +
       `优先处理这一类，其余见下方明细。` +
-      (falseCount > 0
-        ? `另有 ${falseCount} 条失败属「${MODE_LABEL["assertion-too-strict"]}」，要改的是套件而非 skill。`
-        : "");
+      (falseFailureCount > 0 ? `另有 ${falseFailureCount} 条等价写法未被主模式覆盖，可修订套件。` : "") +
+      (reviewCount > 0 ? `另有 ${reviewCount} 条文本断言待复核，原计分保留。` : "");
   }
 
   return {
@@ -500,6 +511,7 @@ export function buildImprovementAdvice(
     activationIssue,
     summary,
     skillIssueCount,
-    falseFailureCount: diagnoses.length - skillIssueCount,
+    falseFailureCount,
+    reviewCount,
   };
 }

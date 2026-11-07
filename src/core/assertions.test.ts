@@ -162,7 +162,7 @@ test("mustMatch 失败但命中等价写法 → 标记为 equivalentMatched=true
   assert.equal(outcome.detail.includes("等价写法"), true);
 });
 
-test("mustMatch 失败且等价写法也没命中 → equivalentMatched=false", () => {
+test("主模式和等价模式未命中，只记录匹配结果", () => {
   const outcome = evaluateAssertion("今天天气不错", {
     kind: "mustMatch",
     pattern: "责任人",
@@ -170,7 +170,8 @@ test("mustMatch 失败且等价写法也没命中 → equivalentMatched=false", 
   });
   assert.equal(outcome.passed, false);
   assert.equal(outcome.equivalentMatched, false);
-  assert.equal(outcome.detail.includes("内容确实缺失"), true);
+  assert.match(outcome.detail, /声明的等价写法也未命中/);
+  assert.doesNotMatch(outcome.detail, /内容确实缺失/);
 });
 
 test("mustMatch 通过 → equivalentMatched 为 undefined", () => {
