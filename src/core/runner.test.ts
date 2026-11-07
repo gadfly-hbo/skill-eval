@@ -110,7 +110,8 @@ test("规则判定改善但评委说倒退时记为分歧", () => {
   ];
   const disagreements = findDisagreements({ variants, tasks } as never, results, [makePairwise("loss")]);
   assert.equal(disagreements.length, 1);
-  assert.match(disagreements[0]!.note, /以规则断言为准/);
+  assert.match(disagreements[0]!.note, /满足更多约束.*评委认为倒退/);
+  assert.doesNotMatch(disagreements[0]!.note, /以规则断言为准/);
 });
 
 test("规则判定倒退但评委说改善时记为分歧", () => {
