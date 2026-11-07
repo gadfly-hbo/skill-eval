@@ -18,7 +18,8 @@
  * 调用真正的入口，并把错误码透传出去。
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { constants } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
@@ -31,19 +32,21 @@ if (!existsSync(entry)) {
   process.exit(70);
 }
 
-const result = spawnSync(
+const child = spawn(
   process.execPath,
   ["--experimental-strip-types", "--no-warnings", entry, ...process.argv.slice(2)],
   { stdio: "inherit" },
 );
 
-if (result.error) {
-  process.stderr.write(`skill-eval 启动失败：${result.error.message}\n`);
-  process.exit(70);
-}
-
-// 透传退出码：信号终止用 128+signo，spawn 失败用 1
-if (result.signal) {
-  process.exit(128 + (typeof result.signal === "string" ? 0 : 1));
-}
-process.exit(result.status ?? 0);
+const forward = (signal) => child.kill(signal);
+process.on("SIGINT", forward);
+process.on("SIGTERM", forward);
+child.once("error", (error) => {
+  process.stderr.write(`skill-eval 启动失败：${error.message}\n`);
+  process.exitCode = 70;
+});
+child.once("close", (code, signal) => {
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  process.exitCode ??= signal ? 128 + constants.signals[signal] : code ?? 1;
+});

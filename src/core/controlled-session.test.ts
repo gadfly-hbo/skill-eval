@@ -95,6 +95,36 @@ test("HTTP faults and missing usage remain observable while a later SDK request 
   }
 });
 
+test("broker stops on the observed MiniMax 2056 quota signature while ordinary 429 remains recoverable", async () => {
+  const body = (message: string) => JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } });
+  for (const fixture of [
+    { body: body("已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。 (2056)"), terminal: true },
+    { body: body("rate limit (20560)"), terminal: false },
+    { body: "2056", terminal: false },
+  ]) {
+    const budget = new ControlledBudget(); budget.beginSession("subject", "subject", subject);
+    let calls = 0;
+    const wire: Array<{ status: number; body: string }> = [];
+    const options = { model: subject, budget, apiKey: "fixture-only", signal: new AbortController().signal,
+      onWire: (_request: unknown, response: { status: number; body: string }) => wire.push(response),
+      fetcher: async () => { calls++; return new Response(fixture.body, { status: 429 }); },
+    };
+    const first = dispatchControlledRequest(request, options);
+    if (fixture.terminal) {
+      await assert.rejects(first, /PROVIDER_QUOTA_EXHAUSTED/);
+      await assert.rejects(dispatchControlledRequest({ ...request, requestId: "after-quota" }, options), /PROVIDER_QUOTA_EXHAUSTED/);
+      assert.equal(budget.snapshot().requests[0]?.reason, "PROVIDER_QUOTA_EXHAUSTED");
+      assert.equal(budget.snapshot().sessions[0]?.state, "failed");
+    } else {
+      assert.equal((await first).status, 429);
+    }
+    assert.equal(budget.isStopped(), fixture.terminal);
+    assert.equal(budget.snapshot().unknownRequests, 1);
+    assert.equal(calls, 1);
+    assert.deepEqual(wire, [{ status: 429, body: fixture.body }]);
+  }
+});
+
 test("raw usage requires completed streams and valid counts, including native length stops", () => {
   assert.deepEqual(parseProviderUsage(subject, anthropic), { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 });
   assert.deepEqual(parseProviderUsage(subject, anthropic.replace("end_turn", "max_tokens")), { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 });

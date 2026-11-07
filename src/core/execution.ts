@@ -4,10 +4,11 @@ import { appendFileSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, 
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { ControlledBudget, CONTROLLED_BUDGET_POLICY, type BudgetSnapshot, type NativeModelLimitsByRole, type SessionRole } from "./controlled-budget.ts";
-import { runControlledSession } from "./controlled-session.ts";
+import { evaluationInterruption, runControlledSession } from "./controlled-session.ts";
 import { canonicalPath } from "./isolation.ts";
 import { emptyMetrics, type PiRunOptions, type PiRunResult } from "./pi.ts";
 import { TOOL_ERROR_POLICY_VERSION } from "./failure-evidence.ts";
+import type { EvaluationRuntimeIdentity } from "./runtime-identity.ts";
 
 export interface EvaluationExecution {
   mode: "real" | "simulated";
@@ -88,7 +89,7 @@ export function createLedgerPersistence(budget: ControlledBudget, ledgerPath: st
 }
 
 /** Real factory has no injection or environment bypass. Offline tests supply explicit simulated executors. */
-export function createControlledExecution(options: ControlledPlan & { runRoot: string; home?: string; nativeLimits?: NativeModelLimitsByRole }): EvaluationExecution {
+export function createControlledExecution(options: ControlledPlan & { runRoot: string; home?: string; nativeLimits?: NativeModelLimitsByRole; signal?: AbortSignal | undefined; runtimeIdentity?: EvaluationRuntimeIdentity | undefined }): EvaluationExecution {
   validateControlledPlan(options);
   const { model: subjectModel, judgeModel, plannedSessions } = options;
   if (!options.nativeLimits?.subject || !options.nativeLimits?.judge) throw new Error("CONTROLLED_NATIVE_MODEL_LIMITS_REQUIRED: 真实执行须绑定已核验目录中的原生上下文与输出上限");
@@ -118,7 +119,10 @@ export function createControlledExecution(options: ControlledPlan & { runRoot: s
   persistJson(recordPath, record, true);
   const syncLedger = persistence.sync;
   let finalized = false;
-  const finalize = () => { persistence.finalize(); finalized = true; };
+  const checkInterruption = () => {
+    if (!finalized && options.signal?.aborted && !budget.isStopped()) budget.stop(evaluationInterruption(options.signal.reason));
+  };
+  const finalize = () => { checkInterruption(); persistence.finalize(); finalized = true; };
   const rejected = (reason: string): PiRunResult => ({
     exitCode: null, metrics: emptyMetrics(), events: [], stderr: reason, timedOut: false,
     isolation: { verified: false, issues: [reason], backend: "macos-sandbox-exec-network-denied" },
@@ -131,10 +135,11 @@ export function createControlledExecution(options: ControlledPlan & { runRoot: s
   };
   return {
     mode: "real",
-    snapshot: () => budget.snapshot(),
-    isStopped: () => budget.isStopped(),
+    snapshot: () => { checkInterruption(); return budget.snapshot(); },
+    isStopped: () => { checkInterruption(); return budget.isStopped(); },
     finalize,
     async run(role, request) {
+      checkInterruption();
       if (budget.isStopped()) return rejected("CONTROLLED_EXECUTION_STOPPED");
       if (finalized) return rejected("CONTROLLED_EXECUTION_FINALIZED");
       try {
@@ -161,9 +166,11 @@ export function createControlledExecution(options: ControlledPlan & { runRoot: s
           workspaceRoot: workspace, sessionId: transportSessionId, prompt: request.prompt,
           model, skillPaths, home, role, budget, timeoutMs: request.timeoutMs,
           catalogHashes, onLedger: syncLedger, onEvent: request.onEvent,
+          signal: options.signal, runtimeIdentity: options.runtimeIdentity,
         });
-        // Ordinary SDK failures remain sample data. The session records genuine
-        // Host failures itself; a missing isolation proof is also a Host fault.
+        checkInterruption();
+        // Ordinary SDK failures remain sample data. The session records batch
+        // stop causes itself; a missing isolation proof is also a Host fault.
         if (!result.isolation.verified) budget.stop(result.stderr || "CONTROLLED_SANDBOX_FAILED");
         syncLedger();
         if (budget.isStopped()) finalize();

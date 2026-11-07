@@ -5,7 +5,7 @@
  *
  * | 模式 | 特征 | 含义 |
  * |---|---|---|
- * | `activation-missing` | 失败发生在未读取 skill 的轮次（如 0% 激活用例） | 漏触发症状，应改 frontmatter description 而非正文 |
+ * | `activation-missing` | 应触发用例的失败发生在未读取 skill 的轮次 | 漏触发症状，应改 frontmatter description 而非正文 |
  * | `over-trigger` | `shouldActivate=false` 的无关用例触发了 skill | 误触发污染，需收窄 description 触发边界 |
  * | `contract-missing` | 已激活但 baseline 过了、skill 侧没过 | **真问题**：skill 声称的契约没落到输出里或造成倒退 |
  * | `unstable` | 已激活且同一断言多次重复里时过时不过 | 契约强度不够稳，需改为硬性规则+示例 |
@@ -248,6 +248,7 @@ export function buildImprovementAdvice(
   for (const t of options.tasks ?? []) {
     shouldActivateByTask.set(t.id, t.shouldActivate ?? true);
   }
+  const hasPositiveTask = !options.tasks?.length || options.tasks.some((task) => task.shouldActivate !== false);
 
   // 排除运行失败（status === "failed"）的记录，防止空输出污染归因。
   const baselineRows = results.filter(
@@ -256,11 +257,6 @@ export function buildImprovementAdvice(
   const variantRows = results.filter(
     (r) => r.variantId !== "baseline" && r.status !== "failed",
   );
-
-  let variantTotalAssertionItems = 0;
-  for (const row of variantRows) {
-    variantTotalAssertionItems += row.assertions?.total ?? 0;
-  }
 
   const baselineByKey = new Map<string, boolean[]>();
   for (const row of baselineRows) {
@@ -285,7 +281,15 @@ export function buildImprovementAdvice(
     }
   >();
 
+  let variantTotalAssertionItems = 0;
+  let negativeAssertionFailed = false;
   for (const row of variantRows) {
+    // 负向用例的断言留在原始明细。只有实际读取能证明触发边界有误。
+    if (shouldActivateByTask.get(row.taskId) === false) {
+      negativeAssertionFailed ||= (row.assertions?.failed ?? 0) > 0;
+      continue;
+    }
+    variantTotalAssertionItems += row.assertions?.total ?? 0;
     const outcomes = row.assertions?.outcomes ?? [];
     for (let i = 0; i < outcomes.length; i++) {
       const outcome = outcomes[i];
@@ -449,7 +453,7 @@ export function buildImprovementAdvice(
   const skillIssueCount = diagnoses.filter((d) => isSkillIssue(d.mode)).length;
 
   const activationIssue =
-    activationRate < 0.6
+    hasPositiveTask && activationRate < 0.6
       ? `激活率仅 ${(activationRate * 100).toFixed(1)}%（未达 60% 门槛）：skill 大部分时候没被模型读取，` +
         `输出根本没走 skill 的约束。此时改正文收效有限，应先改 frontmatter 的 description——` +
         `写清「什么场景该用我」。`
@@ -463,8 +467,9 @@ export function buildImprovementAdvice(
       `模型多数时候没读它，输出不受约束。此时改正文收效有限，应先改 frontmatter 的 description——` +
       `写清「什么场景该用我」。`;
   } else if (diagnoses.length === 0) {
-    summary =
-      "规则断言全部通过，没有可加固的契约——如需确认稳定性，可增加 repeat 后复跑。";
+    summary = negativeAssertionFailed
+      ? "不应触发用例的断言失败见规则断言明细，未发现需要归因到 skill 的失败项。"
+      : "规则断言全部通过，没有可加固的契约——如需确认稳定性，可增加 repeat 后复跑。";
   } else if (skillIssueCount === 0) {
     const falseCount = diagnoses.length;
     summary =

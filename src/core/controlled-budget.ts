@@ -169,7 +169,7 @@ export class ControlledBudget {
     this.active = undefined;
   }
 
-  /** Only Host failures or explicit cancellation close the entire execution. */
+  /** Host failures, confirmed unavailable quota and cancellation close the execution. */
   stop(reason: string): void {
     const firstStop = !this.stoppedReason;
     if (firstStop) this.stoppedReason = reason || "unspecified-failure";
