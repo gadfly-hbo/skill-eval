@@ -61,7 +61,7 @@ export interface JudgeOptions {
   home?: string | undefined;
   /** 运行标识。 */
   runId: string;
-  /** 评委单次超时。默认 `DEFAULT_JUDGE_TIMEOUT_MS`。 */
+  /** 仅在调用方明确配置时设置评委单次超时。 */
   timeoutMs?: number;
   /** 当前展示顺序是否与规范口径（A=对照、B=候选）相反。 */
   swapped?: boolean;
@@ -134,32 +134,6 @@ const DEFAULT_RUBRIC = [
   "格式合规：满足任务明确指定的输出格式要求。",
 ].join("\n");
 
-/** 评委提示词单份输出最大保留字符数（头尾保留窗口，防止静默截断末尾结论/出处/免责声明）。 */
-export const JUDGE_MAX_OUTPUT_CHARS = 24_000;
-export const JUDGE_HEAD_CHARS = 18_000;
-export const JUDGE_TAIL_CHARS = 6_000;
-
-/**
- * 对超长输出做头尾保留采样，避免 `.slice(0, 12000)` 静默截断报告末尾的结论、参考文献与免责声明。
- */
-export function formatJudgeOutputWindow(
-  text: string,
-  maxChars: number = JUDGE_MAX_OUTPUT_CHARS,
-  headChars: number = JUDGE_HEAD_CHARS,
-  tailChars: number = JUDGE_TAIL_CHARS,
-): string {
-  if (text.length <= maxChars) return text;
-  const safeHead = Math.min(headChars, Math.floor(maxChars * 0.75));
-  const safeTail = Math.min(tailChars, maxChars - safeHead);
-  const omitted = text.length - safeHead - safeTail;
-  if (omitted <= 0) return text;
-  return (
-    text.slice(0, safeHead) +
-    `\n\n[...中间省略 ${omitted.toLocaleString()} 字符，以下保留输出末尾段落（结论/出处/声明）...]\n\n` +
-    text.slice(text.length - safeTail)
-  );
-}
-
 /**
  * 构造评委提示词。
  *
@@ -201,29 +175,16 @@ ${expectedPoints}
 ${rubric}
 
 # 输出 A
-${formatJudgeOutputWindow(anonymous(options.outputA))}
+${anonymous(options.outputA)}
 
 # 输出 B
-${formatJudgeOutputWindow(anonymous(options.outputB))}
+${anonymous(options.outputB)}
 
 ${anonymous(formatExecutionEvidence(options.evidenceA, options.evidenceB))}
 
 只输出 JSON 对象，不要输出 Markdown，不要用代码块包裹：
 {"verdict":"win|tie|loss","scoreA":0,"scoreB":0,"confidence":0.8,"reason":"一句话说明关键差异"}`;
 }
-
-/**
- * 评委单次运行的默认超时。
- *
- * 原为 120s，实测（2026-11-05 data-analysis）偏短：
- * 两条 adversarial 判定的反向轮思考了 1338 个 event 后仍未输出 JSON，
- * 产出 0 字节 output.md，被判 `not_judged`，
- * 导致位置偏好探测在 10 条里有 2 条失效（「存在未判定轮次，无法检测位置偏好」）。
- *
- * 被评模型本身要 156–317s，评委要在两份长输出之间做比较，思考链比被评模型更长，
- * 超时应当比被评模型更宽。此处取 300s。
- */
-export const DEFAULT_JUDGE_TIMEOUT_MS = 300_000;
 
 /**
  * 执行一次成对评判。
@@ -242,7 +203,7 @@ export async function runPairwiseJudge(options: JudgeOptions): Promise<JudgeResu
     // 评委不需要工具，也不需要任何 skill。
     skillPaths: [],
     home: options.home,
-    timeoutMs: options.timeoutMs ?? DEFAULT_JUDGE_TIMEOUT_MS,
+    timeoutMs: options.timeoutMs,
   });
 
   // 评委原始产物落盘，供复核与重算使用。

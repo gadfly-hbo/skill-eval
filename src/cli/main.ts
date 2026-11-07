@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { dirname, resolve, join, isAbsolute, basename, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { NativeModelLimitsByRole } from "../core/controlled-budget.ts";
 import {
   runEvaluation,
   recomputeSummary,
@@ -149,7 +150,7 @@ function positiveInteger(flags: Record<string, string | boolean>, key: string, f
 
 function rejectUnbudgetedAdvice(flags: Record<string, string | boolean>): void {
   if (flags["llm-advice"] !== undefined) {
-    throw new Error("--llm-advice 尚未接入共享费用账本，禁止额外模型调用；请使用报告中的离线改进建议");
+    throw new Error("--llm-advice 额外调用入口已退役；请使用报告中的离线改进建议");
   }
 }
 
@@ -193,7 +194,7 @@ eval 选项：
   --suite <path>          评估套件定义（必填）
   --skill <path>          被测 SKILL.md 路径（可覆盖套件中的设置）
   --model <id>            被评模型：minimax-cn/MiniMax-M3.1-Flash
-  --models <id>           仅接受单个模型；多模型矩阵尚未配置共享预算，拒绝执行
+  --models <id>           当前真实入口接受单个被评模型
   --judge-model <id>      评委：xiaomi-token-plan-cn/mimo-v2.6-flash（须显式指定或设置环境变量）
   --repeat <n>            每用例重复次数（默认取套件值或 ${DEFAULT_REPEAT}）
   --judge-repeat <n>      评委轮数，≥2 启用位置偏好探测（默认取套件值或 ${DEFAULT_JUDGE_REPEAT}）
@@ -201,9 +202,9 @@ eval 选项：
   --home <dir>            pi 隔离 HOME，避免污染全局配置
   --context <text>        附加上下文前缀（覆盖套件）
   --no-keyword-signal     关闭关键词弱证据，仅用工具调用取证
-  --timeout <ms>          单次运行超时（默认 480000）
-  --judge-timeout <ms>    评委单次超时（默认 300000）
-  --llm-advice            暂停使用：额外付费通道尚未接入共享账本，eval/report 均拒绝
+  --timeout <ms>          显式设置单次运行超时（默认不设）
+  --judge-timeout <ms>    显式设置评委单次超时（默认不设）
+  --llm-advice            已退役：使用报告中的离线改进建议
   --archive-to <dir>      评估后把通过测评的 skill 归档到该仓库（默认归档到 <dir>/archive）
   --archive-root <dir>    覆盖归档根目录（配合 --archive-to 使用）
   --archive-version <id>  指定归档版本标识（默认 <frontmatter版本>__<时间戳>）
@@ -212,9 +213,9 @@ eval 选项：
   --allow-low-gain        允许归档断言增益未达标的评估（标记 lowGain=true）
   --gain-threshold <pp>   增益门槛（百分点，默认 ${GAIN_THRESHOLD_PP}）
 
-当前唯一获准成本配置：全部被评与评委计划合计最多 8 会话，固定 US$1 等价预算；异常即停。
+当前模型费用记录配置：被评与评委使用模型原生上下文和输出上限，保留 SDK 原生思考与恢复。
 诊断题与全部评委轮次同样计入会话规划；不会替换未受支持的模型。
-超过限额请缩小本次计划，或另行制定预算。
+不设预算封顶、固定会话上限或默认执行超时；费用与全部调用仍留痕。
 
 preflight 选项：
   --model / --models     被评模型；选型与 eval 相同，要求精确 provider/model
@@ -411,6 +412,7 @@ async function runSingleModelEval(params: {
   skillPath: string;
   model: string;
   judgeModel: string;
+  nativeLimits: NativeModelLimitsByRole;
   repeat: number;
   judgeRepeat: number;
   outDir: string;
@@ -433,7 +435,7 @@ async function runSingleModelEval(params: {
   const manifest: RunManifest = {
     schemaVersion: 1, policyVersion: EVALUATION_POLICY_VERSION, runId, model, judgeModel, repeat, judgeRepeat, judgeSeed: runId,
     tasks: suite.tasks, variants, contextPrefix: params.contextPrefix,
-    settings: { gainThresholdPp: params.gainThresholdPp ?? GAIN_THRESHOLD_PP, timeoutMs: params.timeoutMs, judgeTimeoutMs: params.judgeTimeoutMs, keywordSignal: params.keywordSignal, nodeVersion: process.version },
+    settings: { gainThresholdPp: params.gainThresholdPp ?? GAIN_THRESHOLD_PP, timeoutMs: params.timeoutMs, judgeTimeoutMs: params.judgeTimeoutMs, keywordSignal: params.keywordSignal, nodeVersion: process.version, nativeLimits: params.nativeLimits },
     candidate: { identity: frozen.identity, snapshotDir: relativeSnapshotDir(outDir, frozen.skillPath), originalSkillPath: skillPath },
     suiteMeta: { suiteId: suite.id, suiteVersion: suite.version ?? "未标注", suiteHash: effectiveSuiteHash, skillVersion: suite.skill?.version ?? "未标注", skillPath },
   };
@@ -456,6 +458,7 @@ async function runSingleModelEval(params: {
     judgeSeed: manifest.judgeSeed,
     model,
     judgeModel,
+    nativeLimits: params.nativeLimits,
     variants,
     tasks: suite.tasks,
     repeat,
@@ -567,7 +570,7 @@ async function commandEval(args: CliArgs): Promise<number> {
     throw new Error("运行目录非空，禁止覆盖历史评测记录；请使用新的 --out");
   }
   if (modelList.length > 1) {
-    throw new Error("多模型矩阵尚未配置共享预算，禁止执行；请用 --model 或单元素 --models 运行一次评估");
+    throw new Error("当前真实执行入口只接受单个被评模型；请使用 --model 或单元素 --models");
   }
   const model = (modelList[0] ?? singleModel)!;
   const judgeModel = judgeOverride ?? model;
@@ -580,6 +583,14 @@ async function commandEval(args: CliArgs): Promise<number> {
     process.stderr.write(`模型预检未通过（未调用 Provider）：\n  ${modelCheck.errors.join("\n  ")}\n`);
     return 1;
   }
+  const limitsFor = (role: "subject" | "judge", reference: string) => {
+    const native = modelCheck.models.find(entry => entry.role === role && entry.requested === reference)?.model;
+    if (!native || !Number.isSafeInteger(native.contextWindow) || !Number.isSafeInteger(native.maxTokens) || native.contextWindow! < 1 || native.maxTokens! < 1) {
+      throw new Error(`模型目录缺少原生 token 上限：${reference}`);
+    }
+    return { contextWindow: native.contextWindow!, maxOutputTokens: native.maxTokens! };
+  };
+  const nativeLimits: NativeModelLimitsByRole = { subject: limitsFor("subject", model), judge: limitsFor("judge", judgeModel) };
 
   const runId = newRunId();
   const outDir = flagString(args.flags, "out") ? resolve(flagString(args.flags, "out")!) : resolve("runs", runId);
@@ -590,6 +601,7 @@ async function commandEval(args: CliArgs): Promise<number> {
     skillPath,
     model,
     judgeModel,
+    nativeLimits,
     repeat,
     judgeRepeat,
     outDir,

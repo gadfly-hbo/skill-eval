@@ -1,6 +1,6 @@
 {
   "name": "skill-eval",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "独立评估 Agent Skill 的激活率与实际增益",

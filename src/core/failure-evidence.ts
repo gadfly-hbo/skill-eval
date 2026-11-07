@@ -1,5 +1,7 @@
-/** Sanitized first-cause evidence. Observation never changes the strict stop policy. */
+/** Sanitized execution observations and the first fatal execution cause. */
 import type { PiEvent } from "./pi.ts";
+
+export const TOOL_ERROR_POLICY_VERSION = "native-agent-recovery-v2";
 
 export type IncidentType = "tool_error" | "worker_error" | "assistant_error" | "request_error" | "timeout" | "startup_error" | "persistence_error" | "tool_aborted_during_cleanup" | "assistant_aborted_during_cleanup";
 export interface FailureCause {
@@ -18,14 +20,30 @@ interface OutputObservation {
   exitCode: 0;
   authoritativeFailure: false;
 }
+interface ToolErrorObservation {
+  kind: "recoverable_tool_error";
+  eventIndex: number;
+  toolCallId: string | null;
+  toolName: string | null;
+  exitCode: number | null;
+  authoritativeFailure: false;
+}
+interface NativeRecoveryObservation {
+  kind: "native_recovery_event";
+  eventIndex: number;
+  eventType: string;
+  stopReason: string | null;
+  authoritativeFailure: false;
+}
 const identifier = (value: unknown): string | null => typeof value === "string" ? value.slice(0, 256) : null;
 
 export class FailureEvidence {
   private firstCause: FailureCause | null = null;
   private secondary: FailureCause[] = [];
-  private observations: OutputObservation[] = [];
+  private observations: Array<OutputObservation | ToolErrorObservation | NativeRecoveryObservation> = [];
   private readonly sessionId: string;
   constructor(sessionId: string) { this.sessionId = sessionId; }
+  hasFatalCause(): boolean { return this.firstCause !== null; }
 
   record(code: string, incidentType: IncidentType, eventIndex: number | null = null): void {
     this.add({ code: /^[A-Z][A-Z0-9_]{0,100}$/.test(code) ? code : "CONTROLLED_FAILURE", incidentType, eventIndex, toolCallId: null, toolName: null, exitCode: null });
@@ -39,7 +57,8 @@ export class FailureEvidence {
       const content = (result?.content ?? []).filter(block => block?.type === "text" && typeof block.text === "string").map(block => block.text).join("\n").trim();
       if (event.isError === true) {
         const cleanup = this.firstCause !== null && exitCode === null && (content === "Command aborted" || content.endsWith("\nCommand aborted"));
-        this.add({ code: cleanup ? "TOOL_ABORTED_DURING_CLEANUP" : "TOOL_EXECUTION_FAILED", incidentType: cleanup ? "tool_aborted_during_cleanup" : "tool_error", eventIndex, toolCallId: identifier(event.toolCallId), toolName: identifier(event.toolName), exitCode });
+        if (cleanup) this.add({ code: "TOOL_ABORTED_DURING_CLEANUP", incidentType: "tool_aborted_during_cleanup", eventIndex, toolCallId: identifier(event.toolCallId), toolName: identifier(event.toolName), exitCode });
+        else this.observations.push({ kind: "recoverable_tool_error", eventIndex, toolCallId: identifier(event.toolCallId), toolName: identifier(event.toolName), exitCode, authoritativeFailure: false });
         return true;
       }
       // Native bash reports the final shell status. Text only documents a possible
@@ -53,17 +72,26 @@ export class FailureEvidence {
       this.record(typeof event.code === "string" ? event.code : "WORKER_ERROR", "worker_error", eventIndex);
       return true;
     }
+    if (event.type === "native_session_failed") {
+      this.record("NATIVE_SESSION_FAILED", "assistant_error", eventIndex);
+      return true;
+    }
     const message = event.message as { role?: string; stopReason?: string } | undefined;
-    if (event.type === "message_end" && message?.role === "assistant" && ["error", "aborted", "length"].includes(message.stopReason ?? "")) {
+    if (event.type === "message_end" && message?.role === "assistant" && ["error", "aborted", "length", "deferred", "pending"].includes(message.stopReason ?? "")) {
       const cleanup = this.firstCause !== null && message.stopReason === "aborted";
-      this.record(cleanup ? "ASSISTANT_ABORTED_DURING_CLEANUP" : `ASSISTANT_${message.stopReason!.toUpperCase()}`, cleanup ? "assistant_aborted_during_cleanup" : "assistant_error", eventIndex);
+      if (cleanup) this.record("ASSISTANT_ABORTED_DURING_CLEANUP", "assistant_aborted_during_cleanup", eventIndex);
+      else this.observations.push({ kind: "native_recovery_event", eventIndex, eventType: event.type, stopReason: message.stopReason ?? null, authoritativeFailure: false });
+      return true;
+    }
+    if (["auto_retry_start", "auto_retry_end", "compaction_start", "compaction_end"].includes(event.type)) {
+      this.observations.push({ kind: "native_recovery_event", eventIndex, eventType: event.type, stopReason: null, authoritativeFailure: false });
       return true;
     }
     return false;
   }
 
   snapshot() {
-    return { schemaVersion: 1, sessionId: this.sessionId, firstCause: this.firstCause ? { ...this.firstCause } : null, secondary: this.secondary.map(cause => ({ ...cause })), observations: this.observations.map(row => ({ ...row })) };
+    return { schemaVersion: 1, toolErrorPolicy: TOOL_ERROR_POLICY_VERSION, sessionId: this.sessionId, firstCause: this.firstCause ? { ...this.firstCause } : null, secondary: this.secondary.map(cause => ({ ...cause })), observations: this.observations.map(row => ({ ...row })) };
   }
 
   private add(cause: FailureCause): void {

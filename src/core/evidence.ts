@@ -24,8 +24,6 @@ export interface EvidenceOptions {
   maxCalls?: number;
 }
 
-const DEFAULT_MAX_CALLS = 16;
-
 /**
  * 从 pi 事件流中提取工具调用摘要。
  *
@@ -60,7 +58,7 @@ export function extractToolCalls(events: PiEvent[], options: EvidenceOptions = {
   }
 
   const list = order.map((id) => byId.get(id)).filter((item): item is ToolCallSummary => Boolean(item));
-  return list.slice(0, options.maxCalls ?? DEFAULT_MAX_CALLS);
+  return options.maxCalls === undefined ? list : list.slice(0, options.maxCalls);
 }
 
 /**

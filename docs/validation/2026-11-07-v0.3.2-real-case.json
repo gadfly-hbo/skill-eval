@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-11-07T01:29:34.755226+00:00",
+  "evidenceLevel": "REAL_PROVIDER_RUN_WITH_OFFLINE_REVIEW",
+  "runRoot": "runs/run-20261107T012005Z-62b2d797",
+  "status": "PARTIAL_STOPPED_JUDGE_LENGTH",
+  "cliExitCode": 1,
+  "releaseGate": "NOT_PASSED",
+  "versionPrepared": "0.3.2",
+  "commitPushMergeTag": "NOT_PERFORMED",
+  "baseCommit": "e79584442c6fb1443f98ee678e0f09bfd70bf88d",
+  "candidate": {
+    "hash": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc",
+    "versionLabel": "1.9.0 archive label; six-file runtime projection",
+    "modified": false
+  },
+  "suite": {
+    "hash": "sha256:f913f4406632a000",
+    "tasks": 2,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "privateCaseFilesUploaded": false
+  },
+  "model": "minimax-cn/MiniMax-M3.1-Flash",
+  "judgeModel": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+  "planSha256": "ddea36d2e4e6224416ba54a0df304ebe39971dff19dc79b7096debe04baa422f",
+  "sourceMapAtRunSha256": "9af8ce0c97c93651abe546d510e72c387f9e726301d0d76b677170ca20907c25",
+  "runtimeSourceFiles": 89,
+  "sourceValidatedAtRun": {
+    "tests": 463,
+    "fail": 0,
+    "skip": 0,
+    "typecheck": "PASS"
+  },
+  "maxSessions": 8,
+  "maxNanoUsd": 1000000000,
+  "sessions": [
+    {
+      "phase": "subject",
+      "variantId": "baseline",
+      "taskId": "t1",
+      "attempt": 1,
+      "status": "SUCCESS"
+    },
+    {
+      "phase": "subject",
+      "variantId": "baseline",
+      "taskId": "t2",
+      "attempt": 1,
+      "status": "SUCCESS"
+    },
+    {
+      "phase": "subject",
+      "variantId": "skill",
+      "taskId": "t1",
+      "attempt": 1,
+      "status": "SUCCESS"
+    },
+    {
+      "phase": "subject",
+      "variantId": "skill",
+      "taskId": "t2",
+      "attempt": 1,
+      "status": "SUCCESS"
+    },
+    {
+      "phase": "judge",
+      "variantId": "skill",
+      "taskId": "t1",
+      "attempt": 1,
+      "roundIndex": 0,
+      "status": "FAILED",
+      "reason": "REQUEST_ABORTED"
+    },
+    {
+      "phase": "judge",
+      "variantId": "skill",
+      "taskId": "t1",
+      "attempt": 1,
+      "roundIndex": 1,
+      "status": "NOT_RUN"
+    },
+    {
+      "phase": "judge",
+      "variantId": "skill",
+      "taskId": "t2",
+      "attempt": 1,
+      "roundIndex": 0,
+      "status": "NOT_RUN"
+    },
+    {
+      "phase": "judge",
+      "variantId": "skill",
+      "taskId": "t2",
+      "attempt": 1,
+      "roundIndex": 1,
+      "status": "NOT_RUN"
+    }
+  ],
+  "results": [
+    {
+      "variantId": "baseline",
+      "taskId": "t1",
+      "status": "success",
+      "durationSec": 70.877,
+      "activation": false,
+      "assertions": {
+        "passed": 3,
+        "total": 6
+      },
+      "totalTokens": 12458,
+      "sdkCostEstimate": 0.0036810248,
+      "evidenceDir": "cases/baseline/t1/1",
+      "evidenceHashes": {
+        "events.json": "39e404cbf8fec1a9f48f4fcc30774627f578e91321ccf4c2a6210e998eadbbb2",
+        "output.md": "f435031607fdba4688f0e2f8bb46c2e62d0a2e5f4a87e8f6e57f9c553d930d9f",
+        "result.json": "614838c438c8c999f554ae1c989b993410192dd2f033ae67bd903ef9e4634f13"
+      },
+      "ordinaryToolErrors": 0
+    },
+    {
+      "variantId": "baseline",
+      "taskId": "t2",
+      "status": "success",
+      "durationSec": 5.312,
+      "activation": false,
+      "assertions": {
+        "passed": 4,
+        "total": 4
+      },
+      "totalTokens": 2229,
+      "sdkCostEstimate": 0.0004142162,
+      "evidenceDir": "cases/baseline/t2/1",
+      "evidenceHashes": {
+        "events.json": "352084702a870690eadd642613f3d0d099cb19ac572c33f46fd0dc12d4672bbc",
+        "output.md": "c7537d0c6b0de90db42b204ad8c4e1bdd454314ca9be7b3db5644046c7cd3bb0",
+        "result.json": "37f7dca9a6fa0d7d49483e13c19e75e6ac63aa408e6ccc4e77f7d0baef98414a"
+      },
+      "ordinaryToolErrors": 0
+    },
+    {
+      "variantId": "skill",
+      "taskId": "t1",
+      "status": "success",
+      "durationSec": 76.805,
+      "activation": true,
+      "assertions": {
+        "passed": 6,
+        "total": 6
+      },
+      "totalTokens": 344269,
+      "sdkCostEstimate": 0.016352137600000004,
+      "evidenceDir": "cases/skill/t1/1",
+      "evidenceHashes": {
+        "events.json": "c1c9ce58c040fed506a171707d1475e905973ed5e26aee4c58b05b2e99d119df",
+        "output.md": "5d229b826074303b0797129179ea222a8dfe3c299f72ce8b540b4081311a841d",
+        "result.json": "cb796e7a35cb850715cbd7f59d2ea6161303dd22694bb091ecaab143f8f0dc23"
+      },
+      "ordinaryToolErrors": 0
+    },
+    {
+      "variantId": "skill",
+      "taskId": "t2",
+      "status": "success",
+      "durationSec": 22.44,
+      "activation": true,
+      "assertions": {
+        "passed": 4,
+        "total": 4
+      },
+      "totalTokens": 62715,
+      "sdkCostEstimate": 0.0030446677,
+      "evidenceDir": "cases/skill/t2/1",
+      "evidenceHashes": {
+        "events.json": "ea3f44a273c9963bd8056571441c4fe329c10fbb4d101a914b3801d83401f90c",
+        "output.md": "bd4b9848291dda5cf00b4e981d54a6c02393e39579c52ec2e819374efbeca9b6",
+        "result.json": "b1f8002f90c60aa25bc50cbd3373fbbfbf1e3f0f0dc44f51aed465c63cd07ccd"
+      },
+      "ordinaryToolErrors": 2
+    }
+  ],
+  "metrics": {
+    "activationNumerator": 2,
+    "activationDenominator": 2,
+    "baselineAssertionItems": {
+      "passed": 7,
+      "total": 10
+    },
+    "variantAssertionItems": {
+      "passed": 10,
+      "total": 10
+    },
+    "taskWeightedGainPp": 25,
+    "validJudgePairs": 0,
+    "plannedPairs": 2,
+    "pairwiseWinRate": null,
+    "candidateVerdict": "inconclusive",
+    "rawJudgeRuns": 1,
+    "notRunJudgeSessions": 3,
+    "authorGate": {
+      "baseline": {
+        "passed": 0,
+        "total": 2
+      },
+      "variant": {
+        "passed": 1,
+        "total": 2
+      },
+      "callErrors": 0,
+      "variantT2Failure": "F2: statistical period omitted; frozen task assertions still pass"
+    },
+    "ordinaryToolErrorsRecovered": 2,
+    "ordinaryToolErrorCase": "skill/t2"
+  },
+  "firstFailure": {
+    "code": "INCOMPLETE_OR_ABNORMAL_PROVIDER_STREAM",
+    "incidentType": "request_error",
+    "eventIndex": null,
+    "toolCallId": null,
+    "toolName": null,
+    "exitCode": null
+  },
+  "judgeWire": {
+    "httpStatus": 200,
+    "model": "mimo-v2.6-flash",
+    "thinkingType": "enabled",
+    "maxCompletionTokens": 1024,
+    "finishReason": "length",
+    "doneMarker": true,
+    "finalContentChars": 0,
+    "reportedUsage": {
+      "promptTokens": 5724,
+      "completionTokens": 1024,
+      "cachedTokensIncludedInPrompt": 1408,
+      "reasoningTokensReported": 1025
+    },
+    "effectiveJudgment": false
+  },
+  "cost": {
+    "settledSubjectRequests": 34,
+    "failedJudgeRequests": 1,
+    "totalHttpRequests": 35,
+    "subjectUsage": {
+      "input": 45171,
+      "output": 19107,
+      "cacheRead": 357393,
+      "cacheWrite": 0
+    },
+    "subjectTokens": 421671,
+    "subjectSdkEstimateUsd": 0.023492046300000003,
+    "settledSubjectNanoUsd": 71848800,
+    "failedJudgeFullReservationChargedNanoUsd": 147087360,
+    "ledgerConservativeChargedNanoUsd": 218936160,
+    "pendingReservationNanoUsd": 0,
+    "allReportedWireUsageUsdEquivalent": 0.07293688,
+    "reportedJudgeUsageUsdEquivalent": 0.00108808,
+    "actualInvoice": "UNKNOWN",
+    "remainingAccountQuota": "UNKNOWN",
+    "wireEstimateDoesNotOverrideFailedReservation": true
+  },
+  "verification": {
+    "runIntegrity": {
+      "verified": true,
+      "issues": []
+    },
+    "journalsMatchFinalEvents": true,
+    "judgeDeveloperAndUserBlinding": "PASS_NO_CANDIDATE_ID_OR_A_B_ORIGIN_HINT",
+    "protectedFilesChecked": 1770,
+    "protectedChanged": 0,
+    "sdkFilesChecked": 15138,
+    "sdkChanged": 0,
+    "sourceDriftDuringRun": 0,
+    "independentReview": "COMPLETED_FAILED_RELEASE_GATE_CONFIRMED"
+  },
+  "journals": [
+    {
+      "path": "cases/baseline/t1/1/events.partial.jsonl",
+      "bytes": 2187106,
+      "records": 475,
+      "sha256": "da908df03b3409f963b274cf816011d20d88bd3ced8461c8f966ac95bfdb2d82"
+    },
+    {
+      "path": "cases/baseline/t2/1/events.partial.jsonl",
+      "bytes": 104386,
+      "records": 83,
+      "sha256": "0718c23fe1ff4278e4f81e9b6aba274cc47a600b1ba46b89489a76cbb1888289"
+    },
+    {
+      "path": "cases/skill/t1/1/events.partial.jsonl",
+      "bytes": 4116311,
+      "records": 2153,
+      "sha256": "f325fa59d50abb3cbd2dc66e49295a42c8db0742f41eea4999103891189d83f6"
+    },
+    {
+      "path": "cases/skill/t2/1/events.partial.jsonl",
+      "bytes": 1260688,
+      "records": 1146,
+      "sha256": "9dfa025f0fc1d525e393843e1b14760457e38d1adc2c3c1572a96bb69f728546"
+    },
+    {
+      "path": "pairwise/skill-t1-1/round-001/events.partial.jsonl",
+      "bytes": 59002,
+      "records": 12,
+      "sha256": "906bb354f17840483e17b23c8751df863b7e4c04ae1cb9aaf048bef0beb02767"
+    }
+  ],
+  "fingerprints": {
+    ".local/release-v032-retry-b8t9wjsj/plan.json": "ddea36d2e4e6224416ba54a0df304ebe39971dff19dc79b7096debe04baa422f",
+    ".local/release-v032-retry-b8t9wjsj/validated-source-sha256.json": "9af8ce0c97c93651abe546d510e72c387f9e726301d0d76b677170ca20907c25",
+    ".local/release-v032-retry-b8t9wjsj/execution-exit.json": "29fb5f9db0343eb23a357db672b2093e9a88f506a88a345a231215dcc7199e0f",
+    "runs/run-20261107T012005Z-62b2d797/summary.json": "29658f5139fcf8ab85a93a32604594731dee279e07c7964e62ede471ca1cd17c",
+    "runs/run-20261107T012005Z-62b2d797/run-manifest.json": "2ddd10ffa1c08b177bb9b3522a92f107daf98e0a0212ffeb35ce3a38f28a22c6",
+    "runs/run-20261107T012005Z-62b2d797/budget-ledger.json": "ef6a794aef5cfa89a007d4c97d469da2520825b4a28b20d5da1075d1bb6c81ef",
+    "runs/run-20261107T012005Z-62b2d797/execution-status.json": "9c0bf1000528d9552b473f73190e5e750215fbf190535ab18f98ac2a6d0e7975",
+    "runs/run-20261107T012005Z-62b2d797/pairwise/skill-t1-1/round-001/failure-evidence.json": "f4f83b5c394043204d6d95b1ee63c23c0a7ffcd36e498eb2bfb18acd75c93495",
+    "runs/run-20261107T012005Z-62b2d797/gate-report.md": "7452ad441b85434ebaa12696cc6679af2df93cdaccc744c6a2a21520064d97af"
+  },
+  "priorHostFailure": {
+    "runRoot": "runs/run-20261107T005447Z-d069b2bf",
+    "retained": true,
+    "notReusedForScoring": true
+  },
+  "noSelectiveRerun": true,
+  "mainRetest": "NOT_RUN",
+  "postRunRepair": {
+    "recordedAt": "2026-11-07T01:31:51.954023+00:00",
+    "evidenceLevel": "OFFLINE_NATIVE_SDK_WITH_IN_MEMORY_HTTP",
+    "sourceChanges": [
+      "src/core/controlled-session.test.ts",
+      "src/core/controlled-worker.ts"
+    ],
+    "sdkPublicOption": "createAgentSession.thinkingLevel",
+    "judge": {
+      "thinkingLevel": "off",
+      "actualFixtureWireThinking": "disabled",
+      "maxCompletionTokens": 1024
+    },
+    "subject": {
+      "thinkingLevel": "unchanged SDK default",
+      "actualFixtureWireThinking": "adaptive",
+      "maxTokens": 4096
+    },
+    "typecheck": "PASS",
+    "tests": 464,
+    "pass": 464,
+    "fail": 0,
+    "skip": 0,
+    "newTests": 1,
+    "redConfirmedOldJudgeEnabled": true,
+    "green": "judge-thinking-green-final.log",
+    "intermediateSubjectExpectationFailureRetained": true,
+    "providerCallsAfterRepair": 0,
+    "realFixedConfiguration": "NOT_RUN",
+    "independentSourceReview": "PASS",
+    "releaseGate": "NOT_PASSED",
+    "logSha256": "7d5de496da3658f26fdfef3ff3b7025a733182ac50e40a4aec3829ebefc75d0d",
+    "sourceMapSha256": "3232601f9395516a7b1e7448fa70fcc8aeaa811d6d023cc476082476eccd6025"
+  }
+}

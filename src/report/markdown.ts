@@ -213,7 +213,9 @@ export function renderReport(options: ReportOptions): string {
   lines.push(`| ${summary.execution ? "被评会话 SDK 估计成本" : "总成本"} | ${hasMissing ? "未知（部分运行产物缺失）" : `$${summary.totalCost.toFixed(4)}`} |`);
   if (summary.execution) {
     lines.push(`| 整批执行 | ${summary.execution.stopped ? "STOPPED" : summary.status}；计划 ${summary.execution.plannedSessions}，已尝试 ${summary.execution.attemptedSessions}，NOT_RUN ${summary.execution.notRunSessions} |`);
-    lines.push(`| 共享受控账本 | \`budget-ledger.json\`（subject + judge；US$1 保守等价上限，实际账单未知） |`);
+    const cap = summary.execution.budgetCapNanoUsd;
+    const budget = cap === null ? "不设预算上限" : typeof cap === "number" ? `保守等价上限 US$${(cap / 1e9).toFixed(2)}` : "历史限额见原账本";
+    lines.push(`| 共享费用账本 | \`budget-ledger.json\`（subject + judge；${budget}，实际账单未知） |`);
     lines.push(`| 逐会话状态 | \`${summary.execution.statusFile}\`；未执行项不填零 usage 或费用 |`);
     if (summary.execution.reason) lines.push(`| 停止原因 | ${summary.execution.reason.replace(/[\r\n|]/g, " ")} |`);
   }

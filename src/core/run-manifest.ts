@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import { assertSkillIdentity, type SkillIdentity } from "./provenance.ts";
 import type { EvalTask, Variant, RunResult } from "./runner.ts";
+import type { NativeModelLimitsByRole } from "./controlled-budget.ts";
 
 export const RUN_MANIFEST_FILE = "run-manifest.json";
 export const EVALUATION_POLICY_VERSION = "paired-task-v2";
@@ -17,7 +18,7 @@ export interface RunManifest {
   judgeRepeat: number;
   judgeSeed: string;
   contextPrefix?: string;
-  settings?: { gainThresholdPp: number; timeoutMs?: number; judgeTimeoutMs?: number; keywordSignal: boolean; nodeVersion: string };
+  settings?: { gainThresholdPp: number; timeoutMs?: number; judgeTimeoutMs?: number; keywordSignal: boolean; nodeVersion: string; nativeLimits?: NativeModelLimitsByRole };
   tasks: EvalTask[];
   variants: Variant[];
   candidate: { identity: SkillIdentity; snapshotDir: string; originalSkillPath: string };

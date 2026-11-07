@@ -79,14 +79,16 @@ test("无关事件与缺少 toolCallId 的事件被忽略", () => {
   assert.equal(formatEvidence([]), "");
 });
 
-test("maxCalls 仍按全部工具的首次出现顺序截断，默认最多 16 条", () => {
+test("匿名证据默认统计全部工具调用，保留第16条之后的失败", () => {
   const events: PiEvent[] = Array.from({ length: 30 }, (_, i) => ({
     type: "tool_execution_start",
     toolCallId: `c${i}`,
     toolName: i === 0 ? "read" : "bash",
     args: { command: `echo ${i}`, path: "/private/SKILL.md" },
   }));
-  assert.equal(extractToolCalls(events).length, 16);
+  events.push({ type: "tool_execution_end", toolCallId: "c29", toolName: "bash", isError: true });
+  assert.equal(extractToolCalls(events).length, 30);
+  assert.match(formatEvidence(extractToolCalls(events)), /成功 0 次；失败 1 次；结果未知 28 次/);
   const calls = extractToolCalls(events, { maxCalls: 5 });
   assert.equal(calls.length, 5);
   assert.equal(calls[0]!.tool, "read");

@@ -68,24 +68,24 @@ test("完整受控运行的离线回放保留矩阵、执行计数和成对结�
   assert.deepEqual(f.calls, ["subject", "subject", "judge", "judge"]);
 });
 
-test("subject 全成功但首位 judge 解析失败的回放仍是 partial，保留首因和 NOT_RUN", async t => {
+test("subject 全成功但 judge 解析失败的回放仍是 partial，保留全部失败轮次", async t => {
   const f = await fixture(t, true);
   const before = artifactHashes(f.root);
   const replay = await recomputeSummary(f.root, f.options);
   assert.equal(f.summary.status, "partial");
   assert.equal(replay.status, "partial");
   assert.deepEqual(replay.execution, f.summary.execution);
-  assert.equal(replay.execution?.attemptedSessions, 3);
-  assert.equal(replay.execution?.notRunSessions, 1);
-  assert.equal(replay.execution?.stopped, true);
+  assert.equal(replay.execution?.attemptedSessions, 4);
+  assert.equal(replay.execution?.notRunSessions, 0);
+  assert.equal(replay.execution?.stopped, false);
   assert.equal(replay.execution?.reason, f.summary.execution?.reason);
   assert.equal(replay.pairwise[0]?.verdict, "not_judged");
-  assert.equal(replay.pairwise[0]?.judgeRuns.length, 1, "缺失票保留在聚合分母，但不伪装为实际执行的 judgeRuns");
+  assert.equal(replay.pairwise[0]?.judgeRuns.length, 2, "全部轮次真实执行，失败票不剔除");
   assert.equal(replay.results.length, 2);
   assert.equal(replay.totalTokens, 20);
-  assert.equal(existsSync(join(f.root, "pairwise", "skill-task-1", "round-002")), false);
+  assert.equal(existsSync(join(f.root, "pairwise", "skill-task-1", "round-002")), true);
   assert.deepEqual(artifactHashes(f.root), before);
-  assert.deepEqual(f.calls, ["subject", "subject", "judge"]);
+  assert.deepEqual(f.calls, ["subject", "subject", "judge", "judge"]);
 });
 
 test("受控状态侧车缺失、损坏或矩阵被缩减时不能把原成功记录升级为已验证 success", async t => {
