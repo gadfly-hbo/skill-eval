@@ -14,17 +14,8 @@ export interface MustMatchAssertion {
   /**
    * 契约语义的**其他合规写法**（主 pattern 之外的等价表达）。
    *
-   * 为什么需要这个字段：断言失败有两种完全不同的性质——
-   * - **假失败**：skill 其实做到了，但用了断言没覆盖的词形（「谁做」vs「责任人」）
-   * - **真缺陷**：skill 压根没写这条内容
-   *
-   * 这两者在「baseline/skill 两侧逐次通过与否」的布尔数据里**完全无法区分**
-   * （实测两条假失败与一条真缺陷的签名都是 `baseline ✗✗ / skill ✓✗`）。
-   * 区别只存在于输出文本里：假失败会命中某个等价写法，真缺陷不会。
-   *
-   * 所以要区分，只能让断言**显式声明** skill 契约里允许的其他写法。
-   * 声明后，失败时若等价模式命中 → 判为「断言过严（假失败）」；
-   * 所有次都不命中 → 判为真缺陷。
+   * 已声明的等价写法命中后，可提示主模式过严。主模式与等价写法均未命中时，
+   * 仍需结合原始输出判断语义。等价命中仅用于诊断，冻结计分仍由主模式决定。
    */
   equivalentPatterns?: string[];
 }
@@ -95,12 +86,11 @@ export interface AssertionOutcome {
    *
    * **mustMatch**：
    * - `undefined` = 没声明等价写法（或断言通过），无法区分「假失败」与「真缺陷」
-   * - `true`  = 输出里有等价写法 → 主 pattern 没覆盖到 → **假失败**（断言过严）
-   * - `false` = 输出里连等价写法都没有 → **真缺陷**（内容确实缺失）
+   * - `true`  = 声明的等价写法命中，主 pattern 未命中
+   * - `false` = 主 pattern 和声明的等价写法均未命中
    *
    * **mustNotMatch**（等价写法同样被禁，命中即 fail）：
-   * - `true`  = 输出里出现了等价写法——这是**违反禁令**的证据，
-   *   归因层不得把它判成「断言过严」（要改的是 skill，不是套件）
+   * - `true`  = 声明的禁止等价写法命中，语义需结合否定和引用上下文复核
    * - `false` = 命中的是主 pattern 本身，等价写法未出现
    */
   equivalentMatched?: boolean | undefined;
@@ -159,9 +149,9 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
         passed: false,
         detail:
           eq.matched === true
-            ? `未匹配到 ${assertion.pattern}，但命中了等价写法（${eq.hitPattern}）——内容做到了，措辞未覆盖`
+            ? `未匹配到 ${assertion.pattern}，但命中声明的等价写法（${eq.hitPattern}）`
             : eq.matched === false
-              ? `未匹配到 ${assertion.pattern}，等价写法也未命中——内容确实缺失`
+              ? `未匹配到 ${assertion.pattern}，声明的等价写法也未命中`
               : `未匹配到 ${assertion.pattern}`,
         note,
         equivalentMatched: eq.matched,
@@ -195,12 +185,11 @@ export function evaluateAssertion(output: string, assertion: Assertion): Asserti
         detail:
           matched
             ? eq.matched === true
-              ? `不应出现的模式出现了: ${assertion.pattern}（等价写法 ${eq.hitPattern} 也出现）`
-              : `不应出现的模式出现了: ${assertion.pattern}`
-            : `不应出现的模式出现了: 等价写法 ${eq.hitPattern}（主 pattern ${assertion.pattern} 未直接命中）`,
+              ? `命中禁止模式 ${assertion.pattern}（等价写法 ${eq.hitPattern} 也命中）`
+              : `命中禁止模式 ${assertion.pattern}`
+            : `命中禁止的等价写法 ${eq.hitPattern}（主 pattern ${assertion.pattern} 未直接命中）`,
         note,
-        // mustNotMatch 的等价命中 = 违反禁令的证据，不是「断言过严」——
-        // 归因层（improve.ts）只对 mustMatch 判假失败。
+        // mustNotMatch 的等价命中按冻结规则计为失败。
         equivalentMatched: matched ? eq.matched : true,
       };
     }

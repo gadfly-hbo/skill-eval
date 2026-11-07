@@ -10,7 +10,8 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
-import type { EvaluationSummary, EvalTask, Variant } from "../core/runner.ts";
+import type { EvaluationSummary, EvalTask, RunResult, Variant } from "../core/runner.ts";
+import { summarizeActivation } from "../core/activation.ts";
 import {
   buildImprovementAdvice,
   isSkillIssue,
@@ -92,6 +93,25 @@ export function renderReport(options: ReportOptions): string {
 
   const baseline = summary.variantSummaries.find((v) => v.variantId === "baseline");
   const variant = summary.variantSummaries.find((v) => v.variantId !== "baseline");
+  const tasks = summary.tasks ?? options.tasks;
+  const plannedTasks = summary.manifest?.tasks ?? tasks;
+  const plannedRepeat = summary.manifest?.repeat ?? summary.repeat;
+  const plannedRuns = plannedTasks.length > 0 && plannedRepeat > 0 ? plannedTasks.length * plannedRepeat : "—";
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const scoredTaskIds = new Set(tasks.filter(isScoredTask).map((task) => task.id));
+  const activationByVariant = new Map(summary.variantSummaries.map((item) => {
+    const rows = summary.results.filter((row) => row.variantId === item.variantId);
+    const positiveRows = tasks.length === 0 ? rows : rows.filter((row) => {
+      const task = taskById.get(row.taskId);
+      return task && task.shouldActivate !== false;
+    });
+    const negativeRows = rows.filter((row) => taskById.get(row.taskId)?.shouldActivate === false);
+    return [item.variantId, {
+      recorded: rows.length,
+      positive: summarizeActivation(positiveRows),
+      negative: summarizeActivation(negativeRows),
+    }] as const;
+  }));
 
   // ---- 污染告警（对照实验有效性前提）----
   // baseline 侧若自行读到了被测 skill 或含 skill 路径的元数据文件，
@@ -124,9 +144,9 @@ export function renderReport(options: ReportOptions): string {
   }
 
   if (variant) {
-    const gainFromResults = evaluateGainFromResults(summary.results, variant.variantId, undefined, summary.tasks ?? options.tasks, summary.repeat);
-    const baselineItemRate = gainFromResults.baselineCounts.rate;
-    const variantItemRate = gainFromResults.variantCounts.rate;
+    const gainFromResults = evaluateGainFromResults(summary.results, variant.variantId, undefined, tasks, summary.repeat);
+    const { baselineCounts, variantCounts } = gainFromResults;
+    const { positive, negative } = activationByVariant.get(variant.variantId)!;
     const gainCiText = gainFromResults.ciPp
       ? `（95% CI [${signedPp(gainFromResults.ciPp.lowPp)}, ${signedPp(gainFromResults.ciPp.highPp)}]）`
       : "";
@@ -137,11 +157,11 @@ export function renderReport(options: ReportOptions): string {
     lines.push("| 指标 | baseline（不装 skill） | variant（装 skill） | 判读 |");
     lines.push("| --- | --- | --- | --- |");
     lines.push(
-      `| 激活率（正向召回） | — | ${percent(variant.activationRate)} | ${judgeActivation(variant.activationRate)} |`,
+      `| 激活率（正向召回） | — | ${percentOf(positive.activated, positive.total)} | ${positive.total > 0 ? judgeActivation(positive.activationRate) : "无正向运行记录"} |`,
     );
-    if (variant.falseActivationRate !== null && variant.falseActivationRate !== undefined) {
+    if (negative.total > 0) {
       lines.push(
-        `| 负向用例误触发率 | — | ${percent(variant.falseActivationRate)} | ${variant.falseActivationRate <= MAX_FALSE_ACTIVATION_RATE ? "边界清晰" : "⚠️ 误触发超标"} |`,
+        `| 负向用例误触发率 | — | ${percentOf(negative.activated, negative.total)} | ${negative.activationRate <= MAX_FALSE_ACTIVATION_RATE ? "边界清晰" : "⚠️ 误触发超标"} |`,
       );
     }
     lines.push(
@@ -160,7 +180,7 @@ export function renderReport(options: ReportOptions): string {
         `| 运行超时率 | — | ${(variant.missing ?? 0) > 0 ? "未知（产物缺失）" : percent(variant.timeoutRate)}（已知 ${variant.timedOut ?? 0}/${variant.total} 次） | ${variant.timeoutRate > MAX_VARIANT_TIMEOUT_RATE ? "⚠️ 超时率超标" : "偶发超时"} |`,
       );
     }
-    lines.push(`| 断言通过率（条目累计，仅描述） | ${percent(baselineItemRate)} | ${percent(variantItemRate)} | 不将断言条目当作独立运行 |`);
+    lines.push(`| 断言条目通过率（仅计分题） | ${percentOf(baselineCounts.passed, baselineCounts.total)} | ${percentOf(variantCounts.passed, variantCounts.total)} | 分母为成功输出记录的断言条目，仅作描述 |`);
     lines.push(`| 任务等权配对增益 | — | ${gainFromResults.gainPp === null ? "不可判定" : signedPp(gainFromResults.gainPp)}${gainCiText} | ${gainFromResults.pairedTaskCount} 个任务簇；${gainFromResults.complete ? "完整配对" : "配对证据不足"} |`);
     lines.push(
       `| 平均耗时 | ${baseline ? `${baseline.avgDurationSec.toFixed(1)}s` : "—"} | ${variant.avgDurationSec.toFixed(1)}s | ${variant.avgDurationSec > (baseline?.avgDurationSec ?? 0) * 1.1 ? "变慢，需关注延迟" : "未明显变慢"} |`,
@@ -245,14 +265,15 @@ export function renderReport(options: ReportOptions): string {
   // ---- 4. 激活情况 ----
   lines.push("## 4. 激活情况");
   lines.push("");
-  lines.push("| Variant | 正向激活率 | 负向误触发率 | 弱激活率 | 未激活 | 运行数 | 说明 |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| Variant | 正向激活率 | 正向弱激活率 | 正向未激活率 | 负向误触发率 | 已记录 / 计划运行 |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
   for (const item of summary.variantSummaries) {
-    const isBaseline = item.variantId === "baseline";
-    const unactivated = Math.max(0, 1 - item.activationRate - item.weakActivationRate);
-    lines.push(
-      `| ${item.variantLabel} | ${isBaseline ? "—" : percent(item.activationRate)} | ${isBaseline || item.falseActivationRate == null ? "—" : percent(item.falseActivationRate)} | ${isBaseline ? "—" : percent(item.weakActivationRate)} | ${isBaseline ? "—" : percent(unactivated)} | ${item.total} | ${isBaseline ? "对照组，按设计不加载 skill" : "以工具调用读取 SKILL.md 或包内附属文件为强证据"} |`,
-    );
+    const { recorded, positive, negative } = activationByVariant.get(item.variantId)!;
+    const rates = item.variantId === "baseline"
+      ? ["—", "—", "—", "—"]
+      : [percentOf(positive.activated, positive.total), percentOf(positive.weak, positive.total),
+        percentOf(positive.notActivated, positive.total), percentOf(negative.activated, negative.total)];
+    lines.push(`| ${item.variantLabel} | ${rates.join(" | ")} | ${recorded} / ${plannedRuns} |`);
   }
   lines.push("");
   if (variant?.zeroActivationTasks && variant.zeroActivationTasks.length > 0) {
@@ -261,16 +282,15 @@ export function renderReport(options: ReportOptions): string {
     );
     lines.push("");
   }
-  lines.push("> 激活判定以「模型实际读取了 skill 文件或包内附属文件」为强证据。弱激活指输出中出现关键词但从未读取文件，不计入激活率分子。");
+  lines.push("> 正向各列以应触发的已记录运行为分母，误触发率以不应触发的已记录运行为分母。baseline 按设计不加载 skill。实际读取 skill 文件是强证据，弱激活单列。");
   lines.push("");
 
   // ---- 5. 判定结果 ----
-  const scoredTaskIds = new Set(options.tasks.filter(isScoredTask).map((task) => task.id));
   lines.push("## 5. 判定结果");
   lines.push("");
   lines.push("### 5.1 Variant 汇总");
   lines.push("");
-  lines.push("全部配对包含诊断题。覆盖率、原始评委胜率、下界和规则纠偏胜率只使用计分对。");
+  lines.push("全部配对包含诊断题。覆盖率、原始评委胜率、下界和规则纠偏胜率只使用计分对。原始评委结果已从匿名 A/B 顺序还原为候选视角。断言全过率按成功且执行了断言的运行计数，包含诊断题。");
   lines.push("");
   lines.push("| Variant | 全部配对胜 / 平 / 负 / 未判 | 计分对已判 / 计划 | 计分对覆盖率 | 原始评委胜率（已判计分对） | 全计分对胜率下界 | 规则纠偏胜率（已判计分对） | 断言全过率 | 成本评级 |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
@@ -280,20 +300,22 @@ export function renderReport(options: ReportOptions): string {
     const scoredPairs = !isBaseline && item.scoredJudged !== undefined && item.totalScoredPairs !== undefined
       ? `${item.scoredJudged} / ${item.totalScoredPairs}` : "—";
     lines.push(
-      `| ${item.variantLabel} | ${allPairs} | ${scoredPairs} | ${isBaseline ? "—" : percent(item.pairCoverage ?? null)} | ${percent(item.winRate)} | ${isBaseline ? "—" : percent(item.winRateLowerBound ?? null)} | ${isBaseline ? "—" : percent(item.ruleAdjustedWinRate ?? null)} | ${percent(item.assertionPassRate)} | ${item.costEfficiency ? item.costEfficiency.grade : "—"} |`,
+      `| ${item.variantLabel} | ${allPairs} | ${scoredPairs} | ${isBaseline ? "—" : percent(item.pairCoverage ?? null)} | ${percent(item.winRate)} | ${isBaseline ? "—" : percent(item.winRateLowerBound ?? null)} | ${isBaseline ? "—" : percent(item.ruleAdjustedWinRate ?? null)} | ${assertionRunRate(summary.results.filter((row) => row.variantId === item.variantId))} | ${item.costEfficiency ? item.costEfficiency.grade : "—"} |`,
     );
   }
   lines.push("");
 
   lines.push("### 5.2 用例明细");
   lines.push("");
-  lines.push("| 用例 | 类型 | 期望触发 | 成功率 | 激活率 | 断言通过率 | win | tie | loss | 未判定 |");
+  lines.push("| 用例 | 类型 | 期望触发 | 成功率 | 激活率（有 Skill 侧） | 断言全过率（两侧运行） | win | tie | loss | 未判定 |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  const skillVariantIds = new Set(options.variants.filter((item) => item.skillPaths.length > 0).map((item) => item.id));
   for (const task of summary.taskSummaries) {
     const expectTrig = task.shouldActivate === false ? "否（误触发测试）" : "是";
-    const scored = task.kind === "scored" && task.shouldActivate !== false;
+    const rows = summary.results.filter((row) => row.taskId === task.taskId);
+    const activation = summarizeActivation(rows.filter((row) => skillVariantIds.has(row.variantId)));
     lines.push(
-      `| ${task.taskId} | ${scored ? "计分" : "诊断"} | ${expectTrig} | ${percent(task.total ? task.success / task.total : 0)} | ${percent(task.activationRate)} | ${percent(task.assertionPassRate)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} |`,
+      `| ${task.taskId} | ${scoredTaskIds.has(task.taskId) ? "计分" : "诊断"} | ${expectTrig} | ${percentOf(task.success, task.total)} | ${percentOf(activation.activated, activation.total)} | ${assertionRunRate(rows)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} |`,
     );
   }
   lines.push("");
@@ -317,16 +339,19 @@ export function renderReport(options: ReportOptions): string {
     }
     lines.push("");
 
-    const sensitivity = analyzeAssertionSensitivity(summary, options.tasks);
+    const sensitivity = analyzeAssertionSensitivity({
+      ...summary, results: assertionRows.filter((row) => scoredTaskIds.has(row.taskId)),
+    }, tasks);
     if (sensitivity.totalAssertions > 0) {
       lines.push("### 5.4 断言灵敏度体检（白送断言筛查）");
       lines.push("");
+      const missingBaseline = sensitivity.items.filter((item) => item.baselineTotal === 0).length;
       lines.push(
-        `全部用例共评估 ${sensitivity.totalAssertions} 条断言。有区分度 **${sensitivity.sensitiveCount}** 条（${percent(sensitivity.sensitivityRate)}），` +
-          `无区分度（baseline 通过率 ≥ 80%）**${sensitivity.insensitiveCount}** 条。`,
+        `计分用例共记录 ${sensitivity.totalAssertions} 条断言，其中 baseline 通过率 ≥ 80% 的有 **${sensitivity.insensitiveCount}** 条，` +
+          `缺少 baseline 记录的有 **${missingBaseline}** 条。`,
       );
       lines.push("");
-      const zeroScoredTasks = sensitivity.zeroDiscriminationTasks.filter((id) => scoredTaskIds.has(id));
+      const zeroScoredTasks = sensitivity.zeroDiscriminationTasks;
       if (zeroScoredTasks.length > 0) {
         lines.push(
           `> ⚠️ **零区分度计分用例** \`${zeroScoredTasks.join("`、`")}\` 的全部断言在 baseline 下均已 ≥ 80% 通过，建议收紧断言或改为 \`diagnostic\`。`,
@@ -355,11 +380,9 @@ export function renderReport(options: ReportOptions): string {
   if (conflicts.length > 0) {
     lines.push("### 5.5 评委标签纠正记录");
     lines.push("");
-    lines.push(
-      `评委返回的标签与它自己给出的分差方向矛盾时，工具以分差方向为准并在此记录。本轮共纠正 ${conflicts.length} 条。`,
-    );
+    lines.push(`这里记录评委标签与分差方向冲突（\`labelConflict\`）。本轮共纠正 ${conflicts.length} 条。A/B 换位在还原候选身份时处理。`);
     lines.push("");
-    lines.push("| 用例 | 次数 | 原始标签 | 纠正后 | 分差 | 说明 |");
+    lines.push("| 用例 | 次数 | 候选视角标签 | 纠正后 | 分差 | 说明 |");
     lines.push("| --- | --- | --- | --- | --- | --- |");
     for (const { item, conflict } of conflicts) {
       lines.push(
@@ -437,9 +460,9 @@ export function renderReport(options: ReportOptions): string {
 
     const actionableGroups = advice.groupedDiagnoses.filter((g) => isSkillIssue(g.mode));
     if (actionableGroups.length > 0) {
-      lines.push(`### 8.${subIdx++} 核心待改根因（跨用例去重）`);
+      lines.push(`### 8.${subIdx++} Skill 侧待核查项（跨用例去重）`);
       lines.push("");
-      lines.push("| 优先级 | 失败模式 | 待修契约 | 影响用例 | 条目通过率增量估计 | 修改建议与定位 |");
+      lines.push("| 优先级 | 失败模式 | 待核对契约 | 影响用例 | 条目通过率增量估计 | 核对建议与定位 |");
       lines.push("| --- | --- | --- | --- | --- | --- |");
       actionableGroups.forEach((g, i) => {
         const locText = g.skillLocationHint ? `（${g.skillLocationHint}）` : "";
@@ -479,19 +502,16 @@ export function renderReport(options: ReportOptions): string {
         lines.push(`| ${d.taskId} | ${label} | ${modeLabel(d.mode)} | ${d.detail} |`);
       }
       lines.push("");
-      lines.push("> 「漏触发」= 模型未读取 skill 导致的下游断言失败，应改 frontmatter description 而非正文；");
-      lines.push("> 「契约未落地」= baseline 能做到、装 skill 后反而做不到，是 skill 的真问题；");
-      lines.push("> 「契约无效」= baseline 也做不到，说明 skill 没把这条约束写清楚（或写在未读附属文件里）；");
-      lines.push("> 「断言过严」= 输出内容其实做到了，只是用了断言没覆盖的措辞——**要改的是套件，不是 skill**。");
+      lines.push("> 失败模式按可观察结果归类。归因前对照冻结判据、原始输出和实际加载内容。正则命中结果可能受反例引用或措辞影响，待复核项不进入 Skill 修改优先级。");
       lines.push("");
     }
 
     const falseFailures = advice.diagnoses.filter((d) => d.mode === "assertion-too-strict");
     if (falseFailures.length > 0) {
-      lines.push(`### 8.${subIdx++} 断言过严（要改套件，不是 skill）`);
+      lines.push(`### 8.${subIdx++} 断言过严（命中已声明的等价写法）`);
       lines.push("");
       lines.push(
-        `以下 ${falseFailures.length} 条失败**不是 skill 的问题**——输出内容做到了，只是断言的正则没覆盖 skill 契约里允许的其他措辞。`,
+        `以下 ${falseFailures.length} 条断言命中了已声明的等价写法。正式计分沿用冻结判据。`,
       );
       lines.push("");
       lines.push("| 用例 | 断言 | 建议 |");
@@ -503,57 +523,15 @@ export function renderReport(options: ReportOptions): string {
         );
       }
       lines.push("");
-      lines.push("> 放宽后**必须复验 baseline 仍不命中**——放宽到 baseline 也能过，测出来的增益就是假的。");
+      lines.push("> 题集修订另存版本，并用正反例复核判据的区分度。");
       lines.push("");
     }
 
     lines.push("### 下一步");
     lines.push("");
-    if (options.verdict === "effective") {
-      lines.push("本 skill 已通过测评。上述失败项是**可选的加固项**，不影响本次结论：");
-      lines.push("");
-      if (advice.skillIssueCount > 0) {
-        lines.push(
-          `1. skill 侧可加固 ${actionableGroups.length} 项根因（共涉及 ${advice.skillIssueCount} 条用例断言）：按「核心待改根因」表修改 SKILL.md。`,
-        );
-      } else {
-        lines.push("1. skill 侧没有要改的地方——本轮失败全部来自断言写得过严。");
-      }
-      if (advice.falseFailureCount > 0) {
-        lines.push(
-          `2. 套件侧要改的 ${advice.falseFailureCount} 条：放宽对应断言的 pattern（或补 equivalentPatterns），放宽后**复验 baseline 仍不命中**。`,
-        );
-      }
-      lines.push(
-        `${advice.falseFailureCount > 0 ? "3" : "2"}. 若要改 skill，请**保持同一套件（核对套件哈希）与同一模型**重新评估，只改 skill 内容——否则无法归因。`,
-      );
-      lines.push(
-        `${advice.falseFailureCount > 0 ? "4" : "3"}. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。`,
-      );
-      lines.push("");
-    } else {
-      lines.push("按上述建议修改 SKILL.md 后，可进入二次测评准备：");
-      lines.push("");
-      if (advice.skillIssueCount > 0) {
-        lines.push(
-          `1. 按「核心待改根因」表从 P1 开始修改 SKILL.md（共 ${actionableGroups.length} 项核心根因，覆盖 ${advice.skillIssueCount} 条失败断言）。`,
-        );
-      } else {
-        lines.push("1. skill 侧没有要改的地方——本轮失败全部来自断言写得过严，改套件即可。");
-      }
-      if (advice.falseFailureCount > 0) {
-        lines.push(
-          `2. 套件侧要改的 ${advice.falseFailureCount} 条：放宽对应断言，放宽后**复验 baseline 仍不命中**。`,
-        );
-      }
-      lines.push(
-        `${advice.falseFailureCount > 0 ? "3" : "2"}. 重新评估时**保持同一套件（核对套件哈希）与同一模型**，只改 skill 内容——否则无法归因。`,
-      );
-      lines.push(
-        `${advice.falseFailureCount > 0 ? "4" : "3"}. 修改后的 skill 版本号递增，归档区会保留上一版快照便于对比。`,
-      );
-      lines.push("");
-    }
+    lines.push("- 按明细核对失败项归属。题集判据或交付口径问题在各自层处理，已确认的 Skill 问题再修改 SKILL.md。");
+    lines.push("- 修订题集时另存新版本。比较 Skill 改动时保持题集哈希、模型和执行配置一致。历史报告沿用原冻结口径。");
+    lines.push("");
   }
 
   // ---- 9. 结论 ----
@@ -618,7 +596,7 @@ function buildLimitations(options: ReportOptions): string[] {
   const weakActivation = summary.variantSummaries.filter((item) => item.weakActivationRate > 0);
   if (weakActivation.length > 0) {
     items.push(
-      `检测到弱激活（输出含关键词但模型未读取 skill）：${weakActivation.map((v) => `${v.variantLabel} ${percent(v.weakActivationRate)}`).join("、")}`,
+      "检测到正向弱激活（输出含关键词但无实际读取记录），各侧分母见激活表。",
     );
   }
 
@@ -654,4 +632,13 @@ function signedPp(value: number): string {
 function percent(value: number | null): string {
   if (value === null || Number.isNaN(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function percentOf(passed: number, total: number): string {
+  return total > 0 ? `${percent(passed / total)}（${passed}/${total}）` : "—";
+}
+
+function assertionRunRate(rows: RunResult[]): string {
+  const assessed = rows.filter((row) => row.status === "success" && (row.assertions?.total ?? 0) > 0);
+  return percentOf(assessed.filter((row) => row.assertions?.allPassed).length, assessed.length);
 }
