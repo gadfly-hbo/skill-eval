@@ -1,0 +1,290 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-07",
+  "timezone": "Asia/Shanghai",
+  "status": "POSITIVE_GATE_HOLD_MAIN_NOT_RUN",
+  "evaluator": {
+    "version": "0.3.2",
+    "commit": "d74f7561f08b4d2ddb4ea138a8f1430c63ae9b62",
+    "policy": "paired-task-v2",
+    "sdkVersion": "1.4.0",
+    "sourceFilesVerified": 99,
+    "sdkInventoryEntriesVerified": 15138
+  },
+  "freeze": {
+    "id": "data-analysis-1.9.0-offline-freeze-20261106-v1",
+    "sha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "payloadFilesVerified": 67,
+    "unchanged": true
+  },
+  "configuration": {
+    "models": {
+      "subject": "minimax-cn/MiniMax-M3.1-Flash",
+      "judge": "xiaomi-token-plan-cn/mimo-v2.6-flash"
+    },
+    "nativeLimits": {
+      "subject": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 524288
+      },
+      "judge": {
+        "contextWindow": 1048576,
+        "maxOutputTokens": 131072
+      }
+    },
+    "budgetCapNanoUsd": null,
+    "repeat": 1,
+    "judgeRepeat": 2,
+    "keywordSignal": false,
+    "timeoutsMs": {
+      "subject": 480000,
+      "judge": 300000
+    },
+    "originalJudgeRoundsVerifiedOffline": 260,
+    "judgeOutputTruncation": false
+  },
+  "plannedTasks": {
+    "scored": 60,
+    "falseTrigger": 4,
+    "positive": 2
+  },
+  "plannedSessions": 520,
+  "attemptedSessions": 8,
+  "mainNotRunSessions": 512,
+  "stages": [
+    {
+      "role": "positive",
+      "runId": "da190-v032-20261107T025641Z-56993d-positive",
+      "suiteHash": "sha256:ca5b80a7bd839627",
+      "suiteFileSha256": "cb440b45849835530b56d345b612c84d08cc4e7a33c62c3fd568bfb32cb32f4f",
+      "candidateHash": "sha256:6cfa4c90b816ce377fefbb20077cf64967f2855f621b5169d83a9c0c1f1ab8a5",
+      "judgeSeed": "da190-20261106-frozen-v1-positive",
+      "plannedSessions": 8,
+      "status": "partial",
+      "matrix": {
+        "subject": {
+          "NOT_RUN": 0,
+          "RUNNING": 0,
+          "SUCCESS": 4,
+          "FAILED": 0
+        },
+        "judge": {
+          "NOT_RUN": 0,
+          "RUNNING": 0,
+          "SUCCESS": 3,
+          "FAILED": 1
+        }
+      },
+      "attemptedSessions": 8,
+      "metrics": {
+        "strongActivation": {
+          "baseline": {
+            "activated": 0,
+            "planned": 2
+          },
+          "positive": {
+            "activated": 2,
+            "planned": 2
+          }
+        },
+        "assertionItems": {
+          "baseline": {
+            "passed": 2,
+            "total": 7
+          },
+          "positive": {
+            "passed": 7,
+            "total": 7
+          }
+        },
+        "scriptExecutionsVerified": 2,
+        "embeddedJsonMatchesScript": 2,
+        "directJsonDelivery": {
+          "passed": 0,
+          "total": 2
+        },
+        "judgeRounds": {
+          "valid": 3,
+          "invalid": 1,
+          "normalizedWins": 3,
+          "labelCorrections": 0
+        },
+        "pairs": {
+          "win": 1,
+          "tie": 0,
+          "loss": 0,
+          "notJudged": 1
+        }
+      }
+    },
+    {
+      "role": "original",
+      "runId": "da190-v032-20261107T025641Z-56993d-original",
+      "suiteHash": "sha256:71566fe88bfe6439",
+      "suiteFileSha256": "9fffaa748ba2b65f7371850df82606ae1c33da3ca949d3d903a1441e69cee5b8",
+      "candidateHash": "sha256:8fd67543f9ae946f505b87f98c13f102495d807cea12c71798589d7b4e334ccc",
+      "judgeSeed": "da190-20261106-frozen-v1-original",
+      "plannedSessions": 256,
+      "status": "NOT_RUN",
+      "matrix": {
+        "subject": {
+          "NOT_RUN": 128,
+          "RUNNING": 0,
+          "SUCCESS": 0,
+          "FAILED": 0
+        },
+        "judge": {
+          "NOT_RUN": 128,
+          "RUNNING": 0,
+          "SUCCESS": 0,
+          "FAILED": 0
+        }
+      },
+      "attemptedSessions": 0,
+      "metrics": null
+    },
+    {
+      "role": "ablation",
+      "runId": "da190-v032-20261107T025641Z-56993d-ablation",
+      "suiteHash": "sha256:71566fe88bfe6439",
+      "suiteFileSha256": "c8091a90d8cec825bf447f630d73891556e492ec3f7e58103c9c802c084b2081",
+      "candidateHash": "sha256:1f3556ee5e91810982d547bef49040849d29b3920c0d9edb8eff1aed6bec6d86",
+      "judgeSeed": "da190-20261106-frozen-v1-ablation",
+      "plannedSessions": 256,
+      "status": "NOT_RUN",
+      "matrix": {
+        "subject": {
+          "NOT_RUN": 128,
+          "RUNNING": 0,
+          "SUCCESS": 0,
+          "FAILED": 0
+        },
+        "judge": {
+          "NOT_RUN": 128,
+          "RUNNING": 0,
+          "SUCCESS": 0,
+          "FAILED": 0
+        }
+      },
+      "attemptedSessions": 0,
+      "metrics": null
+    }
+  ],
+  "positive": {
+    "startedAt": "2026-11-07T02:59:02.181675+00:00",
+    "endedAt": "2026-11-07T03:01:59.979248+00:00",
+    "exitCode": 1,
+    "hostStopped": false,
+    "gate": "HOLD",
+    "failedJudge": {
+      "code": "JUDGE_INVALID_JSON",
+      "cause": "Unescaped inner double quote in reason string",
+      "taskId": "da-positive-json",
+      "roundIndex": 1,
+      "swapped": false,
+      "nativeStopReason": "stop",
+      "outputTokens": 174
+    },
+    "deliveryFailure": "BOTH_FINAL_OUTPUTS_HAVE_PREAMBLE_AND_MARKDOWN_FENCE",
+    "authAndModelPermission": "CONFIRMED_FOR_OBSERVED_REQUESTS",
+    "providerRequestProfile": {
+      "subject": {
+        "requestedOutputLimits": {
+          "524288": 47
+        },
+        "modelIds": {
+          "MiniMax-M3.1-Flash": 47
+        },
+        "thinkingTypes": {
+          "adaptive": 47
+        }
+      },
+      "judge": {
+        "requestedOutputLimits": {
+          "131072": 4
+        },
+        "modelIds": {
+          "mimo-v2.6-flash": 4
+        },
+        "thinkingTypes": {
+          "enabled": 4
+        }
+      }
+    }
+  },
+  "accounting": {
+    "httpRequests": 51,
+    "http200": 51,
+    "requestsByRole": {
+      "subject": 47,
+      "judge": 4
+    },
+    "usageByRole": {
+      "subject": {
+        "reportedRequests": 47,
+        "tokens": {
+          "input": 27010,
+          "output": 8904,
+          "cacheRead": 249144,
+          "cacheWrite": 0
+        }
+      },
+      "judge": {
+        "reportedRequests": 4,
+        "tokens": {
+          "input": 6728,
+          "output": 1140,
+          "cacheRead": 3584,
+          "cacheWrite": 0
+        }
+      }
+    },
+    "totalTokens": 296510,
+    "knownCostByRoleNanoUsd": {
+      "subject": 46765500,
+      "judge": 1762880
+    },
+    "knownCostEquivalentNanoUsd": 48528380,
+    "unknownRequests": 0,
+    "pendingRequests": 0,
+    "cashInvoice": "UNKNOWN",
+    "remainingQuota": "UNKNOWN",
+    "backendRevision": "UNKNOWN"
+  },
+  "validation": {
+    "offlineProviderCalls": 0,
+    "offlineSandboxProfilesVerified": 4,
+    "realRunIntegrity": true,
+    "offlineReplayCoreScoresMatch": true,
+    "offlineReplayStatus": "partial",
+    "independentReadOnlyReview": true,
+    "matchedEventJournals": 8,
+    "ledgerRows": 119,
+    "ledgerExactReplay": true,
+    "providerUsageMatched": 51,
+    "artifactSetSha256": "2bf8d092290aad4e8cc3098a492c536d8617adccaf836d14fdb283aa84f6427b"
+  },
+  "retention": {
+    "protectedFilesVerifiedUnchanged": 2050,
+    "historicalScoresOverwritten": false,
+    "privateMaterialsPublished": false,
+    "selectiveOrReplacementRuns": 0
+  },
+  "candidateVerdict": null,
+  "mainGain": null,
+  "falseTriggerRate": null,
+  "negativeControlVerdict": null,
+  "evidenceSha256": {
+    "plan": "1ad5b680870883c1fdd94ce7fc1f6be3a8c839375a7e0639fad1b085db6555d7",
+    "sourceInventory": "fd1acf3a550dbeb40ef538e2971d268ba9ef3b7f5b3bb91484adda1eb3b94a40",
+    "offlinePreflight": "0a104f25d47b68a4489c314eca29dca80918834126fad38109c10cf11d20fdbf",
+    "accessProbe": "f78c0db299215dc6b3f384d6abd5b2d0194378a5fe6c669a49d3932f051d225e",
+    "runManifest": "32e417466a173f96d3c15c3fe1d1e0afb721be0bb38010866e69d9834b0cb803",
+    "executionStatus": "65646d4f901e4ba9d2abd978c52e5ee993aff028b7d4d830edf60d8384ec6e40",
+    "summary": "d36d2f115c37402e11dd619f7eb7626749e6fdea8402447abb8d4ff3a161e793",
+    "ledgerJournal": "cd4a32b394f05c44c3aa2de1084b1f4e7f4e94de310e6f0150a35d6b23a7b7f4",
+    "ledgerSnapshot": "2d5d5655e025ca9cd7bff2a2f7ea3c50503efa64dc45f7c11ddc6003458be6dd",
+    "adjudication": "8af5ac1df0c86ef9567c6399f907dcfc410280a3050ff876895a537a64ba0720",
+    "preservation": "be653f9c094bc408f7165acc6e14416447d58101ea8c5bec21fa9a8f29fec3fe"
+  }
+}
