@@ -1,0 +1,43 @@
+{
+  "id": "json-contract-smoke-v1",
+  "name": "单题真实链路冒烟",
+  "description": "公开可复算诊断题，两侧各一次，匿名评委一轮。",
+  "version": "1",
+  "skill": {
+    "path": "../examples/json-contract-skill/SKILL.md",
+    "version": "1.0.0"
+  },
+  "repeat": 1,
+  "judgeRepeat": 1,
+  "tasks": [
+    {
+      "id": "combined-order-value",
+      "kind": "diagnostic",
+      "shouldActivate": true,
+      "prompt": "同一天、同一实收口径下，A 店成交 2 笔、实收 60 元，B 店成交 6 笔、实收 300 元，均无退款。求两店合在一起的客单价（元/单）。只输出一个 JSON 对象，answer 为仅包含客单价数值的字符串，confidence 为 0 到 1 之间的数字。",
+      "expectedPoints": [
+        "先汇总实收和成交笔数，再用 360 除以 8，客单价为 45 元/单",
+        "交付含 answer 和 confidence 的裸 JSON 对象"
+      ],
+      "assertions": [
+        {
+          "kind": "jsonSchema",
+          "schema": {
+            "type": "object",
+            "required": ["answer", "confidence"],
+            "properties": {
+              "answer": { "type": "string", "enum": ["45"] },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "note": "结果正确性及字段取值"
+        },
+        {
+          "kind": "mustMatch",
+          "pattern": "^\\s*\\{[^{}]*\\}\\s*$",
+          "note": "交付外形为平面 JSON 对象，外层没有说明文字或 Markdown 围栏"
+        }
+      ]
+    }
+  ]
+}

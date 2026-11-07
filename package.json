@@ -11,6 +11,7 @@
     "check": "npm run typecheck && npm run test",
     "typecheck": "tsc --noEmit",
     "test": "node --import ./scripts/offline-test-guard.mjs --experimental-strip-types --test src/core/*.test.ts src/cli/*.test.ts",
+    "smoke": "node bin/skill-eval.mjs eval --suite suites/smoke.json --model minimax-cn/MiniMax-M3.1-Flash --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash --home ~/.skill-eval/pi-home --no-keyword-signal",
     "eval": "node --experimental-strip-types src/cli/main.ts"
   },
   "engines": {
