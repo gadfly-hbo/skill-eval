@@ -77,6 +77,11 @@
             "minLength": 1,
             "description": "任务文本，两侧完全一致"
           },
+          "deliverablePath": {
+            "type": "string",
+            "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\\.md(?![\\s\\S])",
+            "description": "冻结的工作区相对 Markdown 路径。设置时，规则和评委均使用该文件的采集快照。"
+          },
           "expectedPoints": {
             "type": "array",
             "items": { "type": "string" },

@@ -61,11 +61,11 @@ test("测评流程的宿主问答覆盖三种档位各自的消融选项", () =>
 
 test("测评流程仅为兼容的新计划选最新版题集，复评核对冻结版本和哈希", () => {
   const skill = readFileSync(new URL("../../skills/skill-eval-flow/SKILL.md", import.meta.url), "utf8");
-  const section = skill.split("### 二次测评：优先复用仓库里已有的套件")[1]?.split("### 断言修订纪律")[0];
+  const section = skill.split("### 二次测评：优先复用仓库里已有的套件")[1]?.split("### 判据冻结纪律")[0];
   assert.ok(section);
   assert.match(section, /同一计划复评时复用原冻结版本和哈希/);
   assert.match(section, /新计划，先筛出与候选路径及题数相符的版本，再按整数 `N` 选择最高版本/);
-  assert.match(section, /v1\/v2\/v3 同时匹配时，新计划选 v3/);
+  assert.match(section, /v1\/v2\/v3\/v4 同时匹配时，新计划选 v4/);
 });
 
 test("测评流程分开匿名换位、评委冲突、计分分母和补充诊断", () => {
@@ -76,9 +76,27 @@ test("测评流程分开匿名换位、评委冲突、计分分母和补充诊�
   assert.match(section, /`rawVerdict` 只表示匿名展示时 B 相对 A 的结果/);
   assert.match(section, /`rawVerdict: "win"`、`swapped: true`、`verdict: "loss"`、`labelConflict: null`.*未发生标签冲突/);
   assert.match(section, /仅将 `pairwise\[\]\.judgeRuns\[\]` 中非空的 `labelConflict` 计作标签冲突/);
+  assert.match(section, /分歧 7 处、从 2\/8 降到 0\/8 时，报告 7 处分歧和 2 次移除，分别列数/);
   assert.match(section, /正向激活和负向误触发，各列命中数\/相应的运行数/);
   assert.match(section, /断言条目通过率，写明通过数\/条目数及计分或诊断范围/);
-  assert.match(section, /原始输出符合行为契约而断言失败时.*另存新版并离线复验/);
-  assert.match(skill, /补充诊断单列输入、是否含诊断题和通过数\/断言条目数/);
-  assert.match(skill, /不能单独确定首要原因或排除题集、候选问题/);
+  assert.match(section, /确认 Skill 需要修改时.*转交 OptraCall.*失败证据、修改的文件或段落、改成什么行为、用哪条断言或用例验收/);
+  assert.match(section, /只有证据确认候选违反要求时，才给 Skill 改写建议/);
+  assert.match(section, /冻结用例指定文件时，核对其相对路径和 `deliverable\.md` 评分副本，否则核对 `output\.md`/);
+  assert.match(section, /引用状态行的实际位置及冻结要求，分别说明文件存在、位置合规和正文满足契约的证据/);
+  assert.match(section, /补充诊断单列输入、是否含诊断题和通过数\/断言条目数/);
+  assert.match(section, /归因仍需候选违反冻结要求的证据/);
+});
+
+test("正式测评使用固化口径，原样交付故障并把改写建议限于已核实的候选问题", () => {
+  const skill = readFileSync(new URL("../../skills/skill-eval-flow/SKILL.md", import.meta.url), "utf8");
+  const scope = skill.split("### 正式测评边界")[1]?.split("## 用户怎么用")[0];
+  assert.ok(scope);
+  assert.match(scope, /正式分数与判定以固化版本生成的报告为准/);
+  assert.match(scope, /Qoder 只评价被测 Skill/);
+  assert.match(scope, /不得质疑或修改测评器、替换冻结判据、另行计分或自行重跑/);
+  assert.match(scope, /测评器复盘和升级单独授权/);
+  assert.match(scope, /原样报告命令退出状态、错误和证据路径/);
+  assert.match(skill, /已选的现有套件校验不通过 → 保留错误并停止/);
+  assert.match(skill, /收到修订版并获得新运行授权后，按原冻结口径复测/);
+  assert.doesNotMatch(skill, /改用源码直跑|确认题集误判后另存新版|不通过 → 按报错修正后重新生成/);
 });

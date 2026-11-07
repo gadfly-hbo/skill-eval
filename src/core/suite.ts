@@ -9,6 +9,7 @@ import { DEFAULT_REPEAT } from "./thresholds.ts";
 import { analyzeAssertionSensitivity } from "./sensitivity.ts";
 import type { Assertion } from "./assertions.ts";
 import type { EvaluationSummary, EvalTask } from "./runner.ts";
+import { validDeliverablePath } from "./deliverable.ts";
 
 export interface SuiteFile {
   id: string;
@@ -80,6 +81,7 @@ export function hashSuite(suite: SuiteFile): string {
       expectedPoints: t.expectedPoints ?? [],
       rubric: t.rubric ?? null,
       assertions: t.assertions ?? [],
+      deliverablePath: t.deliverablePath,
     })),
   });
   const digest = createHash("sha256")
@@ -107,6 +109,9 @@ export function loadSuite(suitePath: string): SuiteFile {
     if (seen.has(task.id)) throw new Error(`用例 id 重复: ${task.id}`);
     seen.add(task.id);
     if (!task.prompt || !task.prompt.trim()) throw new Error(`用例 ${task.id} 缺少 prompt`);
+    if (task.deliverablePath !== undefined && !validDeliverablePath(task.deliverablePath)) {
+      throw new Error(`用例 ${task.id} 的 deliverablePath 必须是工作区内的相对 Markdown 路径`);
+    }
   }
 
   return parsed;
@@ -227,6 +232,9 @@ export function checkSuite(
   let negativeAssertionCount = 0;
 
   for (const task of suite.tasks) {
+    if (task.deliverablePath !== undefined && !validDeliverablePath(task.deliverablePath)) {
+      errors.push(`用例 ${task.id} 的 deliverablePath 必须是工作区内的相对 Markdown 路径`);
+    }
     const kind = task.kind ?? "scored";
     if (kind === "scored") scoredCount += 1;
     else diagnosticCount += 1;

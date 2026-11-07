@@ -41,10 +41,13 @@ import { evaluateGainFromResults } from "./gain.ts";
 import { wilsonInterval } from "./stats.ts";
 import { DEFAULT_JUDGE_REPEAT } from "./thresholds.ts";
 import { checkRunIntegrity, loadRunManifest, hashEvidenceFile, type VerificationState, type RunManifest } from "./run-manifest.ts";
+import { DELIVERABLE_SNAPSHOT, prepareDeliverableRead, readDeliverable, readVerifiedDeliverable, type DeliverableEvidence } from "./deliverable.ts";
 
 export interface EvalTask {
   id: string;
   prompt: string;
+  /** Optional frozen workspace Markdown path used for assertions and blind judging. */
+  deliverablePath?: string;
   /** 预期要点，同时用于评委提示词。 */
   expectedPoints?: string[];
   /** 评分标准，覆盖默认。 */
@@ -167,6 +170,7 @@ export interface RunResult {
   totalCost: number;
   toolCalls: number;
   output: string;
+  deliverable?: DeliverableEvidence;
   activation: ActivationResult;
   assertions: AssertionReport | null;
   /**
@@ -375,6 +379,7 @@ export async function runEvaluation(options: RunnerOptions): Promise<EvaluationS
         }
         results.push(result);
         planned.status = result.status === "success" ? "SUCCESS" : "FAILED";
+        if (result.deliverable && result.deliverable.status !== "present") planned.reason = result.deliverable.reason;
         if (execution.isStopped()) {
           const reason = execution.snapshot().stoppedReason ?? result.error ?? "Host 执行故障";
           if (planned.status === "FAILED") planned.reason = reason;
@@ -447,12 +452,22 @@ async function runCase(
   const id = `${sanitizeId(variant.id)}-${sanitizeId(task.id)}-${attempt}`;
   const caseDir = join(options.runRoot, "cases", variant.id, task.id, String(attempt));
   mkdirSync(caseDir, { recursive: true });
+  const workspaceRoot = join(caseDir, "workspace");
+  let captureDelivery: (() => ReturnType<typeof readDeliverable>) | undefined;
+  if (task.deliverablePath) {
+    const path = task.deliverablePath;
+    if (options.execution!.mode === "simulated") captureDelivery = () => readDeliverable(workspaceRoot, path);
+    else {
+      mkdirSync(workspaceRoot);
+      captureDelivery = prepareDeliverableRead(workspaceRoot, path);
+    }
+  }
 
   const prompt = [options.contextPrefix, task.prompt].filter((part) => part && part.trim()).join("\n\n");
   const startedAt = Date.now();
 
   const run = await options.execution!.run("subject", {
-    workspaceRoot: join(caseDir, "workspace"),
+    workspaceRoot,
     sessionId: `${options.runId}-${id}`,
     prompt,
     model: options.model,
@@ -464,7 +479,13 @@ async function runCase(
 
   const endedAt = Date.now();
   const output = run.metrics.output;
-  const failed = run.exitCode !== 0 || run.timedOut || !run.isolation.verified || !output.trim();
+  const sessionFailed = run.exitCode !== 0 || run.timedOut || !run.isolation.verified || !output.trim();
+  writeFileSync(join(caseDir, "events.json"), JSON.stringify(run.events, null, 2), "utf8");
+  writeFileSync(join(caseDir, "output.md"), output, "utf8");
+  const captured = sessionFailed ? undefined : captureDelivery?.();
+  const deliverable = captured?.evidence;
+  const deliveryError = deliverable && deliverable.status !== "present" ? deliverable.reason : null;
+  const failed = sessionFailed || deliveryError !== null;
 
   const activation = detectActivation({
     skillPaths: variant.skillPaths,
@@ -486,11 +507,14 @@ async function runCase(
       : null;
 
   // 失败/超时的运行没有有效输出，禁止执行断言（否则 mustNotMatch 会在空输出上假阳性通过）。
-  const assertions = !failed && task.assertions?.length ? evaluateAssertions(output, task.assertions) : null;
+  const assertions = !failed && task.assertions?.length ? evaluateAssertions(captured?.text ?? output, task.assertions) : null;
 
-  // 证据落盘：事件流、输出、判定结果。
-  writeFileSync(join(caseDir, "events.json"), JSON.stringify(run.events, null, 2), "utf8");
-  writeFileSync(join(caseDir, "output.md"), output, "utf8");
+  // 保存评分证据与判定结果。
+  const evidenceNames = ["events.json", "output.md", "result.json"];
+  if (captured?.bytes) {
+    writeFileSync(join(caseDir, DELIVERABLE_SNAPSHOT), captured.bytes, { flag: "wx" });
+    evidenceNames.push(DELIVERABLE_SNAPSHOT);
+  }
   writeFileSync(
     join(caseDir, "result.json"),
     JSON.stringify(
@@ -511,6 +535,7 @@ async function runCase(
         stderr: run.stderr.slice(0, 2000),
         timedOut: run.timedOut,
         isolation: run.isolation,
+        ...(deliverable ? { deliverable } : {}),
       },
       null,
       2,
@@ -533,6 +558,7 @@ async function runCase(
     totalCost: run.metrics.totalCost,
     toolCalls: run.metrics.toolCalls,
     output,
+    ...(deliverable ? { deliverable } : {}),
     activation,
     assertions,
     contamination,
@@ -540,11 +566,11 @@ async function runCase(
     error: failed
       ? run.timedOut
         ? "运行超时"
-        : `退出码 ${String(run.exitCode)}，${run.stderr.slice(0, 300)}`
+        : deliveryError ?? `退出码 ${String(run.exitCode)}，${run.stderr.slice(0, 300)}`
       : null,
     timedOut: run.timedOut,
     isolation: run.isolation,
-    evidenceHashes: Object.fromEntries(["events.json", "output.md", "result.json"].map((name) => [name, hashEvidenceFile(join(caseDir, name))])),
+    evidenceHashes: Object.fromEntries(evidenceNames.map((name) => [name, hashEvidenceFile(join(caseDir, name))])),
   };
 }
 
@@ -600,12 +626,19 @@ export async function judgeAll(
       const planned = state?.sessions.find((row) => row.phase === "judge" && row.variantId === result.variantId && row.taskId === result.taskId && row.attempt === result.attempt && row.roundIndex === round.roundIndex);
       if (planned) { planned.status = "RUNNING"; saveExecutionStatus(options.runRoot, state!); }
       let raw: JudgeResult;
-      try { raw = await runJudge({
+      try {
+        const scoringOutput = (row: RunResult): string => {
+          if (!task.deliverablePath) return row.output;
+          const text = readVerifiedDeliverable(join(options.runRoot, row.evidenceDir), row.evidenceHashes?.[DELIVERABLE_SNAPSHOT]);
+          if (text === undefined) throw new Error("盲评所需的交付物快照无法核验");
+          return text;
+        };
+        raw = await runJudge({
         judgeDir: join(judgeDir, round.dirName),
         runId: `${options.runId}-${result.id}-${round.roundIndex}`,
         task: task.prompt, expectedPoints: task.expectedPoints, rubric: task.rubric,
-        outputA: round.swapped ? result.output : base.output,
-        outputB: round.swapped ? base.output : result.output,
+        outputA: scoringOutput(round.swapped ? result : base),
+        outputB: scoringOutput(round.swapped ? base : result),
         evidenceA: round.swapped ? candidateEvidence : baseEvidence,
         evidenceB: round.swapped ? baseEvidence : candidateEvidence,
         model: options.judgeModel, home: options.home, timeoutMs: options.judgeTimeoutMs,
@@ -905,8 +938,7 @@ export function summarizeTasks(
 /**
  * 找出规则断言与评委的分歧。
  *
- * 规则断言是客观判据，与评委冲突时以规则为准——但分歧必须记录，
- * 因为分歧本身说明任务设计或 skill 声明有问题。
+ * 记录两种判据的观察结果。规则纠偏的胜率在 summarizeVariants 独立计算。
  */
 export function findDisagreements(
   options: RunnerOptions,
@@ -947,7 +979,7 @@ export function findDisagreements(
   return disagreements;
 }
 
-/** 生成分歧说明。规则断言优先于评委。 */
+/** 生成分歧说明。 */
 function disagreementNote(objective: "win" | "loss" | "tie", judge: "win" | "loss" | "tie"): string {
   const objectiveText =
     objective === "win"
@@ -958,7 +990,7 @@ function disagreementNote(objective: "win" | "loss" | "tie", judge: "win" | "los
   const judgeText =
     judge === "win" ? "评委认为改善" : judge === "loss" ? "评委认为倒退" : "评委未看出相对差异";
 
-  return `${objectiveText}，但${judgeText}；以规则断言为准`;
+  return `${objectiveText}，但${judgeText}`;
 }
 
 function pairwiseKey(taskId: string, attempt: number): string {
@@ -993,6 +1025,11 @@ export async function recomputeSummary(
   const frozen = manifest ?? stored?.manifest;
   const repeat = frozen?.repeat ?? options.repeat ?? stored?.repeat ?? 0;
   const variants = frozen?.variants ?? options.variants;
+  const sourceTasks = frozen?.tasks ?? stored?.tasks ?? [];
+  const sourceById = new Map(sourceTasks.map((task) => [task.id, task]));
+  if (options.tasks.some((task) => task.deliverablePath !== sourceById.get(task.id)?.deliverablePath)) {
+    throw new Error("复核不能更换原运行冻结的判分载体，请为新题集建立独立运行");
+  }
   const collectionTasks = [...new Map([
     ...(frozen?.tasks ?? stored?.tasks ?? []), ...options.tasks,
   ].map((task) => [task.id, task])).values()];
@@ -1013,13 +1050,20 @@ export async function recomputeSummary(
       }
       const outputPath = join(taskDir, attemptDir, "output.md");
       const output = readOutput(outputPath);
-      const isFailed = raw.status !== "success" || !existsSync(outputPath) || !output.trim();
+      const prior = stored?.results.find((r) => r.variantId === variant.id && r.taskId === task.id && r.attempt === raw.attempt);
+      let scoringOutput = output;
+      if (task.deliverablePath && raw.status === "success") {
+        scoringOutput = raw.deliverable?.status === "present" && raw.deliverable.path === task.deliverablePath
+          ? readVerifiedDeliverable(join(taskDir, attemptDir), prior?.evidenceHashes?.[DELIVERABLE_SNAPSHOT]) ?? ""
+          : "";
+        if (!scoringOutput) issues.push(`成功运行缺少有效交付物快照：${raw.id}`);
+      }
+      const isFailed = raw.status !== "success" || !existsSync(outputPath) || !output.trim() || !scoringOutput.trim();
       if (raw.status === "success" && isFailed) issues.push(`成功运行缺少有效输出：${raw.id}`);
       const taskAssertions = options.tasks.find((t) => t.id === raw.taskId)?.assertions;
       const assertions = isFailed ? null : taskAssertions !== undefined
-        ? taskAssertions.length ? evaluateAssertions(output, taskAssertions) : null : raw.assertions;
+        ? taskAssertions.length ? evaluateAssertions(scoringOutput, taskAssertions) : null : raw.assertions;
       const timedOut = raw.timedOut === true || Boolean(isFailed && /timeout|超时/i.test(raw.stderr ?? ""));
-      const prior = stored?.results.find((r) => r.variantId === variant.id && r.taskId === task.id && r.attempt === raw.attempt);
       results.push({
         ...raw,
         variantLabel: variant.label,
@@ -1033,7 +1077,8 @@ export async function recomputeSummary(
         isolation: raw.isolation ?? prior?.isolation,
         evidenceHashes: prior?.evidenceHashes,
         evidenceDir: join("cases", variant.id, task.id, attemptDir),
-        error: isFailed ? (timedOut ? "运行超时" : raw.stderr?.slice(0, 300) || "运行失败或输出缺失") : null,
+        error: isFailed ? (timedOut ? "运行超时" : raw.deliverable?.status !== "present" && raw.deliverable?.reason
+          || raw.stderr?.slice(0, 300) || "运行失败或输出缺失") : null,
       });
     }
   }
@@ -1137,8 +1182,8 @@ export async function recomputeSummary(
       for (const pair of pairwise) pair.judgeRuns = pair.judgeRuns.filter(run => {
         const row = state.sessions.find(item => item.phase === "judge" && item.variantId === pair.variantId && item.taskId === pair.taskId && item.attempt === pair.attempt && item.roundIndex === run.roundIndex);
         return row && row.status !== "NOT_RUN" && existsSync(join(runRoot, "pairwise", pair.variantResultId, `round-${String(row.roundIndex! + 1).padStart(3, "0")}`, "judgment.json"));
-      });
-    } catch (error) {
+        });
+      } catch (error) {
       incompleteExecution = true;
       issues.push(`受控执行状态未验证：${error instanceof Error ? error.message : "执行状态侧车无法读取"}`);
     }

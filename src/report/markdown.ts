@@ -254,7 +254,10 @@ export function renderReport(options: ReportOptions): string {
       : "- **已有产物复核/回放**：未进行新的模型调用；历史记录未追溯覆盖，缺少的证据保持未验证。");
   lines.push("- **事件流取证**：每次运行保存完整 pi 事件流，可回放核对（含附属文件读取取证）。");
   lines.push("- **规则断言**：条目累计率只描述成功输出；推断使用完整计分配对，失败或缺失不产生负向断言假通过。95% 区间以任务为独立簇，采用保守 Hoeffding 界；增加断言或重复次数不会增加独立任务数。");
-  lines.push("- **成对评委**比较匿名 A/B 输出。实际输入见评委提示词记录。");
+  lines.push("- **评分载体**由用例决定。规则断言与成对评委均使用指定的交付文件，未指定时使用对话输出。两侧口径相同，匿名 A/B 的实际输入见评委提示词记录。");
+  if (tasks.some((task) => task.deliverablePath)) {
+    lines.push("- `deliverable.md` 保存指定文件的评分副本，`output.md` 保留对话。指定文件缺失或无效时，该次运行按交付失败记录。");
+  }
   lines.push("- **计分范围**：增益、显著性与成本门禁仅使用 scored 且应触发的任务；diagnostic 与负向触发任务单列，不参与这些门禁。执行摘要只提供匿名状态计数，不向评委泄露脚本或 skill 身份。");
   lines.push("");
   if (summary.judgeModel === summary.model) {
@@ -307,15 +310,17 @@ export function renderReport(options: ReportOptions): string {
 
   lines.push("### 5.2 用例明细");
   lines.push("");
-  lines.push("| 用例 | 类型 | 期望触发 | 成功率 | 激活率（有 Skill 侧） | 断言全过率（两侧运行） | win | tie | loss | 未判定 |");
-  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| 用例 | 类型 | 期望触发 | 成功率 | 激活率（有 Skill 侧） | 断言全过率（两侧运行） | win | tie | loss | 未判定 | 评分载体 |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   const skillVariantIds = new Set(options.variants.filter((item) => item.skillPaths.length > 0).map((item) => item.id));
   for (const task of summary.taskSummaries) {
     const expectTrig = task.shouldActivate === false ? "否（误触发测试）" : "是";
     const rows = summary.results.filter((row) => row.taskId === task.taskId);
     const activation = summarizeActivation(rows.filter((row) => skillVariantIds.has(row.variantId)));
+    const deliverablePath = taskById.get(task.taskId)?.deliverablePath;
+    const scoringSource = deliverablePath ? `工作区文件 \`${deliverablePath}\`` : "对话输出";
     lines.push(
-      `| ${task.taskId} | ${scoredTaskIds.has(task.taskId) ? "计分" : "诊断"} | ${expectTrig} | ${percentOf(task.success, task.total)} | ${percentOf(activation.activated, activation.total)} | ${assertionRunRate(rows)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} |`,
+      `| ${task.taskId} | ${scoredTaskIds.has(task.taskId) ? "计分" : "诊断"} | ${expectTrig} | ${percentOf(task.success, task.total)} | ${percentOf(activation.activated, activation.total)} | ${assertionRunRate(rows)} | ${task.win} | ${task.tie} | ${task.loss} | ${task.notJudged} | ${scoringSource} |`,
     );
   }
   lines.push("");
@@ -395,18 +400,33 @@ export function renderReport(options: ReportOptions): string {
   // ---- 6. 分歧记录 & 人工盲审校准 ----
   lines.push("## 6. 规则与评委的分歧");
   lines.push("");
-  if (summary.disagreements.length === 0) {
-    lines.push("无分歧。规则断言与成对评委结论一致。");
-  } else {
-    lines.push("| 用例 | 次数 | Variant | 规则断言 | 评委 | 说明 |");
+  const disagreementCount = summary.disagreements.length;
+  const labelChecks = summary.pairwise.flatMap((item) => item.judgeRuns ?? [])
+    .filter((run) => run.verdict !== "not_judged" && run.labelConflict !== undefined).length;
+  lines.push(`配对分歧 ${disagreementCount} 处。`);
+  lines.push(labelChecks > 0
+    ? `评委标签冲突 ${conflicts.length}/${labelChecks}（有标签检查记录的评委轮次）。`
+    : "未记录评委标签冲突检查。");
+  lines.push("");
+  for (const item of summary.variantSummaries) {
+    const { winRate, ruleAdjustedWinRate, scoredJudged } = item;
+    if (winRate == null || ruleAdjustedWinRate == null || !scoredJudged) continue;
+    const judgeWins = Math.round(winRate * scoredJudged);
+    const retainedWins = Math.round(ruleAdjustedWinRate * scoredJudged);
+    lines.push(`- ${item.variantLabel}的规则纠偏从胜率分子移除 ${judgeWins - retainedWins} 次评委胜出（${judgeWins}/${scoredJudged} → ${retainedWins}/${scoredJudged}）。`);
+  }
+  lines.push("");
+  lines.push("纠偏只调整计分对的胜率分子。原始评委结果保留，平局和负局不补为胜出。");
+  lines.push("");
+  if (disagreementCount > 0) {
+    lines.push("| 用例 | 次数 | Variant | 规则断言（候选侧） | 评委（候选侧） | 候选断言全过 |");
     lines.push("| --- | --- | --- | --- | --- | --- |");
     for (const item of summary.disagreements) {
       lines.push(
-        `| ${item.taskId} | ${item.attempt} | ${item.variantId} | ${item.assertionPassed ? "全过" : "未全过"} | ${item.verdict} | ${item.note} |`,
+        `| ${item.taskId} | ${item.attempt} | ${item.variantId} | ${item.objectiveVerdict ?? "—"} | ${item.verdict} | ${item.assertionPassed ? "是" : "否"} |`,
       );
     }
     lines.push("");
-    lines.push("> 规则断言优先级高于模型评委，当评委判 win 但规则断言出现倒退或零改善时，有效判定以规则纠偏胜率为准。");
   }
   lines.push("");
 
@@ -570,6 +590,17 @@ function buildLimitations(options: ReportOptions): string[] {
         .slice(0, 5)
         .map((r) => `${r.variantId}/${r.taskId}#${r.attempt}`)
         .join("、")}${failed.length > 5 ? " 等" : ""}`,
+    );
+  }
+
+  const missingDeliverables = summary.results.filter((result) =>
+    result.deliverable && result.deliverable.status !== "present",
+  );
+  if (missingDeliverables.length > 0) {
+    items.push(
+      `**${missingDeliverables.length} 次指定交付文件缺失或无效**，按交付失败记录。涉及 ${missingDeliverables.slice(0, 5)
+        .map((row) => `${row.variantId}/${row.taskId}#${row.attempt}（${row.deliverable!.status === "missing" ? "缺失" : "无效"}）`)
+        .join("、")}${missingDeliverables.length > 5 ? " 等" : ""}`,
     );
   }
 
