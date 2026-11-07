@@ -190,6 +190,76 @@ test("an explicit timeout fails only its sample and preserves any unknown dispat
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+for (const response of ["response", "response-error"] as const) test(`timeout cleanup preserves a ${response} IPC failure without stopping the batch`, { skip: !nativeAvailable, timeout: 15_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-timeout-ipc-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new ControlledBudget();
+  const originalSpawn = childProcess.spawn;
+  let injected = 0;
+  t.mock.method(childProcess, "spawn", (...args: unknown[]) => {
+    const child = Reflect.apply(originalSpawn, childProcess, args) as ReturnType<typeof childProcess.spawn>;
+    const originalSend = child.send;
+    t.mock.method(child, "send", (...sendArgs: unknown[]) => {
+      const message = sendArgs[0] as { type?: string };
+      if (message.type === response) {
+        injected++;
+        const callback = sendArgs[1] as (error: Error) => void;
+        queueMicrotask(() => callback(new Error("OFFLINE_CLOSED_IPC_AFTER_TIMEOUT")));
+        return false;
+      }
+      return Reflect.apply(originalSend, child, sendArgs);
+    });
+    return child;
+  });
+  syncBuiltinESMExports();
+  try {
+    const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: `offline-timeout-ipc-${response}`, prompt: "Offline timeout cleanup fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 3000 }, async (_url, init) => {
+      await new Promise<void>(resolve => init?.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      if (response === "response-error") throw new Error("OFFLINE_ABORT");
+      return new Response(nativeResponse("Late original response"), { headers: { "content-type": "text/event-stream" } });
+    });
+    assert.equal(injected, 1, "the closed-channel callback must be observed during timeout cleanup");
+    assert.equal(run.timedOut, true);
+    assert.equal(run.stderr, "SESSION_TIMEOUT");
+    assert.equal(run.failureEvidence.firstCause?.code, "SESSION_TIMEOUT");
+    assert.equal(budget.snapshot().state, "open");
+    assert(run.failureEvidence.secondary.some(cause => cause.code === "WORKER_IPC_CLOSED_DURING_CLEANUP"));
+    assert.equal(budget.snapshot().sessions[0]?.state, "failed");
+    budget.beginSession("next-independent-sample", "subject", subject);
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an active native session IPC failure still stops the batch", { skip: !nativeAvailable, timeout: 15_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "controlled-active-ipc-"));
+  const workspace = join(root, "workspace"); mkdirSync(workspace);
+  const budget = new ControlledBudget();
+  const originalSpawn = childProcess.spawn;
+  let injected = 0;
+  t.mock.method(childProcess, "spawn", (...args: unknown[]) => {
+    const child = Reflect.apply(originalSpawn, childProcess, args) as ReturnType<typeof childProcess.spawn>;
+    t.mock.method(child, "send", (_message: unknown, callback: (error: Error) => void) => {
+      injected++;
+      queueMicrotask(() => callback(new Error("OFFLINE_ACTIVE_IPC_FAILURE")));
+      return false;
+    });
+    return child;
+  });
+  syncBuiltinESMExports();
+  try {
+    const run = await simulateControlledSession({ workspaceRoot: workspace, home: root, sessionId: "offline-active-ipc", prompt: "Offline active IPC fixture", model: subject, role: "subject", skillPaths: [], budget, timeoutMs: 10000 }, async () => new Response(nativeResponse("Original response"), { headers: { "content-type": "text/event-stream" } }));
+    assert.equal(injected, 1);
+    assert.equal(run.timedOut, false);
+    assert.equal(run.failureEvidence.firstCause?.code, "WORKER_IPC_FAILURE");
+    assert.equal(budget.snapshot().state, "stopped");
+  } finally {
+    t.mock.restoreAll(); syncBuiltinESMExports();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("native parent stops and cleans the worker even when ledger persistence fails after HTTP", { skip: !nativeAvailable, timeout: 15_000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "controlled-parent-persistence-"));
   const workspace = join(root, "workspace"); mkdirSync(workspace);
