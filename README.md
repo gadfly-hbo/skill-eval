@@ -49,15 +49,31 @@ variant（装 skill）     ┘
 npm install
 npm run check                    # 类型检查 + 单元测试
 
-# 另行授权后跑两题受控冒烟（需要本机 Pi SDK 和模型配置）
+# 获得真实运行授权后，在仓库根目录执行默认冒烟
+npm run smoke
+```
+
+默认冒烟使用[公开单题套件](suites/smoke.json)，由原 `eval` 执行 baseline 一次、加载示例 skill 一次、匿名评委一轮，共 **3 个计划会话**。默认读取 Pi 隔离配置 `~/.skill-eval/pi-home`，可用 `npm run smoke -- --home <目录>` 指定其他配置。运行结果写入新的 `runs/<run-id>/`。
+
+验收看三会话执行状态、候选读取证据、结果正确性、交付格式、评委判定和 usage 留痕。单题作为诊断，结果用于核对执行链路。正式测评直接执行选定套件，消融和归档由用户按需选择。
+
+### 正式测评按需定规模
+
+用户可在发起时说「正式测评 5 道题，每题每侧跑 2 次，每对评委评 1 轮，不做消融」。题数来自套件的 `tasks`，用 `--repeat` 指定每题每侧的次数，用 `--judge-repeat` 指定每对输出的盲评轮数。两项优先取显式参数，其次取套件设置，最后使用 3 次和 2 轮的兜底值。评委设两轮可对同一对输出做 A/B 换位核验。
+
+```bash
 npm run eval -- eval \
-  --suite suites/controlled-example.json \
-  --skill examples/json-contract-skill/SKILL.md \
+  --suite suites/my-skill.json \
+  --skill path/to/SKILL.md \
   --model minimax-cn/MiniMax-M3.1-Flash \
   --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash \
-  --repeat 1 --judge-repeat 2 \
-  --out runs/exp-001
+  --home ~/.skill-eval/pi-home \
+  --repeat 2 --judge-repeat 1
 ```
+
+完整双臂计划为 `任务数 × repeat × (2 + judgeRepeat)` 个会话，包含诊断题。上例 5 题共 30 个会话。会话内的工具调用和自纠可能产生多次 HTTP 请求。
+
+消融默认关闭。用户选择开启时，先用 `verify --generate-broken` 生成新目录里的行为契约剥离版，保持原套件、模型和轮次，再跑一组独立的 baseline 与剥离版对照，最后用 `verify --original … --broken …` 离线核验。同规模消融再增加一组会话，上例合计 60。开跑前冻结本次规模与消融选择。
 
 ### 离线模型预检
 
@@ -76,9 +92,9 @@ npm run eval -- preflight \
 
 ### 一套编排，一层受控执行
 
-真实执行统一使用上面的 `eval`：原 `runner` 负责冻结实验矩阵、B/P、断言、匿名双轮评委和报告；Host 负责 OS 隔离、模型配置、费用记录和证据持久化。当前模型组合为被评模型 `minimax-cn/MiniMax-M3.1-Flash`、评委 `xiaomi-token-plan-cn/mimo-v2.6-flash`，不自动换模型。
+真实执行统一使用 `eval`。原 `runner` 负责冻结实验矩阵、B/P、断言、匿名评委和报告，Host 负责 OS 隔离、模型配置、费用记录和证据持久化。当前模型组合为被评模型 `minimax-cn/MiniMax-M3.1-Flash`、评委 `xiaomi-token-plan-cn/mimo-v2.6-flash`。
 
-计划会话数为 `任务数 × repeat × (2 + judgeRepeat)`，诊断任务与全部评委轮次也计算在内；这是预先冻结的实验规模，不是 Agent 内部执行轮数限制。两题示例为 8 会话，只用于检查链路，不足以判定 skill 有效。新运行使用新目录和新计划，不与旧记录混用。当前真实入口接受单个被评模型，额外 `--llm-advice` 调用入口已退役。
+实验规模在执行前冻结。Agent 在各会话内自主使用工具、思考与纠错。新运行使用新目录和新计划，既有两题示例及历史结果保留。当前真实入口接受单个被评模型，额外 `--llm-advice` 调用入口已退役。
 
 不设预算封顶、固定 8 会话上限或默认执行超时。上下文和输出额度取自 Pi 完整合并模型目录的原生 `contextWindow` / `maxTokens`，随运行配置冻结；当前本机目录分别为 MiniMax `1,000,000 / 524,288`、MiMo `1,048,576 / 131,072` token。上下文窗口由模型和 SDK 管理，不用请求字节数或任意字符裁切代替；只有显式 `--timeout` / `--judge-timeout` 才设置单次时限。
 
@@ -133,8 +149,8 @@ npm run eval -- pending --repo . --init
 # 查看待测评区里有哪些 skill（--json 给 agent 解析用）
 npm run eval -- pending --repo .
 
-# 一条命令跑完直接入库：评估 + 归档
-npm run eval -- eval --suite suites/controlled-example.json --model minimax-cn/MiniMax-M3.1-Flash --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash --repeat 1 --archive-to .
+# 正式测评通过后直接入库
+npm run eval -- eval --suite suites/my-skill.json --model minimax-cn/MiniMax-M3.1-Flash --judge-model xiaomi-token-plan-cn/mimo-v2.6-flash --home ~/.skill-eval/pi-home --archive-to .
 
 # 查看回归门禁阈值
 npm run eval -- threshold
