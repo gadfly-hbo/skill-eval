@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "id": "data-analysis-1.9.0-positive-v2-real-execution-20261107-v1",
+  "date": "2026-11-07",
+  "sourceCommit": "dc032df40f6deea558d97fc6c05125c620714412",
+  "codePublishedBeforeExecution": true,
+  "remoteBranch": "origin/main",
+  "runId": "da190-20261107-controlled-v2-positive",
+  "evidenceLevel": "real-provider-native-sdk-and-tools",
+  "executionAuthorized": true,
+  "invocations": 1,
+  "processExitCode": 1,
+  "status": "STOPPED",
+  "positiveCalibrationVerdict": "NOT_COMPLETED",
+  "candidateEffectiveness": "NOT_EVALUATED",
+  "mainRetest": "NOT_RUN",
+  "selectiveReruns": "NONE",
+  "oldResultsMixed": false,
+  "startedAt": "2026-11-06T23:15:49.570Z",
+  "completionEvidenceFileMtimeUtc": "2026-11-06T23:16:13.535140+00:00",
+  "limits": {
+    "maxSessions": 8,
+    "maxUsdEquivalent": 1,
+    "subjectMaxOutputTokens": 4096,
+    "judgeMaxOutputTokens": 1024,
+    "retry": false,
+    "compaction": false,
+    "cacheWarming": false
+  },
+  "progress": {
+    "sessionsPlanned": 8,
+    "sessionsStarted": 1,
+    "sessionsFailed": 1,
+    "sessionsSucceeded": 0,
+    "sessionsNotRun": 7,
+    "actualSubjectHttpRequests": 9,
+    "judgeRequests": "NOT_RUN",
+    "http200": 9,
+    "requestsSettled": 9,
+    "pendingRequests": 0,
+    "note": "Nine HTTP requests occurred within a single session; the session cap is eight, not an HTTP request cap."
+  },
+  "environmentEvidence": {
+    "sha256": "c0a36bffc30d4934ddc77a15d574db78226c852b7eff4dfcd0a0fe3447be23e0",
+    "observedBaselineRequests": 9,
+    "exactlyOneCopyInEachObservedRequest": true,
+    "positiveArm": "NOT_RUN",
+    "scope": "Real baseline injection is confirmed; B/P symmetry remains the prior offline evidence because P did not run.",
+    "behaviorFinding": "This baseline still explored outside its workspace despite receiving the fixed instruction. One run does not establish an aggregate effectiveness comparison with v1."
+  },
+  "firstCause": {
+    "code": "TOOL_EXECUTION_FAILED",
+    "incidentType": "tool_error",
+    "eventIndex": 532,
+    "toolCallId": "call_b49a27bdc82b4371a077d7e1",
+    "toolName": "bash",
+    "exitCode": 1
+  },
+  "secondaryIncidents": [
+    {
+      "code": "SESSION_EVENT_FAILURE",
+      "incidentType": "worker_error",
+      "eventIndex": null,
+      "toolCallId": null,
+      "toolName": null,
+      "exitCode": null
+    },
+    {
+      "code": "WORKER_TOOL_FAILED",
+      "incidentType": "worker_error",
+      "eventIndex": 533,
+      "toolCallId": null,
+      "toolName": null,
+      "exitCode": null
+    },
+    {
+      "code": "SESSION_EVENT_FAILURE",
+      "incidentType": "worker_error",
+      "eventIndex": null,
+      "toolCallId": null,
+      "toolName": null,
+      "exitCode": null
+    },
+    {
+      "code": "ASSISTANT_ABORTED_DURING_CLEANUP",
+      "incidentType": "assistant_aborted_during_cleanup",
+      "eventIndex": 539,
+      "toolCallId": null,
+      "toolName": null,
+      "exitCode": null
+    },
+    {
+      "code": "SESSION_EVENT_FAILURE",
+      "incidentType": "worker_error",
+      "eventIndex": null,
+      "toolCallId": null,
+      "toolName": null,
+      "exitCode": null
+    }
+  ],
+  "nonFatalObservations": [
+    {
+      "kind": "successful_bash_output_mentions_permission_denial",
+      "eventIndex": 350,
+      "toolCallId": "call_cedb18bf34974084b162290b",
+      "toolName": "bash",
+      "exitCode": 0,
+      "authoritativeFailure": false
+    }
+  ],
+  "failure": {
+    "category": "TOOL_FILESYSTEM_ISOLATION_DENIAL",
+    "tool": "bash",
+    "operation": "cd case parent and list .., ../.., ../../.. outside the permitted workspace",
+    "error": "Operation not permitted",
+    "structuredExitCode": 1,
+    "controllerCode": "SESSION_EVENT_FAILURE",
+    "firstCauseEventIndex": 532,
+    "httpFailureObserved": false,
+    "budgetExhausted": false,
+    "timeout": false,
+    "tenthHttpRequest": "NOT_SENT"
+  },
+  "modelAccess": [
+    {
+      "role": "subject",
+      "model": "minimax-cn/MiniMax-M3.1-Flash",
+      "authentication": "CONFIRMED_FOR_NINE_ACCEPTED_REQUESTS",
+      "exactModelPermission": "CONFIRMED_FOR_NINE_ACCEPTED_REQUESTS",
+      "remoteWeightsRevision": "UNKNOWN",
+      "remainingBalanceQuota": "UNKNOWN"
+    },
+    {
+      "role": "judge",
+      "model": "xiaomi-token-plan-cn/mimo-v2.6-flash",
+      "execution": "NOT_RUN",
+      "authentication": "UNKNOWN",
+      "exactModelPermission": "UNKNOWN",
+      "remainingTokenPlanCredits": "UNKNOWN"
+    }
+  ],
+  "usage": {
+    "input": 6239,
+    "output": 1284,
+    "cacheRead": 34432,
+    "cacheWrite": 0,
+    "totalInputIncludingCache": 40671,
+    "totalTokens": 41955,
+    "source": "Nine settled ledger rows and the original SSE"
+  },
+  "cost": {
+    "budgetChargedNanoUsd": 6871050,
+    "budgetUsdEquivalent": "0.00687105",
+    "remainingNanoUsd": 993128950,
+    "remainingUsdEquivalent": "0.99312895",
+    "outstandingReservationNanoUsd": 0,
+    "failedRequestReservationChargeNanoUsd": 0,
+    "sdkEstimateRawDecimalSumUsd": "0.00221246179999999985",
+    "sdkEstimateDisplayUsd": "0.0022124618",
+    "actualAccountChargeUsd": "UNKNOWN",
+    "budgetBasis": "Pinned public PAYGO USD equivalent, all cache/input at uncached input rate; not account-wide invoice cap"
+  },
+  "sessions": [
+    {
+      "id": "baseline-da-positive-json-1",
+      "role": "subject",
+      "status": "FAILED",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1"
+    },
+    {
+      "id": "baseline-da-positive-digest-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-digest/1"
+    },
+    {
+      "id": "skill-da-positive-json-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/cases/skill/da-positive-json/1"
+    },
+    {
+      "id": "skill-da-positive-digest-1",
+      "role": "subject",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/cases/skill/da-positive-digest/1"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-001",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/judges/skill-da-positive-json-1/round-001"
+    },
+    {
+      "id": "judge-skill-da-positive-json-1-round-002",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/judges/skill-da-positive-json-1/round-002"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-001",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/judges/skill-da-positive-digest-1/round-001"
+    },
+    {
+      "id": "judge-skill-da-positive-digest-1-round-002",
+      "role": "judge",
+      "status": "NOT_RUN",
+      "evidenceDir": "runs/da190-20261107-controlled-v2-positive/judges/skill-da-positive-digest-1/round-002"
+    }
+  ],
+  "requests": [
+    {
+      "id": "baseline-da-positive-json-1-r1",
+      "state": "settled",
+      "usage": {
+        "input": 1791,
+        "output": 51,
+        "cacheRead": 128,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 318450
+    },
+    {
+      "id": "baseline-da-positive-json-1-r2",
+      "state": "settled",
+      "usage": {
+        "input": 199,
+        "output": 115,
+        "cacheRead": 1920,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 386850
+    },
+    {
+      "id": "baseline-da-positive-json-1-r3",
+      "state": "settled",
+      "usage": {
+        "input": 663,
+        "output": 110,
+        "cacheRead": 2176,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 491850
+    },
+    {
+      "id": "baseline-da-positive-json-1-r4",
+      "state": "settled",
+      "usage": {
+        "input": 938,
+        "output": 64,
+        "cacheRead": 2944,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 620700
+    },
+    {
+      "id": "baseline-da-positive-json-1-r5",
+      "state": "settled",
+      "usage": {
+        "input": 192,
+        "output": 48,
+        "cacheRead": 3840,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 633600
+    },
+    {
+      "id": "baseline-da-positive-json-1-r6",
+      "state": "settled",
+      "usage": {
+        "input": 2120,
+        "output": 229,
+        "cacheRead": 3968,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 1050600
+    },
+    {
+      "id": "baseline-da-positive-json-1-r7",
+      "state": "settled",
+      "usage": {
+        "input": 83,
+        "output": 145,
+        "cacheRead": 6272,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 1040250
+    },
+    {
+      "id": "baseline-da-positive-json-1-r8",
+      "state": "settled",
+      "usage": {
+        "input": 175,
+        "output": 270,
+        "cacheRead": 6400,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 1148250
+    },
+    {
+      "id": "baseline-da-positive-json-1-r9",
+      "state": "settled",
+      "usage": {
+        "input": 78,
+        "output": 252,
+        "cacheRead": 6784,
+        "cacheWrite": 0
+      },
+      "budgetChargedNanoUsd": 1180500
+    }
+  ],
+  "scoring": {
+    "failedBaselineAssertions": null,
+    "PActivation": "NOT_RUN",
+    "PAssertions": "NOT_RUN",
+    "PScriptDelivery": "NOT_RUN",
+    "judgeRounds": "NOT_RUN",
+    "pairwiseWinRate": "NOT_RUN",
+    "candidateEffectiveness": "NOT_EVALUATED"
+  },
+  "evidence": {
+    "controlStatus": {
+      "path": "runs/da190-20261107-controlled-v2-positive/control-status.json",
+      "sha256": "bb4513dbd125bf5882f5c6846deacbe87bdf84b9fe304f4511b3fe407c76b352"
+    },
+    "failureEvidence": {
+      "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/failure-evidence.json",
+      "sha256": "ec03f90637504b7569bbe18b868ab9afad0e87830753e17e6772b2c309ab9e71"
+    },
+    "manifest": {
+      "path": "runs/da190-20261107-controlled-v2-positive/run-manifest.json",
+      "sha256": "7b6e1d444eb4f2a18499f26a064689b7d433dffbee08d7054d287a4d85805553"
+    },
+    "executionRevision": {
+      "path": "runs/da190-20261107-controlled-v2-positive/execution-revision.json",
+      "sha256": "16b39bbb09314d2f41c5c8b103b95a444e8251b92dcb00e0c684660f0c19fc39"
+    },
+    "rawWire": [
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r1.json",
+        "sha256": "909b8b83781c0e211fd96750495e8bd3548d009686e58042f27053004c642b49",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r2.json",
+        "sha256": "563c0455904bdade58f8726becf5c37a8912a1c3566b6d4c6eb35d7e705d002b",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r3.json",
+        "sha256": "ada071d079e710a97ba43e37c0c334363400b88f72860cb97576e2e16c56cc02",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r4.json",
+        "sha256": "8580d9b9109009933c80bafc03b215b0980533fbce6a9ac2751415598e081d08",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r5.json",
+        "sha256": "560321fe3b9e8b0e8807304a500165979df86c4c3fad1e21893fe23b86041865",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r6.json",
+        "sha256": "9e505a812946af5099ffe226ea4bd2ef6d5101e61527b7b1e77ba9f118ae9771",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r7.json",
+        "sha256": "ec135ab5bc2e39e926902289f5e86314dde163c732a580f6bb572f3cb902b802",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r8.json",
+        "sha256": "1a610fbfffea222915cf69c660dcab4ce675b43ce46a4a7e6fcb10738612e4e1",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      },
+      {
+        "path": "runs/da190-20261107-controlled-v2-positive/cases/baseline/da-positive-json/1/wire-baseline-da-positive-json-1-r9.json",
+        "sha256": "c9b861231aa8de3300b0220c96706db08c5885ef81d40e27bfda01414f1f4379",
+        "httpStatus": 200,
+        "requestedModel": "MiniMax-M3.1-Flash",
+        "environmentOccurrences": 1,
+        "maxOutputTokens": 4096
+      }
+    ],
+    "privateArtifactIndex": ".local/controlled-positive-v2-20261107/delivery-and-real-20261107/real/run-artifact-index.json",
+    "privateLogs": ".local/controlled-positive-v2-20261107/delivery-and-real-20261107/real"
+  },
+  "independentReview": {
+    "status": "READ_ONLY_EVIDENCE_RECONCILED",
+    "reviewerProviderCalls": "NONE",
+    "checks": [
+      "Nine exact-model HTTP200 responses with raw usage",
+      "One copy of fixed environment in each baseline request",
+      "First cause event532 bash exit1; cleanup does not overwrite",
+      "One failed session and seven NOT_RUN; no tenth HTTP",
+      "Budget settled below limit; actual invoice unknown",
+      "Original freeze and old23 artifacts unchanged; main roots absent"
+    ]
+  },
+  "preservation": {
+    "existingFilesChecked": 1469,
+    "existingFilesUnchanged": 1469,
+    "oldFailureArtifactsUnchanged": 23,
+    "originalFreezeReceiptSha256": "0dc6b4a4dcafb51b862a8143ab5eb103c309712ad5adfc0ec05b4e621b10cea7",
+    "frozenPayloadFilesUnchanged": 67,
+    "v2FilesPreserved": 35,
+    "trackedSourceChangedAfterCommit": false,
+    "privateMaterialsPublished": false
+  },
+  "limitations": [
+    "P and judge were never reached, so no positive-control or skill effectiveness conclusion is supported.",
+    "The actual baseline received the neutral instruction but still explored; the cause is not missing injection, and the single sample does not compare overall v1/v2 quality.",
+    "Accepted subject requests do not verify future balance or judge entitlement.",
+    "Actual provider invoice and account quota were not queried.",
+    "One trailing synthetic aborted assistant event with zero usage is not a tenth Provider request.",
+    "Runtime configuration inherits preparation-time NOT_RUN fields; raw wire and this report establish actual calls.",
+    "Native shell final-exit-zero denial text remains a non-authoritative observation by the preserved strict gate."
+  ]
+}
