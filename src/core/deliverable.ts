@@ -4,6 +4,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpat
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSandboxCommand } from "./isolation.ts";
+import type { RunResult } from "./runner.ts";
 
 export const DELIVERABLE_SNAPSHOT = "deliverable.md";
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -97,8 +98,18 @@ export function prepareDeliverableRead(root: string, path: string): () => Return
   };
 }
 
-export function readVerifiedDeliverable(caseDir: string, expected: string | undefined): string | undefined {
+export function readVerifiedDeliverable(root: string, expected: string | undefined, path = DELIVERABLE_SNAPSHOT): string | undefined {
   if (!expected) return undefined;
-  const { bytes, text } = readDeliverable(caseDir, DELIVERABLE_SNAPSHOT);
+  const { bytes, text } = readDeliverable(root, path);
   return bytes && createHash("sha256").update(bytes).digest("hex") === expected ? text : undefined;
+}
+
+/** Select the carrier used by both the formal judge and human calibration. */
+export function readScoringOutput(runRoot: string | undefined, deliverablePath: string | undefined, row: RunResult): string | undefined {
+  if (!deliverablePath) return row.output;
+  if (!runRoot || (row.deliverable && (row.deliverable.status !== "present" || row.deliverable.path !== deliverablePath))) {
+    return undefined;
+  }
+  const path = ["cases", row.variantId, row.taskId, String(row.attempt), DELIVERABLE_SNAPSHOT].join("/");
+  return readVerifiedDeliverable(runRoot, row.evidenceHashes?.[DELIVERABLE_SNAPSHOT], path);
 }

@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { freezeSkill } from "../core/provenance.ts";
-import { saveRunManifest, hashEvidenceFile, type RunManifest } from "../core/run-manifest.ts";
+import { saveRunManifest, hashEvidenceFile, EVALUATION_POLICY_VERSION, type RunManifest } from "../core/run-manifest.ts";
 import { recomputeSummary, type RunResult, type EvalTask } from "../core/runner.ts";
 import { evaluateAssertions } from "../core/assertions.ts";
 import { buildJudgeSchedule, JUDGE_PROTOCOL_VERSION } from "../core/judge.ts";
 import { decideVerdict } from "../core/verdict.ts";
 import { evaluateNegativeControl } from "../core/verify.ts";
+import type { BlindReviewSheet, CalibrationResult } from "../core/calibration.ts";
 
 const mainPath = fileURLToPath(new URL("./main.ts", import.meta.url));
 const repoRoot = dirname(dirname(dirname(mainPath)));
@@ -43,7 +44,7 @@ function containsPiMarker(root: string): boolean {
 }
 
 /** Synthetic, complete evidence supports a known effective fixture without model calls. */
-async function makeRun(root: string) {
+async function makeRun(root: string, deliverableTaskIds: string[] = []) {
   const runRoot = join(root, "run");
   const source = join(root, "candidate");
   mkdirSync(source);
@@ -54,6 +55,7 @@ async function makeRun(root: string) {
   const frozen = freezeSkill(sourceSkill, join(runRoot, ".frozen", "skill"));
   const tasks: EvalTask[] = Array.from({ length: 8 }, (_, i) => ({ id: `t${i}`, prompt: `Synthetic independent fixture ${i}`,
     assertions: [{ kind: "mustContain", value: "OK" }] }));
+  for (const task of tasks) if (deliverableTaskIds.includes(task.id)) task.deliverablePath = "report.md";
   const variants = [{ id: "baseline", label: "Baseline", skillPaths: [] }, { id: "skill", label: "Skill", skillPaths: [frozen.skillPath] }];
   const manifest: RunManifest = {
     schemaVersion: 1, policyVersion: "paired-task-v2", runId: "offline-cli-fixture", model: "offline-model", judgeModel: "offline-judge",
@@ -67,18 +69,22 @@ async function makeRun(root: string) {
     const dir = join(runRoot, "cases", variant.id, task.id, "1");
     mkdirSync(dir, { recursive: true });
     const output = variant.id === "skill" ? "OK" : "baseline";
+    const delivery = task.deliverablePath ? `Frozen deliverable: ${output}` : undefined;
+    if (delivery !== undefined) writeFileSync(join(dir, "deliverable.md"), delivery);
     const row: RunResult = {
       id: `${variant.id}-${task.id}-1`, variantId: variant.id, variantLabel: variant.label, taskId: task.id, attempt: 1,
       status: "success", startedAt: 0, endedAt: 1, durationSec: 1, skillPaths: variant.skillPaths,
       totalTokens: 100, totalCost: 0, toolCalls: 0, output,
       activation: { status: variant.id === "skill" ? "activated" : "not_activated", activated: variant.id === "skill", matchedKeywords: [], readSkillPaths: variant.skillPaths, evidence: [] },
-      assertions: evaluateAssertions(output, task.assertions!), evidenceDir: join("cases", variant.id, task.id, "1"),
+      assertions: evaluateAssertions(delivery ?? output, task.assertions!), evidenceDir: join("cases", variant.id, task.id, "1"),
+      ...(task.deliverablePath ? { deliverable: { path: task.deliverablePath, status: "present" } } : {}),
       error: null, timedOut: false, isolation: { verified: true, issues: [] },
     };
     writeFileSync(join(dir, "result.json"), JSON.stringify(row));
     writeFileSync(join(dir, "output.md"), output);
     writeFileSync(join(dir, "events.json"), "[]");
-    row.evidenceHashes = Object.fromEntries(["result.json", "output.md", "events.json"].map(name => [name, hashEvidenceFile(join(dir, name))]));
+    const evidenceFiles = ["result.json", "output.md", "events.json", ...(delivery === undefined ? [] : ["deliverable.md"])];
+    row.evidenceHashes = Object.fromEntries(evidenceFiles.map(name => [name, hashEvidenceFile(join(dir, name))]));
     results.push(row);
   }
   for (const task of tasks) {
@@ -163,10 +169,59 @@ test("CLI report 另存派生分析，不覆盖原报告、摘要及已有派生
       const derived = JSON.parse(firstAnalysis.summary);
       assert.equal(derived.evidenceLevel, "replay");
       assert.equal(derived.analysisOf.runId, "offline-cli-fixture");
+      assert.equal(derived.policyVersion, EVALUATION_POLICY_VERSION);
+      assert.equal(JSON.parse(readFileSync(join(path, "analysis.json"), "utf8")).policyVersion, derived.policyVersion);
+      assert.ok(firstAnalysis.report.includes(`；策略 ${derived.policyVersion}；`));
     }
   }
   assert.equal(readFileSync(join(firstAnalysis!.path, "REPORT.md"), "utf8"), firstAnalysis!.report);
   assert.equal(readFileSync(join(firstAnalysis!.path, "summary.json"), "utf8"), firstAnalysis!.summary);
+  assert.equal(containsPiMarker(root), false);
+});
+
+test("CLI calibrate 复用冻结评分载体，缺失和哈希不符的快照单列为无法校准", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-cli-calibration-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bin = installOfflinePi(root);
+  const { runRoot, tasks } = await makeRun(root, ["t1", "t2", "t3"]);
+  rmSync(join(runRoot, "cases", "skill", "t2", "1", "deliverable.md"));
+  writeFileSync(join(runRoot, "cases", "baseline", "t3", "1", "deliverable.md"), "tampered");
+  const sourceFiles = ["REPORT.md", "summary.json", "run-manifest.json"];
+  const sourceHashes = sourceFiles.map(name => hashEvidenceFile(join(runRoot, name)));
+  const sheetPath = join(root, "sheet.json");
+  const args = ["calibrate", "--run", runRoot, "--export", sheetPath, "--limit", "4"];
+  const exported = invoke(bin, args);
+  assert.equal(exported.status, 0, exported.stdout + exported.stderr);
+  const sheetText = readFileSync(sheetPath, "utf8");
+  const sheet = JSON.parse(sheetText) as BlindReviewSheet;
+  assert.deepEqual(sheet.items.map(item => item.taskId), ["t0", "t1"]);
+  assert.deepEqual([sheet.items[0]!.outputA, sheet.items[0]!.outputB].sort(), ["OK", "baseline"]);
+  assert.deepEqual([sheet.items[1]!.outputA, sheet.items[1]!.outputB].sort(), ["Frozen deliverable: OK", "Frozen deliverable: baseline"]);
+  assert.deepEqual(sheet.unavailable?.map(item => item.taskId), ["t2", "t3"]);
+  assert.ok(sheet.unavailable?.every(item => /快照.*无法核验/.test(item.reason)));
+  assert.match(exported.stdout, /无法校准 2 对/);
+
+  const changedSuite = join(root, "changed-suite.json");
+  writeFileSync(changedSuite, JSON.stringify({ id: "changed", tasks: tasks.map(task => ({ id: task.id, prompt: "changed" })) }));
+  const withOverride = invoke(bin, [...args, "--suite-file", changedSuite]);
+  assert.equal(withOverride.status, 0, withOverride.stdout + withOverride.stderr);
+  assert.equal(readFileSync(sheetPath, "utf8"), sheetText);
+
+  for (const item of sheet.items) item.humanVerdict = "tie";
+  writeFileSync(sheetPath, JSON.stringify(sheet));
+  const scoreArgs = ["calibrate", "--run", runRoot, "--score", sheetPath];
+  const scored = invoke(bin, scoreArgs);
+  assert.equal(scored.status, 0, scored.stdout + scored.stderr);
+  const result = JSON.parse(readFileSync(join(runRoot, "calibration-result.json"), "utf8")) as CalibrationResult;
+  assert.equal(result.reviewedCount, 2);
+  assert.equal(result.totalItems, 2);
+  assert.equal(result.unavailableCount, 2);
+  delete sheet.scoringCarrierVersion;
+  writeFileSync(sheetPath, JSON.stringify(sheet));
+  const mismatched = invoke(bin, scoreArgs);
+  assert.equal(mismatched.status, 1);
+  assert.match(mismatched.stderr, /评分载体版本不匹配/);
+  assert.deepEqual(sourceFiles.map(name => hashEvidenceFile(join(runRoot, name))), sourceHashes);
   assert.equal(containsPiMarker(root), false);
 });
 

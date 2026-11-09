@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateAssertion } from "../core/assertions.ts";
@@ -99,4 +99,15 @@ test("正式测评使用固化口径，原样交付故障并把改写建议限�
   assert.match(skill, /已选的现有套件校验不通过 → 保留错误并停止/);
   assert.match(skill, /收到修订版并获得新运行授权后，按原冻结口径复测/);
   assert.doesNotMatch(skill, /改用源码直跑|确认题集误判后另存新版|不通过 → 按报错修正后重新生成/);
+});
+
+test("正式测评只静态审阅候选检查脚本，直接交付原生报告", () => {
+  const flow = new URL("../../skills/skill-eval-flow/", import.meta.url);
+  const skill = readFileSync(new URL("SKILL.md", flow), "utf8");
+  assert.doesNotMatch(skill, /S3\.5|run-gate\.sh|gate-report\.md/);
+  assert.equal(existsSync(new URL("scripts/run-gate.sh", flow)), false);
+  assert.match(skill, /Qoder 对候选文件的直接操作限于静态审阅，包括候选自带的检查脚本/);
+  assert.match(skill, /完成后进入 S4/);
+  assert.match(skill, /读 `<运行目录>\/REPORT\.md` 与 `summary\.json`/);
+  assert.match(skill, /呈现 `REPORT\.md`/);
 });

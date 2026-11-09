@@ -3,13 +3,14 @@ import assert from "node:assert/strict";
 import { decideVerdict } from "./verdict.ts";
 import { summarizeVariants, summarizeTasks, type EvaluationSummary, type RunResult, type EvalTask } from "./runner.ts";
 
+const fixtureVariants = [{ id: "baseline", label: "Baseline", skillPaths: [] }, { id: "skill", label: "Skill", skillPaths: ["/tmp/SKILL.md"] }];
+
 /** 合成的独立任务测试数据，只检验判定算法，不代表真实 skill 的测评证据。 */
 function makeSummary(taskCount = 16, basePassed = 0, variantPassed = 10): EvaluationSummary {
   const tasks: EvalTask[] = Array.from({ length: taskCount }, (_, i) => ({
     id: `task-${i}`, prompt: `独立任务 ${i}`, assertions: Array.from({ length: 10 }, (_, j) => ({ kind: "mustContain" as const, value: `criterion-${j}` })),
   }));
-  const variants = [{ id: "baseline", label: "Baseline", skillPaths: [] }, { id: "skill", label: "Skill", skillPaths: ["/tmp/SKILL.md"] }];
-  const results: RunResult[] = tasks.flatMap(task => variants.map(v => {
+  const results: RunResult[] = tasks.flatMap(task => fixtureVariants.map(v => {
     const passed = v.id === "baseline" ? basePassed : variantPassed;
     return {
       id: `${v.id}-${task.id}-1`, variantId: v.id, variantLabel: v.label, taskId: task.id, attempt: 1,
@@ -28,8 +29,8 @@ function makeSummary(taskCount = 16, basePassed = 0, variantPassed = 10): Evalua
   return {
     runId: "synthetic", model: "m1", judgeModel: "m2", repeat: 1, judgeRepeat: 2,
     startedAt: 0, endedAt: 1000, durationSec: 1, status: "success", tasks, results, pairwise,
-    variantSummaries: summarizeVariants({ variants, tasks } as never, results, pairwise),
-    taskSummaries: summarizeTasks({ variants, tasks } as never, results, pairwise),
+    variantSummaries: summarizeVariants({ variants: fixtureVariants, tasks, repeat: 1 } as never, results, pairwise),
+    taskSummaries: summarizeTasks({ variants: fixtureVariants, tasks } as never, results, pairwise),
     disagreements: [], totalTokens: results.length * 100, totalCost: results.length * .001,
     integrity: { verified: true, issues: [] }, isolation: { verified: true, issues: [] },
   };
@@ -94,6 +95,33 @@ test("缺失配对不得以幸存样本增益放行", () => {
   assert.ok(decision.blockers.some(b => /配对|覆盖/.test(b)));
 });
 
+test("完整低增益仍可判无效，缺一对时保留冻结分母并判结论不足", () => {
+  const summary = makeSummary(5, 5, 5);
+  const complete = decideVerdict(summary);
+  assert.equal(complete.metrics.gainPp, 0);
+  assert.equal(complete.metrics.ruleAdjustedWinRate, 0);
+  assert.equal(complete.verdict, "ineffective");
+
+  const missing = summary.pairwise.pop()!;
+  summary.status = "partial";
+  const plan = { variants: fixtureVariants, tasks: summary.tasks!, repeat: summary.repeat } as never;
+  summary.variantSummaries = summarizeVariants(plan, summary.results, summary.pairwise);
+  const judgeOnlyMissing = decideVerdict(summary);
+  assert.equal(judgeOnlyMissing.metrics.gainPp, 0);
+  assert.equal(judgeOnlyMissing.verdict, "ineffective");
+
+  summary.results = summary.results.filter(r => r.id !== missing.variantResultId);
+  summary.variantSummaries = summarizeVariants(plan, summary.results, summary.pairwise);
+  const incomplete = decideVerdict(summary);
+  assert.equal(incomplete.metrics.scoredJudged, 4);
+  assert.equal(incomplete.metrics.totalScoredPairs, 5);
+  assert.equal(incomplete.metrics.pairCoverage, 4 / 5);
+  assert.equal(incomplete.metrics.gainPp, null);
+  assert.equal(incomplete.verdict, "inconclusive");
+  assert.match(incomplete.reason, /配对断言覆盖不完整/);
+  assert.doesNotMatch(incomplete.reason, /不可判定 未达/);
+});
+
 test("高超时率、低评判覆盖率和低全样本胜率分别阻断", () => {
   for (const changed of [{ timeoutRate: .35 }, { pairCoverage: .4 }, { winRateLowerBound: .3 }]) {
     const summary = makeSummary();
@@ -153,4 +181,22 @@ test("核验完整且数据充足时零激活零改善可证伪，污染未知�
   assert.equal(decideVerdict(summary).verdict, "ineffective");
   summary.integrity = undefined;
   assert.equal(decideVerdict(summary).verdict, "inconclusive");
+});
+
+test("零激活且零有效评判时保留冻结分母并判结论不足", () => {
+  const summary = makeSummary(5, 5, 5);
+  for (const row of summary.results) {
+    row.activation = { activated: false, status: "not_activated", readSkillPaths: [], matchedKeywords: [], evidence: [] };
+  }
+  summary.status = "partial";
+  summary.pairwise = [];
+  const plan = { variants: fixtureVariants, tasks: summary.tasks!, repeat: summary.repeat } as never;
+  summary.variantSummaries = summarizeVariants(plan, summary.results, summary.pairwise);
+  const decision = decideVerdict(summary);
+  assert.equal(decision.metrics.activationRate, 0);
+  assert.equal(decision.metrics.winRate, null);
+  assert.equal(decision.metrics.scoredJudged, 0);
+  assert.equal(decision.metrics.totalScoredPairs, 5);
+  assert.equal(decision.metrics.pairCoverage, 0);
+  assert.equal(decision.verdict, "inconclusive");
 });

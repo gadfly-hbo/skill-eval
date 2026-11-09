@@ -275,8 +275,8 @@ export function decideVerdict(
   if (summary.results.length === 0) evidenceIssues.push("缺少可复算的原始运行记录");
   const evidenceOk = evidenceIssues.length === 0;
 
-  // 零激活且无任何胜出（且运行本身正常完成而非全超时崩溃）→ 直接证伪。
-  if (evidenceOk && variant.success > 0 && timeoutOk && activationRate === 0 && (winRate === null || winRate === 0)) {
+  // 零激活且已观察到零胜出（至少有一对有效评判）。
+  if (evidenceOk && variant.success > 0 && timeoutOk && activationRate === 0 && scoredJudged > 0 && winRate === 0) {
     return {
       verdict: "ineffective",
       costGrade,
@@ -373,21 +373,20 @@ export function decideVerdict(
 
   let objectiveOk = true;
   if (hasAssertions) {
-    if (!fromResults.complete) {
+    if (gainPp === null) {
       objectiveOk = false;
-      blockers.push(`配对断言覆盖不完整：${fromResults.issues.join("；")}`);
-    }
-    if (!gainThresholdOk) {
+      blockers.push(`配对断言覆盖不完整，增益不可判定：${fromResults.issues.join("；")}`);
+    } else if (!gainThresholdOk) {
       objectiveOk = false;
       blockers.push(
-        `规则断言任务等权配对增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛`,
+        `规则断言任务等权配对增益 ${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp 未达 +${gainThresholdPp}pp 门槛`,
       );
     } else if (gainCiPp !== null && gainCiPp.lowPp <= 0) {
       objectiveOk = false;
       blockers.push(
         `任务等权增益保守 95% Hoeffding 置信区间 [${gainCiPp.lowPp >= 0 ? "+" : ""}${gainCiPp.lowPp.toFixed(1)}pp, ${gainCiPp.highPp >= 0 ? "+" : ""}${gainCiPp.highPp.toFixed(1)}pp] 跨越 0（独立任务 ${fromResults.pairedTaskCount} 个），证据不足`,
       );
-    } else if (gainPp !== null && gainPp < GAIN_STRONG_THRESHOLD_PP - EPS) {
+    } else if (gainPp < GAIN_STRONG_THRESHOLD_PP - EPS) {
       warnings.push(`断言增益 +${gainPp.toFixed(1)}pp 处于压线区间（10pp–20pp）`);
     }
   } else {
@@ -448,7 +447,7 @@ export function decideVerdict(
 
   // 区分「明确证伪（ineffective）」与「证据不足/超时污染/偏科（inconclusive）」：
   // 1. 样本健康时，激活率与胜率双双不及格 → ineffective
-  // 2. 激活充分、样本充足且无超时污染时，胜率低于弱提升线（45%）且客观断言增益也未达标 → 空壳/无效契约证伪为 ineffective
+  // 2. 激活充分且纠偏胜率低于弱提升线（45%）时，实测断言增益未达标 → ineffective
   if (evidenceOk && coverageOk && sampleSizeOk && timeoutOk) {
     if (!activationOk && !rawWinOk) {
       return {
@@ -464,17 +463,16 @@ export function decideVerdict(
 
     const clearlyWeakJudge =
       ruleAdjustedWinRate !== null && ruleAdjustedWinRate < WIN_RATE_MARGINAL_THRESHOLD - EPS;
-    const clearlyWeakAssertions = hasAssertions && !gainThresholdOk;
     if (
       activationRate >= ACTIVATION_STRONG_THRESHOLD - EPS &&
       clearlyWeakJudge &&
-      clearlyWeakAssertions
+      gainPp !== null && !gainThresholdOk
     ) {
       return {
         verdict: "ineffective",
         costGrade,
         expensive: false,
-        reason: `skill 已被充分读取（激活率 ${pct(activationRate)}），但规则纠偏胜率仅 ${pct(ruleAdjustedWinRate)} 且断言增益 ${gainPp === null ? "不可判定" : `${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp`} 未达 +${gainThresholdPp}pp 门槛，未能带来实质改善。`,
+        reason: `skill 已被充分读取（激活率 ${pct(activationRate)}），但规则纠偏胜率仅 ${pct(ruleAdjustedWinRate)} 且断言增益 ${gainPp >= 0 ? "+" : ""}${gainPp.toFixed(1)}pp 未达 +${gainThresholdPp}pp 门槛，未能带来实质改善。`,
         blockers,
         warnings,
         metrics,
