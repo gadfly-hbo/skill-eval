@@ -30,7 +30,7 @@ variant（装 skill）     ┘
 
 ## 当前判定策略与历史记录
 
-可信度修复使用 `paired-task-v2` 策略：运行前冻结完整 skill 包、任务与运行矩阵；归档只接受内容身份一致的冻结快照。
+当前策略为 `paired-task-v2.1`。运行前冻结完整 skill 包、任务与运行矩阵，归档只接受内容身份一致的冻结快照。低增益判定要求完整配对增益，零评判保留结论不足。
 真实运行目前要求 macOS `sandbox-exec`，每次调用先执行本地访问探针；缺少隔离后端或探针失败会阻止启动，不回退到未隔离执行。
 
 显著性推断以**任务簇**为单位：任务内先平均配对重复，任务间等权，使用保守的 95% Hoeffding 区间（假设任务之间独立）。
@@ -130,8 +130,8 @@ npm run eval -- check --suite suites/example-suite.json
 npm run eval -- verify --generate-broken path/to/SKILL.md --out /tmp/broken-skill
 npm run eval -- verify --original runs/orig --broken runs/broken
 
-# 导出匿名盲审表并校准评委一致性（Cohen's κ 与乐观偏置）
-npm run eval -- calibrate --run runs/exp-001 --export /tmp/blind.json --suite-file suites/example-suite.json
+# 导出匿名盲审表。落盘题用已校验的交付快照，无法核验的配对单列
+npm run eval -- calibrate --run runs/exp-001 --export /tmp/blind.json
 npm run eval -- calibrate --run runs/exp-001 --score /tmp/blind.json
 
 # 从原始产物重算，另存派生报告 analyses/<id>/（原记录不覆盖）

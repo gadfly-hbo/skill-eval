@@ -31,8 +31,7 @@ fi
 
 for DST in "${TARGETS[@]}"; do
   mkdir -p "$DST/scripts" "$DST/references"
-  # 整目录同步，而不是逐个文件 cp——白名单式复制会漏掉后加的脚本
-  # （run-gate.sh 就是这么漏过一次）。用 rsync 保留目标端多余文件之外的一致性。
+  # 整目录同步，使目标端的脚本和参考文件随源目录增删。
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --delete "$SRC/" "$DST/"
   else

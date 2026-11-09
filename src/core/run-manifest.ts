@@ -8,7 +8,7 @@ import type { EvaluationRuntimeIdentity } from "./runtime-identity.ts";
 import { DELIVERABLE_SNAPSHOT, readVerifiedDeliverable, validDeliverablePath } from "./deliverable.ts";
 
 export const RUN_MANIFEST_FILE = "run-manifest.json";
-export const EVALUATION_POLICY_VERSION = "paired-task-v2";
+export const EVALUATION_POLICY_VERSION = "paired-task-v2.1";
 export interface VerificationState { verified: boolean; issues: string[] }
 export interface RunManifest {
   schemaVersion: 1;

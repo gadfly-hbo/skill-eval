@@ -240,7 +240,7 @@ calibrate 选项：
   --run <dir>             评估运行目录（必填）
   --export <file>         导出打乱 A/B 顺序的匿名盲审表 JSON
   --score <file>          读取人工回填的盲审表，计算一致率、Cohen's κ 与乐观偏置
-  --suite-file <path>     可选套件定义（用于在盲审表中附带原始 prompt 与要点）
+  --suite-file <path>     旧运行缺少任务定义时使用的套件
   --limit <n>             限制导出的抽检对数
 `);
 }
@@ -1132,11 +1132,14 @@ function commandCalibrate(args: CliArgs): number {
 
   if (exportPathFlag) {
     const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as EvaluationSummary;
+    const manifest = loadRunManifest(runDir) ?? summary.manifest;
+    if (manifest && manifest.runId !== summary.runId) throw new Error("冻结运行清单与摘要的运行身份不匹配");
     const suiteFileFlag = flagString(args.flags, "suite-file");
-    const tasks = suiteFileFlag ? loadSuite(suiteFileFlag).tasks : [];
+    const tasks = manifest?.tasks ?? summary.tasks ?? (suiteFileFlag ? loadSuite(suiteFileFlag).tasks : undefined);
     const limit = flagNumber(args.flags, "limit");
 
-    const { blindSheet, answerKey } = exportCalibrationSheet(summary, tasks, limit);
+    const { blindSheet, answerKey } = exportCalibrationSheet(summary, tasks, limit, runDir);
+    const unavailableCount = answerKey.unavailableCount ?? 0;
     const exportPath = resolve(exportPathFlag);
     const keyPath = join(runDir, "calibration-key.json");
     mkdirSync(dirname(exportPath), { recursive: true });
@@ -1144,7 +1147,7 @@ function commandCalibrate(args: CliArgs): number {
     writeFileSync(keyPath, JSON.stringify(answerKey, null, 2), "utf8");
 
     process.stdout.write(
-      `已导出匿名盲审表（共 ${blindSheet.items.length} 对）：${exportPath}\n` +
+      `已导出匿名盲审表（可盲审 ${blindSheet.items.length} 对，无法校准 ${unavailableCount} 对）：${exportPath}\n` +
         `映射密钥已保存至：${keyPath}\n` +
         "填写每条的 humanVerdict ('A' | 'B' | 'tie') 后执行：\n" +
         `  skill-eval calibrate --run ${runDir} --score ${exportPath}\n`,
@@ -1170,7 +1173,7 @@ function commandCalibrate(args: CliArgs): number {
     const outPath = join(runDir, "calibration-result.json");
     writeFileSync(outPath, JSON.stringify(result, null, 2), "utf8");
 
-    process.stdout.write(`人工盲审校准完成（已审核 ${result.reviewedCount}/${result.totalItems} 对）：\n`);
+    process.stdout.write(`人工盲审校准完成（已审核 ${result.reviewedCount}/${result.totalItems} 对，无法校准 ${result.unavailableCount ?? 0} 对）：\n`);
     process.stdout.write(
       `  人机一致率：${result.agreementRate === null ? "—" : `${(result.agreementRate * 100).toFixed(1)}%`}\n`,
     );

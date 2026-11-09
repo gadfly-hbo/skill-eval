@@ -40,8 +40,8 @@ import { loadEvidenceFromDir } from "./evidence.ts";
 import { evaluateGainFromResults } from "./gain.ts";
 import { wilsonInterval } from "./stats.ts";
 import { DEFAULT_JUDGE_REPEAT } from "./thresholds.ts";
-import { checkRunIntegrity, loadRunManifest, hashEvidenceFile, type VerificationState, type RunManifest } from "./run-manifest.ts";
-import { DELIVERABLE_SNAPSHOT, prepareDeliverableRead, readDeliverable, readVerifiedDeliverable, type DeliverableEvidence } from "./deliverable.ts";
+import { checkRunIntegrity, loadRunManifest, hashEvidenceFile, EVALUATION_POLICY_VERSION, type VerificationState, type RunManifest } from "./run-manifest.ts";
+import { DELIVERABLE_SNAPSHOT, prepareDeliverableRead, readDeliverable, readScoringOutput, readVerifiedDeliverable, type DeliverableEvidence } from "./deliverable.ts";
 
 export interface EvalTask {
   id: string;
@@ -627,18 +627,14 @@ export async function judgeAll(
       if (planned) { planned.status = "RUNNING"; saveExecutionStatus(options.runRoot, state!); }
       let raw: JudgeResult;
       try {
-        const scoringOutput = (row: RunResult): string => {
-          if (!task.deliverablePath) return row.output;
-          const text = readVerifiedDeliverable(join(options.runRoot, row.evidenceDir), row.evidenceHashes?.[DELIVERABLE_SNAPSHOT]);
-          if (text === undefined) throw new Error("盲评所需的交付物快照无法核验");
-          return text;
-        };
+        const outputA = readScoringOutput(options.runRoot, task.deliverablePath, round.swapped ? result : base);
+        const outputB = readScoringOutput(options.runRoot, task.deliverablePath, round.swapped ? base : result);
+        if (outputA === undefined || outputB === undefined) throw new Error("盲评所需的交付物快照无法核验");
         raw = await runJudge({
         judgeDir: join(judgeDir, round.dirName),
         runId: `${options.runId}-${result.id}-${round.roundIndex}`,
         task: task.prompt, expectedPoints: task.expectedPoints, rubric: task.rubric,
-        outputA: scoringOutput(round.swapped ? result : base),
-        outputB: scoringOutput(round.swapped ? base : result),
+        outputA, outputB,
         evidenceA: round.swapped ? candidateEvidence : baseEvidence,
         evidenceB: round.swapped ? baseEvidence : candidateEvidence,
         model: options.judgeModel, home: options.home, timeoutMs: options.judgeTimeoutMs,
@@ -1202,7 +1198,7 @@ export async function recomputeSummary(
     judgeModel: frozen?.judgeModel ?? stored?.judgeModel ?? "（未记录）",
     repeat, judgeRepeat: frozen?.judgeRepeat ?? stored?.judgeRepeat ?? 0,
     tasks: options.tasks, manifest: frozen,
-    policyVersion: "paired-task-v2", integrity, execution, evidenceLevel: "replay",
+    policyVersion: EVALUATION_POLICY_VERSION, integrity, execution, evidenceLevel: "replay",
     isolation: {
       verified: !missing && results.length > 0 && results.every((r) => r.isolation?.verified === true),
       issues: [...new Set(results.flatMap((r) => r.isolation?.issues ?? ["历史运行缺少访问隔离验证记录"]).concat(missing ? ["存在未验证的缺失运行"] : []))],

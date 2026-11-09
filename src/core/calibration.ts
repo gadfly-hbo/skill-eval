@@ -12,9 +12,12 @@
  */
 
 import { createHash } from "node:crypto";
+import { DELIVERABLE_SNAPSHOT, readScoringOutput } from "./deliverable.ts";
 import { cohensKappa } from "./stats.ts";
 import type { Verdict } from "./judge.ts";
 import type { EvaluationSummary, EvalTask } from "./runner.ts";
+
+const SCORING_CARRIER_VERSION = 1;
 
 export interface BlindReviewItem {
   itemId: string;
@@ -31,8 +34,10 @@ export interface BlindReviewItem {
 
 export interface BlindReviewSheet {
   runId: string;
+  scoringCarrierVersion?: number;
   instructions: string;
   items: BlindReviewItem[];
+  unavailable?: Array<Pick<BlindReviewItem, "itemId" | "taskId" | "attempt"> & { reason: string }>;
 }
 
 export interface CalibrationKeyEntry {
@@ -46,13 +51,16 @@ export interface CalibrationKeyEntry {
 
 export interface CalibrationAnswerKey {
   runId: string;
+  scoringCarrierVersion?: number;
   entries: CalibrationKeyEntry[];
+  unavailableCount?: number;
 }
 
 export interface CalibrationResult {
   runId: string;
   totalItems: number;
   reviewedCount: number;
+  unavailableCount?: number;
   agreementRate: number | null;
   kappa: number | null;
   judgeWinRate: number | null;
@@ -76,10 +84,12 @@ function deterministicCoinFlip(seed: string): boolean {
 
 export function exportCalibrationSheet(
   summary: EvaluationSummary,
-  tasks: EvalTask[] = [],
+  tasks?: EvalTask[],
   limit?: number,
+  runRoot?: string,
 ): { blindSheet: BlindReviewSheet; answerKey: CalibrationAnswerKey } {
-  const taskMap = new Map<string, EvalTask>(tasks.map((t) => [t.id, t]));
+  const taskDefinitions = tasks ?? summary.manifest?.tasks ?? summary.tasks;
+  const taskMap = new Map((taskDefinitions ?? []).map((t) => [t.id, t]));
   const resultMap = new Map(summary.results.map((r) => [r.id, r]));
 
   const judgedPairs = summary.pairwise.filter(
@@ -89,32 +99,44 @@ export function exportCalibrationSheet(
 
   const items: BlindReviewItem[] = [];
   const entries: CalibrationKeyEntry[] = [];
+  const unavailable: NonNullable<BlindReviewSheet["unavailable"]> = [];
 
   for (const pair of selected) {
+    const item = { itemId: `${pair.taskId}#${pair.attempt}`, taskId: pair.taskId, attempt: pair.attempt };
     const baseRow = resultMap.get(pair.baselineResultId);
     const varRow = resultMap.get(pair.variantResultId);
-    if (!baseRow || !varRow) continue;
-
-    const itemId = `${pair.taskId}#${pair.attempt}`;
-    const aIsVariant = deterministicCoinFlip(`${summary.runId}::${itemId}`);
+    if (!baseRow || !varRow) {
+      unavailable.push({ ...item, reason: "缺少成对运行记录" });
+      continue;
+    }
     const taskDef = taskMap.get(pair.taskId);
+    const deliverablePath = taskDef?.deliverablePath;
+    if ((taskDefinitions && !taskDef) || (!deliverablePath && [baseRow, varRow].some(row =>
+      row.deliverable || row.evidenceHashes?.[DELIVERABLE_SNAPSHOT]
+    ))) {
+      unavailable.push({ ...item, reason: "无法确定冻结评分载体" });
+      continue;
+    }
+    const baseOutput = readScoringOutput(runRoot, deliverablePath, baseRow);
+    const varOutput = readScoringOutput(runRoot, deliverablePath, varRow);
+    if (baseOutput === undefined || varOutput === undefined) {
+      unavailable.push({ ...item, reason: "评分交付快照缺失或无法核验" });
+      continue;
+    }
+    const aIsVariant = deterministicCoinFlip(`${summary.runId}::${item.itemId}`);
 
     items.push({
-      itemId,
-      taskId: pair.taskId,
-      attempt: pair.attempt,
+      ...item,
       prompt: taskDef?.prompt ?? "（未在摘要中附带原始 prompt，请对照套件文件查看）",
       expectedPoints: taskDef?.expectedPoints ?? [],
-      outputA: aIsVariant ? varRow.output : baseRow.output,
-      outputB: aIsVariant ? baseRow.output : varRow.output,
+      outputA: aIsVariant ? varOutput : baseOutput,
+      outputB: aIsVariant ? baseOutput : varOutput,
       humanVerdict: "",
       notes: "",
     });
 
     entries.push({
-      itemId,
-      taskId: pair.taskId,
-      attempt: pair.attempt,
+      ...item,
       aIsVariant,
       judgeVerdict: pair.verdict,
     });
@@ -123,13 +145,17 @@ export function exportCalibrationSheet(
   return {
     blindSheet: {
       runId: summary.runId,
+      scoringCarrierVersion: SCORING_CARRIER_VERSION,
       instructions:
         "请在每条 items 的 humanVerdict 字段填写 'A'（输出 A 更好）、'B'（输出 B 更好）或 'tie'（质量相当），保存后运行 skill-eval calibrate --run <dir> --score <本文件>。",
       items,
+      unavailable,
     },
     answerKey: {
       runId: summary.runId,
+      scoringCarrierVersion: SCORING_CARRIER_VERSION,
       entries,
+      unavailableCount: unavailable.length,
     },
   };
 }
@@ -138,6 +164,9 @@ export function evaluateCalibration(
   blindSheet: BlindReviewSheet,
   answerKey: CalibrationAnswerKey,
 ): CalibrationResult {
+  if (blindSheet.runId !== answerKey.runId || blindSheet.scoringCarrierVersion !== answerKey.scoringCarrierVersion) {
+    throw new Error("盲审表与映射密钥的运行身份或评分载体版本不匹配，请重新导出同一份盲审表及密钥");
+  }
   const keyMap = new Map(answerKey.entries.map((e) => [e.itemId, e]));
 
   const judgeLabels: Array<"win" | "tie" | "loss"> = [];
@@ -179,11 +208,13 @@ export function evaluateCalibration(
   }
 
   const reviewedCount = judgeLabels.length;
+  const unavailableCount = answerKey.unavailableCount ?? 0;
   if (reviewedCount === 0) {
     return {
       runId: answerKey.runId,
       totalItems: answerKey.entries.length,
       reviewedCount: 0,
+      unavailableCount,
       agreementRate: null,
       kappa: null,
       judgeWinRate: null,
@@ -204,6 +235,7 @@ export function evaluateCalibration(
     runId: answerKey.runId,
     totalItems: answerKey.entries.length,
     reviewedCount,
+    unavailableCount,
     agreementRate,
     kappa,
     judgeWinRate,
