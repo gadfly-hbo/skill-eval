@@ -22,4 +22,6 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Select Command Line Tools for sandboxed Python
+        run: sudo xcode-select --switch /Library/Developer/CommandLineTools
       - run: npm run check
