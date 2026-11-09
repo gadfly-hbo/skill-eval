@@ -225,6 +225,32 @@ test("CLI calibrate 复用冻结评分载体，缺失和哈希不符的快照单
   assert.equal(containsPiMarker(root), false);
 });
 
+test("CLI threshold 与手册区分正式区间、描述区间和单次超时", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "skill-eval-cli-threshold-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const bin = installOfflinePi(root);
+  const output = invoke(bin, ["threshold"]);
+  assert.equal(output.status, 0, output.stdout + output.stderr);
+  assert.match(output.stdout, /任务等权配对断言增益.*95% Hoeffding 下界 > 0/);
+  assert.match(output.stdout, /任务级纯评委胜率.*95% Hoeffding 下界须 > 50%/);
+  assert.match(output.stdout, /95% Wilson 区间用于描述/);
+  assert.match(output.stdout, /单次会话默认不设超时.*--timeout.*--judge-timeout/);
+  assert.doesNotMatch(output.stdout, /Newcombe|480000|300000/);
+
+  const manual = readFileSync(join(repoRoot, "docs", "使用手册.md"), "utf8");
+  assert.match(manual, /任务等权配对断言增益.*95% Hoeffding/);
+  assert.match(manual, /任务级纯评委胜率.*95% Hoeffding/);
+  assert.match(manual, /`--timeout <ms>`.*默认不设/);
+  assert.match(manual, /`--judge-timeout <ms>`.*默认不设/);
+  assert.doesNotMatch(manual, /Newcombe|默认 480000|默认 300000/);
+
+  const custom = invoke(bin, ["threshold", "--score-drop", "0.05", "--activation-rate-drop", "0.1"]);
+  assert.equal(custom.status, 0, custom.stdout + custom.stderr);
+  assert.match(custom.stdout, /胜率最大下降：0\.05/);
+  assert.match(custom.stdout, /激活率最大下降：0\.1/);
+  assert.equal(containsPiMarker(root), false);
+});
+
 test("CLI eval 非空输出目录立即拒绝，不启动 pi 或改写旧运行", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "skill-eval-cli-output-regression-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

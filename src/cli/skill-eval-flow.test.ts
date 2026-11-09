@@ -3,7 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateAssertion } from "../core/assertions.ts";
+import { isScoredTask } from "../core/gain.ts";
+import { taskGainInterval } from "../core/stats.ts";
 import { checkSuite, loadSuite } from "../core/suite.ts";
+import { MIN_JUDGED_PAIRS } from "../core/thresholds.ts";
 
 test("decision-review v2 从公式提取答复行末的客单价", () => {
   const suitePath = fileURLToPath(new URL("../../suites/decision-review-v2.json", import.meta.url));
@@ -66,6 +69,45 @@ test("测评流程仅为兼容的新计划选最新版题集，复评核对冻�
   assert.match(section, /同一计划复评时复用原冻结版本和哈希/);
   assert.match(section, /新计划，先筛出与候选路径及题数相符的版本，再按整数 `N` 选择最高版本/);
   assert.match(section, /v1\/v2\/v3\/v4 同时匹配时，新计划选 v4/);
+});
+
+test("开跑前展示三档证据上限，并按冻结套件核算自定义计划", () => {
+  const skill = readFileSync(new URL("../../skills/skill-eval-flow/SKILL.md", import.meta.url), "utf8");
+  const rows = [...skill.matchAll(/^\| ([低中高])(?:（推荐）)? \| (\d+) \| (\d+) \| (\d+) \| (\d+) \| (\d+) \| ([^|]+) \|$/gm)];
+  assert.deepEqual(rows.map(row => row.slice(1, 7)), [
+    ["低", "3", "1", "1", "9", "18"],
+    ["中", "5", "2", "1", "30", "60"],
+    ["高", "16", "2", "2", "128", "256"],
+  ]);
+  const [low, medium, high] = rows.map(row => row[7]!);
+  assert.match(low!, /最多 3 个计分对.*不足.*4 对/);
+  assert.match(medium!, /最多 5 道独立计分题.*无法达到.*区间门槛/);
+  assert.match(high!, /具备检验有效性的题量条件.*其他门槛/);
+  assert.ok(Number(rows[0]![2]) * Number(rows[0]![3]) < MIN_JUDGED_PAIRS);
+  const bestLowerBound = (tasks: number) => taskGainInterval(Array<number>(tasks).fill(1))!.lowPp;
+  assert.equal(bestLowerBound(5).toFixed(2), "-21.47");
+  assert.equal((50 + bestLowerBound(5) / 2).toFixed(2), "39.26");
+  assert.ok(bestLowerBound(7) < 0 && bestLowerBound(8) > 0);
+  assert.ok(bestLowerBound(16) > 0);
+
+  const preview = skill.split("### G1 冻结执行范围")[1]?.split("## S3 ")[0];
+  assert.ok(preview);
+  assert.match(preview, /固定回归、能力增益或独立验收/);
+  assert.match(preview, /`kind` 为 `scored`（省略时默认 `scored`）且 `shouldActivate` 不为 `false`/);
+  assert.match(preview, /独立计分题数.*上限/);
+  assert.match(preview, /`计分题数 × repeat`/);
+  assert.match(preview, /`任务数 × repeat × \(2 \+ judgeRepeat\)` 个会话，包含诊断和负向题/);
+  assert.match(preview, /至少 8 道独立计分题/);
+  assert.match(preview, /用户已授权真实运行且范围明确时，展示预览后进入 S3/);
+
+  const tasks = [{ id: "plain" }, { id: "scored", kind: "scored" as const },
+    { id: "diagnostic", kind: "diagnostic" as const }, { id: "negative", shouldActivate: false }];
+  const scored = tasks.filter(isScoredTask);
+  assert.deepEqual(scored.map(task => task.id), ["plain", "scored"]);
+  const repeat = 3;
+  const judgeRepeat = 2;
+  assert.equal(scored.length * repeat, 6);
+  assert.equal(tasks.length * repeat * (2 + judgeRepeat), 48);
 });
 
 test("测评流程分开匿名换位、评委冲突、计分分母和补充诊断", () => {

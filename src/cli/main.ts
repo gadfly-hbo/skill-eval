@@ -1308,10 +1308,13 @@ function commandThreshold(args: CliArgs): number {
         `  正向激活率门槛：${(ACTIVATION_THRESHOLD * 100).toFixed(0)}%\n` +
         `  负向最大误触发率：${(MAX_FALSE_ACTIVATION_RATE * 100).toFixed(0)}%\n` +
         `  成对评委胜率门槛（含超时惩罚与规则纠偏后）：${(WIN_RATE_THRESHOLD * 100).toFixed(0)}%（断言增益过硬 ≥ +${GAIN_STRONG_THRESHOLD_PP}pp 且 CI 下界 > 0 时降为 ${(WIN_RATE_RELAXED_THRESHOLD * 100).toFixed(0)}% 守门线）\n` +
-        `  全样本胜率下界门槛：${(MIN_WIN_RATE_LOWER_BOUND * 100).toFixed(0)}%\n` +
-        `  有效评判覆盖率门槛：${(MIN_PAIR_COVERAGE * 100).toFixed(0)}%（且计分对 ≥ ${MIN_JUDGED_PAIRS}）\n` +
+        `  全样本胜率下界门槛：${(MIN_WIN_RATE_LOWER_BOUND * 100).toFixed(0)}%（胜出的计分对 / 计划计分对）\n` +
+        `  有效评判覆盖率门槛：${(MIN_PAIR_COVERAGE * 100).toFixed(0)}%（且有效计分对 ≥ ${MIN_JUDGED_PAIRS}）\n` +
         `  skill 侧最大超时率：${(MAX_VARIANT_TIMEOUT_RATE * 100).toFixed(0)}%\n` +
-        `  规则断言增益门槛：+${GAIN_THRESHOLD_PP}pp（且 95% Newcombe 置信下界 > 0）\n` +
+        `  单次会话默认不设超时（--timeout 指定被评时限，--judge-timeout 指定评委时限）\n` +
+        `  完整的任务等权配对断言增益须 ≥ +${GAIN_THRESHOLD_PP}pp（保守 95% Hoeffding 下界 > 0）\n` +
+        `  无计分断言时，任务级纯评委胜率的保守 95% Hoeffding 下界须 > 50%\n` +
+        `  Hoeffding 区间以独立计分任务为统计单位。原始评委胜率的 95% Wilson 区间用于描述。\n` +
         `  成本昂贵警告线：token > ${COST_WARN_TOKEN_RATIO}x 或 > ${COST_WARN_TOKENS_PER_PP} tokens/pp\n\n` +
         `默认回归门禁阈值：\n` +
         `  胜率最大下降：${DEFAULT_THRESHOLDS.scoreDrop}\n` +
